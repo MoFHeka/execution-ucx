@@ -1,0 +1,141 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_cuda//cuda:defs.bzl", "cuda_library", "requires_cuda")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "ucx_connection",
+    srcs = [
+        "ucx_connection.cpp",
+    ],
+    hdrs = [
+        "ucx_connection.hpp",
+        "ucx_context_def.h",
+        "ucx_context_logger.hpp",
+    ],
+    copts = ["-std=c++17"],
+    deps = [
+        "@ucx",
+    ],
+)
+
+cc_library(
+    name = "ucx_connection_manager",
+    srcs = [
+        "ucx_connection_manager.cpp",
+    ],
+    hdrs = [
+        "lock_free_queue.hpp",
+        "ucx_connection_manager.hpp",
+    ],
+    deps = [
+        ":ucx_connection",
+    ],
+)
+
+cc_library(
+    name = "ucx_am_context",
+    srcs = [
+        "ucx_am_context/ucx_am_context.cpp",
+        "ucx_memory_resource.cpp",
+    ],
+    hdrs = [
+        "ucx_am_context/ucx_am_context.hpp",
+        "ucx_context_concept.hpp",
+        "ucx_context_def.h",
+        "ucx_context_logger.hpp",
+        "ucx_device_context.hpp",
+        "ucx_memory_resource.hpp",
+        "ucx_status.hpp",
+    ],
+    copts = ["-std=c++17"],
+    linkopts = ["-lrt"],
+    deps = [
+        ":ucx_connection",
+        ":ucx_connection_manager",
+        "@ucx",
+        "@unifex",
+    ],
+)
+
+cuda_library(
+    name = "ucx_cuda_memory_manager",
+    hdrs = [
+        "cuda/ucx_cuda_macro.h",
+        "cuda/ucx_cuda_memory_manager.cuh",
+    ],
+    target_compatible_with = requires_cuda(),
+)
+
+cuda_library(
+    name = "ucx_am_context_test_cuda_helper",
+    srcs = ["ucx_am_context/ucx_am_context_test_cuda_helper.cu"],
+    hdrs = [
+        "ucx_am_context/ucx_am_context_test_helper.h",
+        "ucx_context_def.h",
+    ],
+    target_compatible_with = requires_cuda(),
+)
+
+cuda_library(
+    name = "ucx_cuda_context",
+    hdrs = [
+        "cuda/ucx_cuda_context.hpp",
+        "cuda/ucx_cuda_macro.h",
+    ],
+    target_compatible_with = requires_cuda(),
+)
+
+cc_library(
+    name = "ucx_am_context_test_host_helper",
+    srcs = ["ucx_am_context/ucx_am_context_test_host_helper.cpp"],
+    hdrs = [
+        "ucx_am_context/ucx_am_context_test_helper.h",
+        "ucx_context_def.h",
+    ],
+)
+
+cc_test(
+    name = "ucx_am_connection_test",
+    srcs = ["ucx_am_context/ucx_am_connection_test.cpp"],
+    copts = ["-std=c++17"],
+    deps = [
+        ":ucx_connection",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "ucx_am_context_test",
+    srcs = [
+        "ucx_am_context/ucx_am_context_test.cpp",
+    ],
+    copts = ["-std=c++17"],
+    defines = select({
+        "@rules_cuda//cuda:is_enabled": ["CUDA_ENABLED=1"],
+        "//conditions:default": ["CUDA_ENABLED=0"],
+    }),
+    deps = select({
+        "@rules_cuda//cuda:is_enabled": [
+            ":ucx_am_context",
+            ":ucx_cuda_memory_manager",
+            ":ucx_cuda_context",
+            ":ucx_am_context_test_host_helper",
+            ":ucx_am_context_test_cuda_helper",
+            "@googletest//:gtest_main",
+            "@unifex//:unifex",
+            "@local_cuda//:cuda",
+        ],
+        "//conditions:default": [
+            ":ucx_am_context",
+            ":ucx_am_context_test_host_helper",
+            "@googletest//:gtest_main",
+            "@unifex//:unifex",
+        ],
+    }),
+)
+
+sh_binary(
+    name = "format",
+    srcs = ["format.sh"],
+)

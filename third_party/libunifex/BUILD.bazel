@@ -1,0 +1,52 @@
+"""
+The 'libunifex' project is a prototype implementation of the C++ sender/receiver async programming model that is currently being considered for standardisation.
+"""
+
+cc_library(
+    name = "unifex",
+    srcs = glob(
+        [
+            "source/**/*.cpp",
+            "source/**/*.hpp",
+        ],
+        exclude = glob(
+            [
+                "source/win32/*.cpp",
+                "source/win32/*.hpp",
+            ],
+        ),
+    ),
+    hdrs = glob(
+        [
+            "include/**/*.hpp",
+            "source/**/*.hpp",
+        ],
+        exclude = glob(
+            [
+                "include/win32/*.hpp",
+                "source/win32/*.hpp",
+            ],
+        ),
+    ),
+    copts = [
+        "-std=c++2b",
+        "-fcoroutines",
+        "-fexceptions",
+    ],
+    defines = [
+        "WIN32_LEAN_AND_MEAN=0",
+        "UNIFEX_LOG_DANGLING_STOP_CALLBACKS=0",
+    ],
+    includes = [
+        "include",
+        "source",
+    ],
+    linkopts = [
+        "-pthread",
+    ],
+    linkstatic = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@liburing",
+    ],
+)

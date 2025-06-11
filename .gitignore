@@ -30,3 +30,15 @@
 *.exe
 *.out
 *.app
+
+# Bazel
+MODULE.bazel.lock
+bazel-bin
+bazel-genfiles
+bazel-out
+bazel-testlogs
+bazel-workspace
+bazel-execution-ucx
+
+# VSCode
+.vscode

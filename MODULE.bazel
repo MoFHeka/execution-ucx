@@ -1,0 +1,61 @@
+"""
+Copyright 2024 The MeepoEmbedding Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================
+"""
+
+module(
+    name = "execution-ucx",
+    version = "0.0.1",
+    compatibility_level = 0,
+    bazel_compatibility = [">=7.0.0"],
+)
+
+# setting cuda toolchain
+bazel_dep(name = "rules_cuda", version = "0.2.5")
+cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
+cuda.local_toolchain(
+    name = "local_cuda",
+    toolkit_path = "",
+)
+use_repo(cuda, "local_cuda")
+
+# # setting Nvidia stdexec as default tensor container for replacing libunifex
+# stdexec_deps = use_extension("//third_party/nvidia_stdexec:extensions.bzl", "nvidia_stdexec_dep")
+# use_repo(stdexec_deps, "stdexec")
+
+# setting Meta libunifex as default CPP stdexec implement
+bazel_dep(name = "liburing", version = "2.10")
+unifex_deps = use_extension("//third_party/libunifex:extensions.bzl", "libunifex_dep")
+use_repo(unifex_deps, "unifex")
+
+# setting UCX for communication library
+ucx_deps = use_extension("//third_party/openucx:extensions.bzl", "openucx_dependencie")
+
+# ucx_deps.ucx_library(name = "ucx", ucx_path = "/opt/nvidia/hpc_sdk/Linux_x86_64/2024/comm_libs/12.5/hpcx/latest/ucx/")  # A local UCX path
+ucx_deps.ucx_git(name = "ucx", tag = "v1.18.1")
+use_repo(ucx_deps, "ucx")
+
+bazel_dep(name = "rules_foreign_cc", version = "0.12.0")
+
+bazel_dep(name = "platforms", version = "0.0.10")
+
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+
+bazel_dep(name = "googletest", version = "1.16.0.bcr.1")
+
+register_toolchains(
+    "@local_cuda//toolchain:nvcc-local-toolchain",
+    "@local_cuda//toolchain/clang:clang-local-toolchain",
+)

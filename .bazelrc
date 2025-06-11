@@ -1,0 +1,25 @@
+build --cxxopt=-std=c++2b
+build --linkopt=-std=c++2b
+
+# Convenient flag shortcuts.
+build --flag_alias=cuda_archs=@rules_cuda//cuda:archs
+build --cuda_archs='compute_70:sm_70;compute_80:sm_80,sm_86'
+build --flag_alias=cuda_enable=@rules_cuda//cuda:enable
+
+# Debug build settings
+build:debug --compilation_mode=dbg
+build:debug --copt=-g
+build:debug --copt=-O0
+# build:debug --copt=-fsanitize=address
+# build:debug --linkopt=-fsanitize=address
+build:debug --strip=never
+build:debug --define=DEBUG=1
+
+# Release build settings 
+build:release --compilation_mode=opt
+build:release --copt=-O3
+build:release --strip=all
+build:release --define=NDEBUG=1
+
+# Debug build
+# build --config=debug

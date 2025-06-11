@@ -1,0 +1,22 @@
+Language: Cpp
+BasedOnStyle: Google
+IncludeCategories:
+- Regex: '^<'
+  Priority: 1
+- Regex: '^<unifex/'
+  Priority: 2
+- Regex: '^"'
+  Priority: 3
+- Regex: '^<experimental/'
+  Priority: 4
+AlignAfterOpenBracket: AlwaysBreak
+BreakBeforeBinaryOperators: NonAssignment
+ConstructorInitializerIndentWidth: 2
+ContinuationIndentWidth: 2
+DerivePointerAlignment: true
+ExperimentalAutoDetectBinPacking: true
+IncludeBlocks: Preserve
+Standard: c++20
+TabWidth: 0
+TypenameMacros: []
+UseTab: Never

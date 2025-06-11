@@ -1,68 +1,68 @@
-[简体中文](README_Chinese.md)
+[English](README.md)
 
 # execution-ucx
 
-`execution-ucx` is a full-featured OpenUCX runtime context based on the C++26 `P2300` `std::execution` proposal. It is designed to unify all UCX communication tasks (both control plane and data plane) within the `ucx_context`'s worker thread. This approach eliminates lock contention and reduces thread switching, achieving ultimate performance.
+`execution-ucx` 是一个基于 C++26 `P2300` `std::execution` 提案实现的全功能 OpenUCX 运行时上下文。它旨在将所有 UCX 通信任务（包括控制面和数据面）统一在 `ucx_context` 的工作线程内，通过消除锁竞争和减少线程切换，实现极致的性能。
 
-This project currently uses Meta's [libunifex](https://github.com/facebookexperimental/libunifex) as the implementation for `std::execution`, but it can be easily switched to NVIDIA's [stdexec](https://github.com/NVIDIA/stdexec) or other compatible implementations.
+本项目目前使用 Meta 的 [libunifex](https://github.com/facebookexperimental/libunifex)作为 `std::execution` 的实现，并可轻松切换到 NVIDIA 的 [stdexec](https://github.com/NVIDIA/stdexec) 或其他兼容实现。
 
-Its design goal is to provide an efficient, flexible, and composable asynchronous RDMA communication backend for modern C++ applications.
+其设计目标是为现代 C++ 应用程序提供一个高效、灵活且可组合的异步 RDMA 通信后端。
 
 ![Architecture](doc/ucx_context.png)
 
-## Core Features
+## 核心特性
 
-*   **Based on `std::execution`**: Utilizes the latest C++ asynchronous model, offering an expressive and composable API.
-*   **High Performance**: All operations are executed in a dedicated `ucx_context` thread, avoiding multithreading synchronization overhead and maximizing UCX performance.
-*   **Active Message Support**: Built-in efficient Active Message (`ucx_am_context`) implementation, supporting zero-copy and callback handling.
-*   **Connection Management**: Automated connection establishment, caching, and management (`ucx_connection_manager`).
-*   **Memory Management**: Integrated UCX memory registration/deregistration (`ucx_memory_resource`), simplifying RDMA operations.
-*   **CUDA Support**: Seamless support for CUDA device memory, enabling GPU-Direct RDMA (GDR).
-*   **Extensibility**: Modular design allows for easy extension to support new protocols or hardware.
+*   **基于 `std::execution`**：采用最新的 C++ 异步模型，提供富有表现力且可组合的 API。
+*   **高性能**：所有操作都在专用的 `ucx_context` 线程中执行，避免了多线程同步开销，最大化 UCX 的性能。
+*   **Active Message 支持**：内置高效的 Active Message (`ucx_am_context`) 实现，支持零拷贝和回调函数处理。
+*   **连接管理**：自动化的连接建立、缓存和管理 (`ucx_connection_manager`)。
+*   **内存管理**：集成了 UCX 内存注册/反注册 (`ucx_memory_resource`)，简化了 RDMA 操作。
+*   **CUDA 支持**：无缝支持 CUDA 设备内存，可实现 GPU-Direct RDMA (GDR)。
+*   **可扩展性**：模块化设计，可以轻松扩展以支持新的协议或硬件。
 
-## Core Concepts
+## 核心概念
 
-*   `ucx_context`: The core component that encapsulates `ucp_worker_h` and drives all asynchronous operations. It has its own thread for polling UCX events and executing tasks.
-*   `ucx_am_context`: The Active Message context, providing an interface for sending and receiving Active Messages.
-*   `ucx_connection`: Encapsulates `ucp_ep_h`, representing a connection to a remote peer.
-*   `ucx_connection_manager`: Manages and reuses `ucx_connection`, handling connection establishment and teardown.
-*   `ucx_memory_resource`: A C++ PMR-style memory resource for allocating registered memory that can be used directly by UCX for RDMA operations.
+*   `ucx_context`: 核心组件，封装了 `ucp_worker_h`，并驱动所有异步操作。它拥有一个独立的线程，负责轮询 UCX 事件和执行任务。
+*   `ucx_am_context`: Active Message 上下文，提供了发送和接收 Active Message 的接口。
+*   `ucx_connection`: 封装了 `ucp_ep_h`，代表一个到远端的连接。
+*   `ucx_connection_manager`: 负责管理和复用 `ucx_connection`，处理连接建立和关闭。
+*   `ucx_memory_resource`: 一个 C++ PMR 风格的内存资源，用于分配可被 UCX 直接用于 RDMA 操作的注册内存。
 
-## Dependencies
+## 依赖
 
 *   **Bazel**: >= 7.0.0
-*   **C++ Compiler**: C++17 support
-*   **OpenUCX**: v1.18.1 or later
-*   **libunifex**: (default) As the `std::execution` implementation
-*   **liburing**: A dependency for `libunifex`
-*   **Googletest**: For unit tests
-*   **(Optional) CUDA Toolkit**: For building with GPU support
-*   **(Optional) Various Communication Interface**: Please modify the [OpenUCX BUILD file](third_party/openucx/BUILD.bazel) to select your preferred options. It is recommended to install the [Nvidia HPC SDK](https://developer.nvidia.com/hpc-sdk)
+*   **C++ Compiler**: 支持 C++17 标准
+*   **OpenUCX**: v1.18.1 或更高版本
+*   **libunifex**: (默认) 作为 `std::execution` 的实现
+*   **(可选) liburing**: `libunifex` 的依赖项
+*   **Googletest**: 用于单元测试
+*   **(可选) CUDA Toolkit**: 用于构建 GPU 支持
+*   **(可选) 各种通信介质**: 请修改[OpenUCX BUILD文件](third_party/openucx/BUILD.bazel)自行选择，推荐安装[Nvidia HPC SDK](https://developer.nvidia.com/hpc-sdk)
 
-## Build and Test
+## 构建与测试
 
-The project is built using Bazel.
+项目使用 Bazel 进行构建。
 
-1.  **Build the project**:
+1.  **构建项目**:
     ```bash
     bazel build //ucx_context:ucx_am_context
     ```
 
-2.  **Run tests (CPU)**:
+2.  **运行测试 (CPU)**:
     ```bash
     bazel test //ucx_context:ucx_am_context_test
     ```
 
-3.  **Run tests (CUDA)**:
-    Requires a local installation of the CUDA Toolkit. Bazel will automatically detect it and enable CUDA support.
+3.  **运行测试 (CUDA)**:
+    需要本地安装 CUDA Toolkit，Bazel 会自动检测并启用 CUDA 支持。
     ```bash
     bazel test //ucx_context:ucx_am_context_test --@rules_cuda//cuda:enable=True
     ```
 
-## Usage Example
+## 使用示例
 
-The following is a simplified example demonstrating how to send and receive an Active Message using `ucx_am_context`. It is based on the logic from the `TEST_F(UcxAmTest, SmallMessageTransfer)` test case.
-For more details, please refer to the [test code](ucx_context/ucx_am_context_test.cpp)
+以下是一个简化的示例，展示如何使用 `ucx_am_context` 发送和接收一个 Active Message。该示例基于 `TEST_F(UcxAmTest, SmallMessageTransfer)` 测试用例的逻辑。
+详细请参考[测试代码](ucx_context/ucx_am_context_test.cpp)
 
 ```cpp
 #include <netinet/in.h>
@@ -92,7 +92,7 @@ For more details, please refer to the [test code](ucx_context/ucx_am_context_tes
 #include "ucx_context/ucx_context_def.h"
 #include "ucx_context/ucx_memory_resource.hpp"
 
-// Using declarations for clarity
+// 使用声明以提高代码清晰度
 using stdexe_ucx_runtime::accept_endpoint;
 using stdexe_ucx_runtime::active_message_bundle;
 using stdexe_ucx_runtime::connect_endpoint;
@@ -103,7 +103,7 @@ using stdexe_ucx_runtime::ucx_am_context;
 using stdexe_ucx_runtime::UcxMemoryResourceManager;
 using unifex::task;
 
-// Helper to create a socket address
+// 辅助函数：创建套接字地址
 static std::unique_ptr<sockaddr> create_socket_address(
   uint16_t port, bool is_server) {
   sockaddr_in* addr = new sockaddr_in{
@@ -114,7 +114,7 @@ static std::unique_ptr<sockaddr> create_socket_address(
 }
 
 int main() {
-  // 1. Setup server and client contexts, and run them in separate threads.
+  // 1. 设置服务器和客户端上下文，并在单独的线程中运行它们
   std::unique_ptr<UcxMemoryResourceManager> server_mem_res;
   server_mem_res.reset(new DefaultUcxMemoryResourceManager());
   auto server_context =
@@ -131,7 +131,7 @@ int main() {
   std::thread client_thread{
     [&] { client_context->run(client_stop_source.get_token()); }};
 
-  // Allow contexts to initialize
+  // 允许上下文初始化
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
   auto server_scheduler = server_context->get_scheduler();
@@ -140,7 +140,7 @@ int main() {
   uint16_t port =
     static_cast<uint16_t>(1024 + (rand_r(&seed) % (65535 - 1024 + 1)));
 
-  // 2. Prepare data for transfer.
+  // 2. 准备传输数据
   const size_t message_size = 1024;
   std::vector<char> test_data(message_size);
   for (size_t i = 0; i < message_size; ++i) {
@@ -155,27 +155,27 @@ int main() {
   send_data.data_type = ucx_memory_type::HOST;
 
   ucx_am_data
-    recv_data{};  // An empty descriptor, to be filled by the receiver.
+    recv_data{};  // 空描述符，将由接收方填充
   std::atomic<bool> message_received = false;
   std::atomic<bool> send_success = false;
 
-  // 3. Define the server and client logic as unifex tasks.
+  // 3. 将服务器和客户端逻辑定义为unifex任务
   auto server_recv_logic =
     [&](std::vector<std::pair<std::uint64_t, ucs_status_t>>&&
           conn_id_status_vector) -> task<void> {
-    // This call will populate the 'recv_data' struct upon message arrival.
+    // 此调用将在消息到达时填充'recv_data'结构
     active_message_bundle bundle =
       co_await connection_recv(server_scheduler, recv_data);
     if (bundle.connection().is_established()) {
       message_received.store(true);
       server_stop_source
-        .request_stop();  // Stop the server after receiving one message
+        .request_stop();  // 接收一条消息后停止服务器
       co_await unifex::stop_if_requested();
     }
   };
 
   auto server_logic = [&]() -> task<void> {
-    // take_first from the stream of incoming connections.
+    // 从传入连接流中获取第一个
     unifex::v2::async_scope scope;
     co_await unifex::for_each(
       unifex::take_until(
@@ -187,7 +187,7 @@ int main() {
           unifex::stop_on_request(server_stop_source.get_token()))),
       [&](std::vector<std::pair<std::uint64_t, ucs_status_t>>&&
             conn_id_status_vector) {
-        // Only spawn_detached is available in a not-coroutine function
+        // 在非协程函数中只能使用spawn_detached
         unifex::spawn_detached(
           unifex::on(
             server_scheduler,
@@ -212,20 +212,19 @@ int main() {
     }
   };
 
-  // 4. Run tasks concurrently and wait for them to complete.
+  // 4. 并发运行任务并等待它们完成
   unifex::sync_wait(unifex::when_all(server_logic(), client_logic()));
 
-  // 5. Verify results.
+  // 5. 验证结果
   assert(message_received.load());
   assert(send_success.load());
   assert(recv_data.header_length == message_size);
   assert(memcmp(recv_data.header, test_data.data(), message_size) == 0);
   assert(recv_data.data_length == message_size);
   assert(memcmp(recv_data.data, test_data.data(), message_size) == 0);
-  std::cout << "Successfully transferred " << message_size << " bytes."
-            << std::endl;
+  std::cout << "成功传输 " << message_size << " 字节。" << std::endl;
 
-  // 6. Shutdown.
+  // 6. 关闭
   client_stop_source.request_stop();
   server_thread.join();
   client_thread.join();
@@ -239,7 +238,7 @@ cc_binary(
     name = "readme",
     srcs = ["readme.cpp"],
     copts = ["-std=c++17"],
-    linkstatic = False,  # Important for OpenUCX specific library linking
+    linkstatic = False,  # 对于OpenUCX特定库链接很重要！
     deps = [
         "@execution-ucx//ucx_context:ucx_am_context",
         "@unifex",
@@ -247,7 +246,6 @@ cc_binary(
 )
 ```
 
-## License
+## 许可证
 
-This project is licensed under the [Apache License 2.0](LICENSE) license.
-
+本项目采用 [Apache License 2.0](LICENSE) 许可证。 
