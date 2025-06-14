@@ -11,7 +11,8 @@ fi
 echo "Current directory: "$PWD
 
 if [ ! -d "$TARGET_DIR" ]; then
-    echo "Error: Directory '$TARGET_DIR' not found. This script must be run from the workspace root."
+    echo "Error: Directory '$TARGET_DIR' not found. \
+          This script must be run from the workspace root."
     exit 1
 fi
 
@@ -19,6 +20,12 @@ echo "Searching for files to format in '$TARGET_DIR'..."
 
 # Find files and format them.
 # -print0 and xargs -0 handle filenames with spaces or other special characters.
-find "$TARGET_DIR" -type f \( -name "*.h" -o -name "*.cpp" -o -name "*.hpp" -o -name "*.cu" -o -name "*.cuh" \) -print0 | xargs -0 clang-format -style=file -i
+find "$TARGET_DIR" -type f \( \
+    -name "*.h" \
+    -o -name "*.cpp" \
+    -o -name "*.hpp" \
+    -o -name "*.cu" \
+    -o -name "*.cuh" \
+    \) -print0 | xargs -0 clang-format-16 -style=file -i
 
-echo "Formatting complete." 
+echo "Formatting complete."

@@ -377,7 +377,7 @@ void ucx_am_context::signal_remote_queue() {
   LOG("notifying remote queue");
 
   if (remoteQueueEventEntry_.load(std::memory_order_acquire)) {
-    auto& entry = getEntryFn_();
+    auto& entry = get_completion_queue_entry();
     entry.user_data = remote_queue_event_user_data;
     entry.res = 0;
 
@@ -473,7 +473,7 @@ void ucx_am_context::update_timers() noexcept {
 void ucx_am_context::timer_timeout_callback(union sigval sv) noexcept {
   ucx_am_context* self = static_cast<ucx_am_context*>(sv.sival_ptr);
 
-  auto& entry = self->getEntryFn_();
+  auto& entry = self->get_completion_queue_entry();
   entry.user_data = self->timer_user_data();
   entry.res = 0;
 
@@ -488,7 +488,7 @@ void ucx_am_context::timer_timeout_callback(
     ucx_am_context* self =
       static_cast<ucx_am_context*>(info->si_value.sival_ptr);
 
-    auto& entry = self->getEntryFn_();
+    auto& entry = self->get_completion_queue_entry();
     entry.user_data = self->timer_user_data();
     entry.res = 0;
 
@@ -500,13 +500,13 @@ void ucx_am_context::timer_timeout_callback(
 bool ucx_am_context::try_submit_timer_io(const time_point& dueTime) noexcept {
   auto populateSqe = [&]() noexcept {
     auto fail_fn = [this]() {
-      auto& entry = this->getEntryFn_();
+      auto& entry = this->get_completion_queue_entry();
       entry.user_data = timer_user_data();
       entry.res = ECANCELED;
     };
 
     auto succ_fn = [this]() {
-      auto& entry = this->getEntryFn_();
+      auto& entry = this->get_completion_queue_entry();
       entry.user_data = timer_user_data();
       entry.res = 0;
 
@@ -557,7 +557,7 @@ bool ucx_am_context::try_submit_timer_io(const time_point& dueTime) noexcept {
 
 bool ucx_am_context::try_submit_timer_io_cancel() noexcept {
   auto populateSqe = [&]() noexcept {
-    auto& entry = this->getEntryFn_();
+    auto& entry = this->get_completion_queue_entry();
     entry.user_data = remove_timer_user_data();
     entry.res = 0;
 

@@ -769,6 +769,10 @@ TEST_F(UcxAmTest, SmallMessageTransfer) {
   sendData.data = testData.data();
   sendData.data_length = testData.size();
   sendData.data_type = ucx_memory_type::HOST;
+  recvData.data = server.get_memory_resource()->allocate(
+    ucx_memory_type::HOST, messageSize * 2);
+  recvData.data_length = messageSize * 2;
+  recvData.data_type = ucx_memory_type::HOST;
 
   std::optional<std::reference_wrapper<const UcxConnection>> conn;
 
@@ -783,6 +787,7 @@ TEST_F(UcxAmTest, SmallMessageTransfer) {
     clientConnectTask(clientScheduler, port, sendData, sendSuccess)));
 
   EXPECT_TRUE(messageReceived.load() && sendSuccess.load());
+  EXPECT_EQ(recvData.msg_length, messageSize);
   EXPECT_TRUE(verify_test_data(recvData.header, messageSize));
   EXPECT_TRUE(verify_test_data(recvData.data, messageSize));
 }
@@ -809,6 +814,10 @@ TEST_F(UcxAmTest, LargeMessageTransfer) {
   sendData.data = testData.data();
   sendData.data_length = testData.size();
   sendData.data_type = ucx_memory_type::HOST;
+  recvData.data = server.get_memory_resource()->allocate(
+    ucx_memory_type::HOST, messageSize / 2);
+  recvData.data_length = messageSize / 2;
+  recvData.data_type = ucx_memory_type::HOST;
 
   std::optional<std::reference_wrapper<const UcxConnection>> conn;
 
@@ -823,6 +832,7 @@ TEST_F(UcxAmTest, LargeMessageTransfer) {
     clientConnectTask(clientScheduler, port, sendData, sendSuccess)));
 
   EXPECT_TRUE(messageReceived.load() && sendSuccess.load());
+  EXPECT_EQ(recvData.msg_length, messageSize);
   EXPECT_TRUE(verify_test_data(recvData.header, headerSize));
   EXPECT_TRUE(verify_test_data(recvData.data, messageSize));
 }

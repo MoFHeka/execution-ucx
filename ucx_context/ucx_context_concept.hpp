@@ -23,9 +23,10 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <type_traits>
+#include <utility>
+
 #include <unifex/detail/prologue.hpp>
 #include <unifex/tag_invoke.hpp>
-#include <utility>
 
 #include "ucx_context/ucx_memory_resource.hpp"
 
@@ -105,8 +106,8 @@ inline constexpr struct connect_endpoint_cpo final {
       -> tag_invoke_result_t<
         connect_endpoint_cpo, Scheduler, SrcSaddr, DstSaddr, SocklenT> {
     if constexpr (
-      std::is_copy_constructible_v<
-        DstSaddr> && std::is_copy_constructible_v<SrcSaddr>) {
+      std::is_copy_constructible_v<DstSaddr>
+      && std::is_copy_constructible_v<SrcSaddr>) {
       return tag_invoke(
         *this, static_cast<Scheduler&&>(sched), src_saddr, dst_saddr, addrlen);
     } else {

@@ -499,6 +499,14 @@ class ucx_am_context {
            && pending_operation_count() < cqEntryCount_;
   }
 
+  // Decrement the submission queue unflushed count and increment
+  // the completion queue pending count
+  ucx_am_cqe& get_completion_queue_entry() {
+    --this->sqUnflushedCount_;
+    ++this->cqPendingCount_;
+    return this->get_and_update_cq_entry();
+  }
+
   std::uintptr_t timer_user_data() const {
     return reinterpret_cast<std::uintptr_t>(&timers_);
   }
@@ -562,13 +570,6 @@ class ucx_am_context {
   std::array<ucx_am_cqe, kCompletionQueueEntryCount> cqEntries_;
   std::atomic<unsigned> cqHead_{0};
   std::atomic<unsigned> cqTail_{0};
-  std::function<ucx_am_cqe&()> getEntryFn_ = [this]() -> ucx_am_cqe& {
-    // Decrement the submission queue unflushed count and increment
-    // the completion queue pending count
-    --this->sqUnflushedCount_;
-    ++this->cqPendingCount_;
-    return this->get_and_update_cq_entry();
-  };
 
   ///////////////////
   // Data that is modified by I/O thread
@@ -664,7 +665,7 @@ class ucx_am_context::schedule_sender {
 
     template <typename Receiver2>
     explicit operation(ucx_am_context& context, Receiver2&& r)
-      : context_(context), receiver_((Receiver2 &&) r) {
+      : context_(context), receiver_(static_cast<Receiver2&&>(r)) {
       this->execute_ = &execute_impl;
     }
 
@@ -706,7 +707,7 @@ class ucx_am_context::schedule_sender {
   template <typename Receiver>
   operation<std::remove_reference_t<Receiver>> connect(Receiver&& r) {
     return operation<std::remove_reference_t<Receiver>>{
-      context_, (Receiver &&) r};
+      context_, static_cast<Receiver&&>(r)};
   }
 
  private:
@@ -733,11 +734,12 @@ class ucx_am_context::recv_sender {
           dataInnerCreatedPtr_.has_value() ? *(dataInnerCreatedPtr_.value())
                                            : sender.data_),
         mr_(sender.mr_),
-        receiver_((Receiver2 &&) r) {
+        receiver_(static_cast<Receiver2&&>(r)) {
       UNIFEX_ASSERT(
-          sender.data_.data == NULL &&
-          "The data buffer must be NULL initialized when passed to "
-          "recv_sender constructor");
+          (sender.data_.data ? sender.data_.data_length > 0
+                             : sender.data_.data_length == 0) &&
+          "The data buffer must be nullptr initialized when data length is 0 "
+          "passed to recv_sender constructor");
     }
 
     ~operation() {
@@ -775,7 +777,7 @@ class ucx_am_context::recv_sender {
 
         // Helper function to set completion entry and update counters
         auto set_completion_entry = [this, op_](ucs_status_t status) {
-          auto& entry = this->context_.getEntryFn_();
+          auto& entry = this->context_.get_completion_queue_entry();
           entry.user_data = op_;
           entry.res = status;
           this->execute_ = &operation::on_schedule_complete;
@@ -819,44 +821,60 @@ class ucx_am_context::recv_sender {
           // TODO(He Jia): Make it more efficient and safe
           data_.header = amDesc.header;
           data_.header_length = amDesc.header_length;
-          data_.data_length = amDesc.data_length;
+
+          // TODO(He Jia): Be careful, the data_ will be reallocated when its
+          // length is not enough. Not sure if it's a good idea.
+          bool allocatedInnerData_ =
+            !data_.data || data_.data_length < amDesc.data_length;
+          if (allocatedInnerData_ && data_.data) {
+            mr_->deallocate(data_.data_type, data_.data, data_.data_length);
+          }
+          data_.msg_length = amDesc.data_length;
 
           this->execute_ = &operation::on_read_complete;
 
           if (UcxConnection::ucx_am_is_rndv(amDesc)) {
             // Handle rendezvous protocol
             // Setup memory and callback
-            data_.data = mr_->allocate(data_.data_type, data_.data_length);
-            auto am_recv_cb = std::make_unique<CqeEntryCallback>(
-              op_,
-              [this]() -> ucx_am_cqe& { return this->context_.getEntryFn_(); });
+            if (allocatedInnerData_) {
+              data_.data = mr_->allocate(data_.data_type, amDesc.data_length);
+              data_.data_length = amDesc.data_length;
+            }
+            auto am_recv_cb =
+              std::make_unique<CqeEntryCallback>(op_, [this]() -> ucx_am_cqe& {
+                return this->context_.get_completion_queue_entry();
+              });
             this->result_ = this->context_.register_ucx_memory(
-              data_.data, data_.data_length, memh_);
+              data_.data, amDesc.data_length, memh_);
             if (this->result_ < 0) {
-              auto& entry = this->context_.getEntryFn_();
+              auto& entry = this->context_.get_completion_queue_entry();
               entry.user_data = op_;
               entry.res = this->result_;
               return;
             }
             std::tie(this->result_, request_) = conn.get().recv_am_data(
-              data_.data, data_.data_length, memh_, std::move(amDesc),
+              data_.data, amDesc.data_length, memh_, std::move(amDesc),
               std::move(am_recv_cb));
           } else {
             // Handle eager protocol
             if (amDesc.recv_attr & UCP_AM_RECV_ATTR_FLAG_DATA) {
-              data_.data = mr_->allocate(data_.data_type, data_.data_length);
+              if (allocatedInnerData_) {
+                data_.data = mr_->allocate(data_.data_type, amDesc.data_length);
+                data_.data_length = amDesc.data_length;
+              }
               mr_->memcpy(
                 data_.data_type, data_.data, ucx_memory_type::HOST, amDesc.desc,
-                data_.data_length);
+                amDesc.data_length);
               ucp_am_data_release(context_.ucpWorker_, amDesc.desc);
             } else {
               // Has been handled in the message callback
               // Eager message is always in host memory
               data_.data = amDesc.desc;
+              data_.data_length = amDesc.data_length;
               data_.data_type = ucx_memory_type::HOST;
             }
             this->result_ = conn.get().ucx_status();
-            auto& entry = this->context_.getEntryFn_();
+            auto& entry = this->context_.get_completion_queue_entry();
             entry.user_data = op_;
             entry.res = this->result_;
           }
@@ -899,7 +917,7 @@ class ucx_am_context::recv_sender {
             conn_ref.cancel_request(request_);
           }
         }
-        auto& entry = this->context_.getEntryFn_();
+        auto& entry = this->context_.get_completion_queue_entry();
         entry.user_data = cop;
         entry.res = UCS_ERR_CANCELED;
         this->result_ = UCS_ERR_CANCELED;
@@ -944,18 +962,17 @@ class ucx_am_context::recv_sender {
       // Ensure the connection is valid and deallocate the data when failed
       auto deallocate_data = [&self]() noexcept {
         // Ensure the buffer is valid
-        if (__builtin_expect(self.data_.data != nullptr, 1)) {
+        if (__builtin_expect(self.data_.data && self.allocatedInnerData_, 1)) {
           self.mr_->deallocate(
             self.data_.data_type, self.data_.data, self.data_.data_length);
           self.data_.data = nullptr;
           self.data_.data_length = 0;
-          if (__builtin_expect(self.data_.header != nullptr, 1)) {
-            self.mr_->deallocate(
-              ucx_memory_type::HOST, self.data_.header,
-              self.data_.header_length);
-            self.data_.header = nullptr;
-            self.data_.header_length = 0;
-          }
+        }
+        if (self.data_.header) {
+          self.mr_->deallocate(
+            ucx_memory_type::HOST, self.data_.header, self.data_.header_length);
+          self.data_.header = nullptr;
+          self.data_.header_length = 0;
         }
       };
 
@@ -1022,6 +1039,7 @@ class ucx_am_context::recv_sender {
     ucx_am_data& data_;
     ucx_request* request_ = nullptr;
     ucp_mem_h memh_ = nullptr;
+    bool allocatedInnerData_ = false;
     const std::unique_ptr<ucx_memory_resource>& mr_;
     std::atomic_bool cancel_flag_{false};
     std::atomic_bool onPending_{false};
@@ -1057,13 +1075,12 @@ class ucx_am_context::recv_sender {
       data_(*(dataInnerCreatedPtr_.value())),
       mr_(context.mr_) {
     data_.data_type = data_type;
-    data_.header = nullptr;
-    data_.data = nullptr;
   }
 
   template <typename Receiver>
   operation<remove_cvref_t<Receiver>> connect(Receiver&& r) && {
-    return operation<remove_cvref_t<Receiver>>{*this, (Receiver &&) r};
+    return operation<remove_cvref_t<Receiver>>{
+      *this, static_cast<Receiver&&>(r)};
   }
 
  private:
@@ -1087,16 +1104,16 @@ class ucx_am_context::send_sender {
         conn_(sender.conn_),
         data_(sender.data_),
         mr_(sender.mr_),
-        receiver_((Receiver2 &&) r) {
+        receiver_(static_cast<Receiver2&&>(r)) {
       if (sender.data_.header_length > 0) {
         UNIFEX_ASSERT(
             sender.data_.header &&
-            "The header must not be NULL initialized when "
+            "The header must not be nullptr initialized when "
             "passed to send_sender constructor with header_length > 0");
       }
       if (sender.data_.data_length > 0) {
         UNIFEX_ASSERT(sender.data_.data &&
-                      "The data buffer must not be NULL initialized when "
+                      "The data buffer must not be nullptr initialized when "
                       "passed to send_sender constructor with data_length > 0");
       }
     }
@@ -1134,21 +1151,22 @@ class ucx_am_context::send_sender {
           reinterpret_cast<std::uintptr_t>(static_cast<completion_base*>(this));
         this->execute_ = &operation::on_write_complete;
         if (cancel_flag_.load(std::memory_order_consume)) {
-          auto& entry = this->context_.getEntryFn_();
+          auto& entry = this->context_.get_completion_queue_entry();
           entry.user_data = op_;
           entry.res = UCS_ERR_CANCELED;
           this->result_ = UCS_ERR_CANCELED;
           return;
         }
         // Prepare callback function
-        auto am_send_cb = std::make_unique<CqeEntryCallback>(
-          op_,
-          [this]() -> ucx_am_cqe& { return this->context_.getEntryFn_(); });
+        auto am_send_cb =
+          std::make_unique<CqeEntryCallback>(op_, [this]() -> ucx_am_cqe& {
+            return this->context_.get_completion_queue_entry();
+          });
         // Prepare buffer
         this->result_ = this->context_.register_ucx_memory(
           data_.data, data_.data_length, memh_);
         if (this->result_ < 0) {
-          auto& entry = this->context_.getEntryFn_();
+          auto& entry = this->context_.get_completion_queue_entry();
           entry.user_data = op_;
           entry.res = this->result_;
           return;
@@ -1195,7 +1213,7 @@ class ucx_am_context::send_sender {
           conn_ref.cancel_send();
         }
         // Update the cqe entry
-        auto& entry = this->context_.getEntryFn_();
+        auto& entry = this->context_.get_completion_queue_entry();
         entry.user_data = cop;
         entry.res = UCS_ERR_CANCELED;
         this->result_ = UCS_ERR_CANCELED;
@@ -1325,7 +1343,8 @@ class ucx_am_context::send_sender {
 
   template <typename Receiver>
   operation<remove_cvref_t<Receiver>> connect(Receiver&& r) {
-    return operation<remove_cvref_t<Receiver>>{*this, (Receiver &&) r};
+    return operation<remove_cvref_t<Receiver>>{
+      *this, static_cast<Receiver&&>(r)};
   }
 
  private:
@@ -1348,7 +1367,7 @@ class ucx_am_context::schedule_at_sender {
       ucx_am_context& context, const time_point& dueTime, Receiver&& r)
       : schedule_at_operation(
         context, dueTime, get_stop_token(r).stop_possible()),
-        receiver_((Receiver &&) r) {}
+        receiver_(static_cast<Receiver&&>(r)) {}
 
     void start() noexcept {
       if (this->context_.is_running_on_io_thread()) {
@@ -1513,7 +1532,7 @@ class ucx_am_context::schedule_at_sender {
   template <typename Receiver>
   operation<remove_cvref_t<Receiver>> connect(Receiver&& r) {
     return operation<remove_cvref_t<Receiver>>{
-      context_, dueTime_, (Receiver &&) r};
+      context_, dueTime_, static_cast<Receiver&&>(r)};
   }
 
  private:
@@ -1718,7 +1737,7 @@ class ucx_am_context::dispatch_connection_error_sender {
         r) noexcept(std::is_nothrow_constructible_v<Receiver, Receiver2>)
       : context_(sender.context_),
         connection_error_handler_(sender.connection_error_handler_),
-        receiver_((Receiver2 &&) r) {}
+        receiver_(static_cast<Receiver2&&>(r)) {}
 
     operation(operation&&) = delete;
 
@@ -1786,7 +1805,7 @@ class ucx_am_context::dispatch_connection_error_sender {
             conn_ptr->disconnect_direct();
           }
 
-          auto& entry = this->context_.getEntryFn_();
+          auto& entry = this->context_.get_completion_queue_entry();
           entry.user_data = reinterpret_cast<std::uintptr_t>(
             static_cast<completion_base*>(this));
           entry.res = res;
@@ -1932,7 +1951,8 @@ class ucx_am_context::dispatch_connection_error_sender {
    */
   template <typename Receiver>
   operation<remove_cvref_t<Receiver>> connect(Receiver&& r) && {
-    return operation<remove_cvref_t<Receiver>>{*this, (Receiver &&) r};
+    return operation<remove_cvref_t<Receiver>>{
+      *this, static_cast<Receiver&&>(r)};
   }
 
  private:
@@ -1956,7 +1976,7 @@ class ucx_am_context::connect_sender {
         src_saddr_(std::move(const_cast<connect_sender&>(sender).src_saddr_)),
         dst_saddr_(std::move(const_cast<connect_sender&>(sender).dst_saddr_)),
         addrlen_(sender.addrlen_),
-        receiver_((Receiver2 &&) r) {}
+        receiver_(static_cast<Receiver2&&>(r)) {}
 
     operation(operation&&) = delete;
 
@@ -1982,7 +2002,7 @@ class ucx_am_context::connect_sender {
         stopCallbackConstructed_ = true;
       }
       auto populateSqe = [this]() noexcept {
-        auto& entry = this->context_.getEntryFn_();
+        auto& entry = this->context_.get_completion_queue_entry();
         entry.user_data =
           reinterpret_cast<std::uintptr_t>(static_cast<completion_base*>(this));
         this->execute_ = &operation::on_connect;
@@ -2042,7 +2062,7 @@ class ucx_am_context::connect_sender {
         cop_.execute_ = &cancel_operation::on_stop_complete;
 
         // Update the cqe entry
-        auto& entry = this->context_.getEntryFn_();
+        auto& entry = this->context_.get_completion_queue_entry();
         entry.user_data = cop;
         entry.res = UCS_ERR_CANCELED;
         this->result_ = UCS_ERR_CANCELED;
@@ -2197,7 +2217,8 @@ class ucx_am_context::connect_sender {
    */
   template <typename Receiver>
   operation<remove_cvref_t<Receiver>> connect(Receiver&& r) && {
-    return operation<remove_cvref_t<Receiver>>{*this, (Receiver &&) r};
+    return operation<remove_cvref_t<Receiver>>{
+      *this, static_cast<Receiver&&>(r)};
   }
 
  private:
@@ -2218,7 +2239,7 @@ class ucx_am_context::accept_sender {
     template <typename Receiver2>
     explicit operation(const accept_sender& sender, Receiver2&& r) noexcept(
       std::is_nothrow_constructible_v<Receiver, Receiver2>)
-      : context_(sender.context_), receiver_((Receiver2 &&) r) {}
+      : context_(sender.context_), receiver_(static_cast<Receiver2&&>(r)) {}
 
     operation(operation&&) = delete;
 
@@ -2260,7 +2281,7 @@ class ucx_am_context::accept_sender {
           }
 
           // Update the cqe entry
-          auto& entry = this->context_.getEntryFn_();
+          auto& entry = this->context_.get_completion_queue_entry();
           entry.user_data = reinterpret_cast<std::uintptr_t>(
             static_cast<completion_base*>(this));
           entry.res = status;
@@ -2303,7 +2324,7 @@ class ucx_am_context::accept_sender {
         cop_.execute_ = &cancel_operation::on_stop_complete;
 
         // Update the cqe entry
-        auto& entry = this->context_.getEntryFn_();
+        auto& entry = this->context_.get_completion_queue_entry();
         entry.user_data = cop;
         entry.res = UCS_ERR_CANCELED;
         this->result_ = UCS_ERR_CANCELED;
@@ -2439,7 +2460,8 @@ class ucx_am_context::accept_sender {
    */
   template <typename Receiver>
   operation<remove_cvref_t<Receiver>> connect(Receiver&& r) && {
-    return operation<remove_cvref_t<Receiver>>{*this, (Receiver &&) r};
+    return operation<remove_cvref_t<Receiver>>{
+      *this, static_cast<Receiver&&>(r)};
   }
 
  private:
@@ -2566,8 +2588,8 @@ class ucx_am_context::accept_connection {
             // the operation object.
             [&](Values... values) {
               unifex::set_value(
-                std::move(op_->receiver_), (Values &&) values...);
-            }((Values &&) values...);
+                std::move(op_->receiver_), static_cast<Values&&>(values)...);
+            }(static_cast<Values&&>(values)...);
           }
           UNIFEX_CATCH(...) {
             unifex::set_error(
@@ -2595,7 +2617,8 @@ class ucx_am_context::accept_connection {
           unifex::deactivate_union_member(op_->acceptOp_);
           // Type-erase any errors that come through.
           unifex::set_error(
-            std::move(op_->receiver_), make_exception_ptr((Error &&) error));
+            std::move(op_->receiver_),
+            make_exception_ptr(static_cast<Error&&>(error)));
         }
 
         void set_error(std::exception_ptr ex) && noexcept {
@@ -2631,7 +2654,7 @@ class ucx_am_context::accept_connection {
         template <typename Func>
         friend void tag_invoke(
           tag_t<visit_continuations>, const receiver_wrapper& r, Func&& func) {
-          visit_continuations(r.get_receiver(), (Func &&) func);
+          visit_continuations(r.get_receiver(), static_cast<Func&&>(func));
         }
 #endif
 
