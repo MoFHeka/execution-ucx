@@ -64,6 +64,7 @@
 以下是一个简化的示例，展示如何使用 `ucx_am_context` 发送和接收一个 Active Message。该示例基于 `TEST_F(UcxAmTest, SmallMessageTransfer)` 测试用例的逻辑。
 详细请参考[测试代码](ucx_context/ucx_am_context_test.cpp)
 
+#### test.cpp
 ```cpp
 #include <netinet/in.h>
 
@@ -233,11 +234,15 @@ int main() {
 }
 ```
 
+#### BUILD.bazel
 ```python
 cc_binary(
     name = "readme",
     srcs = ["readme.cpp"],
-    copts = ["-std=c++17"],
+    copts = [
+        "-std=c++17",
+        "-fcoroutines",
+    ],
     linkstatic = False,  # 对于OpenUCX特定库链接很重要！
     deps = [
         "@execution-ucx//ucx_context:ucx_am_context",

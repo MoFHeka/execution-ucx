@@ -1,5 +1,5 @@
-build --cxxopt=-std=c++2b
-build --linkopt=-std=c++2b
+# build --cxxopt=-std=c++2b
+# build --linkopt=-std=c++2b
 
 # Convenient flag shortcuts.
 build --flag_alias=cuda_archs=@rules_cuda//cuda:archs

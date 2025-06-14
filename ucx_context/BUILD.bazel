@@ -28,6 +28,7 @@ cc_library(
         "lock_free_queue.hpp",
         "ucx_connection_manager.hpp",
     ],
+    copts = ["-std=c++17"],
     deps = [
         ":ucx_connection",
     ],
@@ -110,7 +111,10 @@ cc_test(
     srcs = [
         "ucx_am_context/ucx_am_context_test.cpp",
     ],
-    copts = ["-std=c++17"],
+    copts = [
+        "-std=c++17",
+        "-fcoroutines",
+    ],
     defines = select({
         "@rules_cuda//cuda:is_enabled": ["CUDA_ENABLED=1"],
         "//conditions:default": ["CUDA_ENABLED=0"],

@@ -64,6 +64,7 @@ The project is built using Bazel.
 The following is a simplified example demonstrating how to send and receive an Active Message using `ucx_am_context`. It is based on the logic from the `TEST_F(UcxAmTest, SmallMessageTransfer)` test case.
 For more details, please refer to the [test code](ucx_context/ucx_am_context_test.cpp)
 
+#### test.cpp
 ```cpp
 #include <netinet/in.h>
 
@@ -234,11 +235,15 @@ int main() {
 }
 ```
 
+#### BUILD.bazel
 ```python
 cc_binary(
     name = "readme",
     srcs = ["readme.cpp"],
-    copts = ["-std=c++17"],
+    copts = [
+        "-std=c++17",
+        "-fcoroutines",
+    ],
     linkstatic = False,  # Important for OpenUCX specific library linking
     deps = [
         "@execution-ucx//ucx_context:ucx_am_context",
