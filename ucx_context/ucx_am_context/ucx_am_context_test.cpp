@@ -68,7 +68,7 @@ limitations under the License.
 
 #if CUDA_ENABLED
 #include "ucx_context/cuda/ucx_cuda_context.hpp"
-#include "ucx_context/cuda/ucx_cuda_memory_manager.cuh"
+#include "ucx_context/cuda/ucx_cuda_memory_manager.hpp"
 #endif
 #include "ucx_context/ucx_am_context/ucx_am_context_test_helper.h"
 

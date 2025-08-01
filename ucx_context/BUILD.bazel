@@ -59,13 +59,15 @@ cc_library(
     ],
 )
 
-cuda_library(
+cc_library(
     name = "ucx_cuda_memory_manager",
     hdrs = [
         "cuda/ucx_cuda_macro.h",
-        "cuda/ucx_cuda_memory_manager.cuh",
+        "cuda/ucx_cuda_memory_manager.hpp",
     ],
-    target_compatible_with = requires_cuda(),
+    deps = [
+        "@local_cuda//:cuda",
+    ],
 )
 
 cuda_library(
@@ -78,13 +80,15 @@ cuda_library(
     target_compatible_with = requires_cuda(),
 )
 
-cuda_library(
+cc_library(
     name = "ucx_cuda_context",
     hdrs = [
         "cuda/ucx_cuda_context.hpp",
         "cuda/ucx_cuda_macro.h",
     ],
-    target_compatible_with = requires_cuda(),
+    deps = [
+        "@local_cuda//:cuda",
+    ],
 )
 
 cc_library(

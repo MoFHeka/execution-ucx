@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include <ucp/api/ucp.h>
 
 #include "ucx_context/cuda/ucx_cuda_macro.h"
 #include "ucx_context/ucx_context_def.h"

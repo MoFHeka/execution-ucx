@@ -398,7 +398,7 @@ void RunClient(
   ucp_params.features = UCP_FEATURE_AM;
   ucp_params.request_init = UcxConnection::request_init;
   ucp_params.request_size = sizeof(UcxRequest);
-  ucp_params.name = "server";
+  ucp_params.name = "client";
 
   ucp_context_h ucp_context;
   status = ucp_init(&ucp_params, config, &ucp_context);
