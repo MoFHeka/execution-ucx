@@ -61,6 +61,24 @@ typedef struct ucx_am_data {
   // _Atomic(unsigned int) data_allocated;  // NOLINT
 } ucx_am_data_t;
 
+/**
+ * @struct ucx_iov_data
+ * @brief Structure for scatter-gather I/O.
+ *
+ * This structure is used to specify a list of data structs which can be used
+ * within a single data transfer function call. This list should remain valid
+ * until the data transfer request is completed.
+ *
+ * @note A @a ucx_data can be used to point to a ucx_am_data struct. @a count
+ *       indicates the number of structs in the list.
+ *       The @typedef ucx_iov_data list will be converted to ucp_dt_iov_t list
+ *       for UCX data transfer.
+ */
+typedef struct ucx_iov_data {
+  void* ucx_data;  ///< Pointer to a data struct. e.g. ucx_am_data
+  size_t count;    ///< Number of structs in the list
+} ucx_iov_data_t;
+
 // /* Set data_allocated flag to true */
 // static inline void ucx_am_data_set_data_allocated(ucx_am_data_t* data) {
 //   __atomic_store_n(&data->data_allocated, 1, __ATOMIC_SEQ_CST);

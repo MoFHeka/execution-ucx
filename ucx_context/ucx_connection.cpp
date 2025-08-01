@@ -235,7 +235,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_data(
   param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS;
   param.cb.send = (ucp_send_nbx_callback_t)common_request_callback;
   param.flags = UCP_AM_SEND_FLAG_REPLY;
-  param.datatype = 0;  // make coverity happy
+  param.datatype = UCP_DATATYPE_CONTIG;
   if (memh) {
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_MEMH;
     param.memh = memh;
