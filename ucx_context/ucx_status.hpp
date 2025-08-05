@@ -67,9 +67,9 @@ class UcxErrorCategory : public std::error_category {
    * @return std::error_condition The default error condition
    */
   std::error_condition default_error_condition(int ev) const noexcept override {
-    // Map UCX error codes to standard error conditions
     ucs_status_t status = static_cast<ucs_status_t>(ev);
 
+    // Handle success states according to CPP convention
     if (status == UCS_OK) {
       return std::error_condition(0, std::generic_category());
     }
@@ -78,54 +78,9 @@ class UcxErrorCategory : public std::error_category {
       return std::error_condition(0, std::generic_category());
     }
 
-    // Map common error codes to standard error conditions
-    switch (status) {
-      case UCS_ERR_NO_MEMORY:
-        return std::error_condition(
-          static_cast<int>(std::errc::not_enough_memory),
-          std::generic_category());
-      case UCS_ERR_INVALID_PARAM:
-        return std::error_condition(
-          static_cast<int>(std::errc::invalid_argument),
-          std::generic_category());
-      case UCS_ERR_UNREACHABLE:
-        return std::error_condition(
-          static_cast<int>(std::errc::network_unreachable),
-          std::generic_category());
-      case UCS_ERR_TIMED_OUT:
-        return std::error_condition(
-          static_cast<int>(std::errc::timed_out), std::generic_category());
-      case UCS_ERR_BUSY:
-        return std::error_condition(
-          static_cast<int>(std::errc::resource_unavailable_try_again),
-          std::generic_category());
-      case UCS_ERR_CANCELED:
-        return std::error_condition(
-          static_cast<int>(std::errc::operation_canceled),
-          std::generic_category());
-      case UCS_ERR_ALREADY_EXISTS:
-        return std::error_condition(
-          static_cast<int>(std::errc::file_exists), std::generic_category());
-      case UCS_ERR_OUT_OF_RANGE:
-        return std::error_condition(
-          static_cast<int>(std::errc::result_out_of_range),
-          std::generic_category());
-      case UCS_ERR_UNSUPPORTED:
-        return std::error_condition(
-          static_cast<int>(std::errc::operation_not_supported),
-          std::generic_category());
-      case UCS_ERR_NOT_CONNECTED:
-        return std::error_condition(
-          static_cast<int>(std::errc::not_connected), std::generic_category());
-      case UCS_ERR_CONNECTION_RESET:
-        return std::error_condition(
-          static_cast<int>(std::errc::connection_reset),
-          std::generic_category());
-      default:
-        // For other error codes, return a generic error condition
-        return std::error_condition(
-          static_cast<int>(std::errc::io_error), std::generic_category());
-    }
+    // For all UCX errors, return custom error condition to avoid conflicts
+    // with std::errc and preserve UCX error uniqueness
+    return std::error_condition(static_cast<int>(status), *this);
   }
 };
 
@@ -139,8 +94,25 @@ inline const UcxErrorCategory& ucx_error_category() noexcept {
   return category;
 }
 
+}  // namespace stdexe_ucx_runtime
+
+// Register UCX status codes with std::error_code system
+namespace std {
+template <>
+struct is_error_code_enum<ucs_status_t> : public true_type {};
+
+template <>
+struct is_error_condition_enum<ucs_status_t> : public true_type {};
+}  // namespace std
+
+// Global make_error_code and make_error_condition functions for ADL
+namespace stdexe_ucx_runtime {
+
 /**
- * @brief Create an std::error_code from a UCX status code
+ * @brief Global make_error_code function for ucs_status_t
+ *
+ * This function enables automatic conversion from ucs_status_t to
+ * std::error_code through ADL (Argument Dependent Lookup).
  *
  * @param status The UCX status code
  * @return std::error_code The corresponding std::error_code
@@ -150,7 +122,10 @@ inline std::error_code make_error_code(ucs_status_t status) noexcept {
 }
 
 /**
- * @brief Create an std::error_condition from a UCX status code
+ * @brief Global make_error_condition function for ucs_status_t
+ *
+ * This function enables automatic conversion from ucs_status_t to
+ * std::error_condition through ADL (Argument Dependent Lookup).
  *
  * @param status The UCX status code
  * @return std::error_condition The corresponding std::error_condition
@@ -161,10 +136,13 @@ inline std::error_condition make_error_condition(ucs_status_t status) noexcept {
 
 }  // namespace stdexe_ucx_runtime
 
-// Register UCX status codes with std::error_code system
-namespace std {
-template <>
-struct is_error_code_enum<ucs_status_t> : public true_type {};
-}  // namespace std
+// Additional ADL support in global namespace
+inline std::error_code make_error_code(ucs_status_t status) noexcept {
+  return stdexe_ucx_runtime::make_error_code(status);
+}
+
+inline std::error_condition make_error_condition(ucs_status_t status) noexcept {
+  return stdexe_ucx_runtime::make_error_condition(status);
+}
 
 #endif  // UCX_STATUS_HPP_

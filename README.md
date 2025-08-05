@@ -206,11 +206,8 @@ int main() {
       sizeof(sockaddr_in));
     assert(conn_id != 0);
 
-    auto status =
-      co_await connection_send(client_scheduler, conn_id, send_data);
-    if (status == UCS_OK) {
-      send_success.store(true);
-    }
+    co_await connection_send(client_scheduler, conn_id, send_data);
+    send_success.store(true);
   };
 
   // 4. Run tasks concurrently and wait for them to complete.

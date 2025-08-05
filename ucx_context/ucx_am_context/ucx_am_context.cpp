@@ -79,9 +79,10 @@ ucx_am_context::ucx_am_context(
     connTimeout_(connectionTimeout),
     deviceContext_(deviceContext),
     clientId_(clientId) {
-  bool success = ucx_am_context::init(ucxContextName);
-  if (!success) {
-    throw std::runtime_error("UCX Context initialization failed");
+  std::error_code ec = ucx_am_context::init(ucxContextName);
+  if (ec) {
+    throw std::runtime_error(
+      "UCX Context initialization failed: " + ec.message());
   }
 
   set_setimer_action_event();
@@ -112,9 +113,10 @@ ucx_am_context::ucx_am_context(
   }
   ucxAmContextName_ = std::string(ucpCtxAttr.name);
 
-  bool success = ucx_am_context::init_with_internal_ucp_context();
-  if (!success) {
-    throw std::runtime_error("UCX Context initialization failed");
+  std::error_code ec = ucx_am_context::init_with_internal_ucp_context();
+  if (ec) {
+    throw std::runtime_error(
+      "UCX Context initialization failed: " + ec.message());
   }
 
   set_setimer_action_event();
@@ -578,7 +580,7 @@ bool ucx_am_context::try_submit_timer_io_cancel() noexcept {
   return try_submit_io(populateSqe);
 }
 
-ucs_status_t ucx_am_context::init_ucp_context(
+std::error_code ucx_am_context::init_ucp_context(
   std::string_view name, ucp_context_h& ucpContext, bool printConfig) {
   ucs_status_t status;
 
@@ -603,25 +605,29 @@ ucs_status_t ucx_am_context::init_ucp_context(
 
   ucp_config_release(config);
 
-  return status;
+  return stdexe_ucx_runtime::make_error_code(status);
 }
 
-void ucx_am_context::destroy_ucp_context(ucp_context_h& ucpContext) {
-  ucp_cleanup(ucpContext);
+void ucx_am_context::destroy_ucp_context(ucp_context_h ucpContext) {
+  if (ucpContext) {
+    ucp_cleanup(ucpContext);
+  }
 }
 
 bool ucx_am_context::is_ucp_context_external() const noexcept {
   return isUcpContextExternal_;
 }
 
-ucs_status_t ucx_am_context::init_ucp_worker() {
+std::error_code ucx_am_context::init_ucp_worker() {
   ucp_worker_params_t worker_params;
   worker_params.field_mask =
     UCP_WORKER_PARAM_FIELD_THREAD_MODE | UCP_WORKER_PARAM_FIELD_CLIENT_ID;
   worker_params.thread_mode = UCS_THREAD_MODE_SINGLE;
   worker_params.client_id = clientId_;
 
-  return ucp_worker_create(ucpContext_, &worker_params, &ucpWorker_);
+  ucs_status_t status =
+    ucp_worker_create(ucpContext_, &worker_params, &ucpWorker_);
+  return stdexe_ucx_runtime::make_error_code(status);
 }
 
 void ucx_am_context::set_setimer_action_event() {
@@ -638,17 +644,16 @@ void ucx_am_context::set_setimer_action_event() {
   }
 }
 
-bool ucx_am_context::init_with_internal_ucp_context(bool forceInit) {
-  ucs_status_t status;
+std::error_code ucx_am_context::init_with_internal_ucp_context(bool forceInit) {
+  std::error_code ec;
 
   /* Create worker */
-  status = init_ucp_worker();
-  if (status != UCS_OK) {
+  ec = init_ucp_worker();
+  if (ec) {
     ucp_cleanup(ucpContext_);
     ucpContext_ = nullptr;
-    UCX_CTX_ERROR << "ucp_worker_create() failed: " << ucs_status_string(status)
-                  << "\n";
-    return false;
+    UCX_CTX_ERROR << "ucp_worker_create() failed: " << ec.message() << "\n";
+    return ec;
   }
 
   LOGX("created worker %p\n", ucpWorker_);
@@ -656,22 +661,22 @@ bool ucx_am_context::init_with_internal_ucp_context(bool forceInit) {
   set_am_handler(am_recv_callback, this);
 
   ucpContextInitialized_ = true;
-  return true;
+  return ec;
 }
 
-bool ucx_am_context::init(std::string_view name, bool forceInit) {
-  ucs_status_t status;
+std::error_code ucx_am_context::init(std::string_view name, bool forceInit) {
+  std::error_code ec;
 
   if (ucpContextInitialized_ && !forceInit) {
     UCX_CTX_INFO << "UCP Context already initialized\n";
-    return true;
+    return stdexe_ucx_runtime::make_error_code(UCS_OK);
   }
 
   /* Create context */
-  status = init_ucp_context(name, ucpContext_, forceInit);
-  if (status != UCS_OK) {
-    UCX_CTX_ERROR << "ucp_init() failed: " << ucs_status_string(status);
-    return false;
+  ec = init_ucp_context(name, ucpContext_, forceInit);
+  if (ec) {
+    UCX_CTX_ERROR << "ucp_init() failed: " << ec.message();
+    return ec;
   }
 
   LOGX("created context %p with AM \n", ucpContext_);
@@ -892,7 +897,7 @@ std::uint64_t ucx_am_context::recreate_connection_from_failed(
 }
 
 // UCX Worker memory map
-ucs_status_t ucx_am_context::register_ucx_memory(
+std::error_code ucx_am_context::register_ucx_memory(
   void* ptr, size_t size, ucp_mem_h& memh) {
   ucp_mem_map_params_t mem_map_params;
   mem_map_params.field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS
@@ -906,7 +911,7 @@ ucs_status_t ucx_am_context::register_ucx_memory(
   if (status != UCS_OK) {
     UCX_CTX_ERROR << "ucp_mem_map() failed: " << ucs_status_string(status);
   }
-  return status;
+  return stdexe_ucx_runtime::make_error_code(status);
 }
 
 void ucx_am_context::unregister_ucx_memory(ucp_mem_h& memh) {
@@ -957,14 +962,15 @@ std::tuple<ucs_status_t, std::uint64_t> ucx_am_context::progress_conn_request(
   return {status, conn_id};
 }
 
-std::vector<std::pair<std::uint64_t, ucs_status_t>>
+std::vector<std::pair<std::uint64_t, std::error_code>>
 ucx_am_context::progress_pending_conn_requests() {
-  std::vector<std::pair<std::uint64_t, ucs_status_t>> conn_id_status_vector;
+  std::vector<std::pair<std::uint64_t, std::error_code>> conn_id_status_vector;
 
   while (!epConnReqQueue_.empty()) {
     const auto epConnReq = std::move(epConnReqQueue_.front());
     auto [status, conn_id] = progress_conn_request(epConnReq);
-    conn_id_status_vector.push_back({conn_id, status});
+    conn_id_status_vector.push_back(
+      {conn_id, stdexe_ucx_runtime::make_error_code(status)});
     epConnReqQueue_.pop_front();
   }
 

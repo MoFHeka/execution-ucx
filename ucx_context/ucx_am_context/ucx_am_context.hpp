@@ -215,15 +215,15 @@ class ucx_am_context {
    * @param name A name for the context.
    * @param ucpContext[out] The created UCP context handle.
    * @param printConfig If true, print the UCP configuration.
-   * @return ucs_status_t The status of the operation.
+   * @return std::error_code The status of the operation.
    */
-  static ucs_status_t init_ucp_context(
+  static std::error_code init_ucp_context(
     std::string_view name, ucp_context_h& ucpContext, bool printConfig);
   /**
    * @brief Destroys a UCP context.
    * @param ucpContext The UCP context handle to destroy.
    */
-  static void destroy_ucp_context(ucp_context_h& ucpContext);
+  static void destroy_ucp_context(ucp_context_h ucpContext);
   /**
    * @brief Checks if the UCP context was provided externally.
    * @return bool True if the context is external, false otherwise.
@@ -231,18 +231,18 @@ class ucx_am_context {
   bool is_ucp_context_external() const noexcept;
   /**
    * @brief Initializes a UCP worker for this context.
-   * @return ucs_status_t The status of the operation.
+   * @return std::error_code The status of the operation.
    */
-  ucs_status_t init_ucp_worker();
+  std::error_code init_ucp_worker();
 
   /**
    * @brief Initializes the UCX AM context, including worker and AM handlers.
    * @param name The name for the UCP context if it needs to be created.
    * @param forceInit If true, force re-initialization even if already
    * initialized.
-   * @return bool True on success, false on failure.
+   * @return std::error_code The status of the operation.
    */
-  bool init(std::string_view name, bool forceInit = false);
+  std::error_code init(std::string_view name, bool forceInit = false);
 
   /**
    * @brief Runs the event loop for this context.
@@ -265,6 +265,30 @@ class ucx_am_context {
    * @return scheduler An object that can be used to schedule work.
    */
   scheduler get_scheduler() noexcept;
+
+  /**
+   * @brief Registers a memory region with the UCX worker.
+   *
+   * This function registers a memory region so that it can be used for UCX
+   * communication. The memory handle (memh) will be set on success.
+   *
+   * @param ptr Pointer to the memory region to register.
+   * @param size Size of the memory region in bytes.
+   * @param memh Reference to a ucp_mem_h handle that will be set to the
+   * registered memory handle.
+   * @return std::error_code The status of the registration operation.
+   */
+  std::error_code register_ucx_memory(void* ptr, size_t size, ucp_mem_h& memh);
+
+  /**
+   * @brief Unregisters a previously registered UCX memory region.
+   *
+   * This function releases the UCX memory handle and unregisters the memory
+   * region.
+   *
+   * @param memh Reference to the ucp_mem_h handle to unregister.
+   */
+  void unregister_ucx_memory(ucp_mem_h& memh);
 
  protected:
   class ucx_accept_callback;
@@ -345,7 +369,7 @@ class ucx_am_context {
   // UCX relative function
 
   // Init UCX context
-  bool init_with_internal_ucp_context(bool forceInit = false);
+  std::error_code init_with_internal_ucp_context(bool forceInit = false);
   void set_setimer_action_event();
 
   // Accept a new connection
@@ -384,17 +408,13 @@ class ucx_am_context {
   // Initialize the AM
   void set_am_handler(ucp_am_recv_callback_t cb, void* arg);
 
-  // UCX Worker memory map
-  ucs_status_t register_ucx_memory(void* ptr, size_t size, ucp_mem_h& memh);
-  void unregister_ucx_memory(ucp_mem_h& memh);
-
   // UCX Context Loop function
   unsigned progress_worker_event();
 
   std::tuple<ucs_status_t, std::uint64_t> progress_conn_request(
     const ep_conn_request& epConnReq);
 
-  std::vector<std::pair<std::uint64_t, ucs_status_t>>
+  std::vector<std::pair<std::uint64_t, std::error_code>>
   progress_pending_conn_requests();
 
   void progress_failed_connections();
@@ -993,7 +1013,8 @@ class ucx_am_context::recv_sender {
         }
         unifex::set_error(
           std::move(self.receiver_),
-          make_error_code(static_cast<ucs_status_t>(self.result_)));
+          stdexe_ucx_runtime::make_error_code(
+            static_cast<ucs_status_t>(self.result_)));
       }
     }
 
@@ -1213,13 +1234,10 @@ class ucx_am_context::send_sender {
       if (get_stop_token(self.receiver_).stop_requested()) {
         unifex::set_done(std::move(self.receiver_));
       } else if (self.result_ >= 0) {
-        if constexpr (noexcept(unifex::set_value(
-                        std::move(self.receiver_), ssize_t(self.result_)))) {
-          unifex::set_value(std::move(self.receiver_), ssize_t(self.result_));
+        if constexpr (noexcept(unifex::set_value(std::move(self.receiver_)))) {
+          unifex::set_value(std::move(self.receiver_));
         } else {
-          UNIFEX_TRY {
-            unifex::set_value(std::move(self.receiver_), ssize_t(self.result_));
-          }
+          UNIFEX_TRY { unifex::set_value(std::move(self.receiver_)); }
           UNIFEX_CATCH(...) {
             unifex::set_error(
               std::move(self.receiver_), std::current_exception());
@@ -1230,7 +1248,8 @@ class ucx_am_context::send_sender {
       } else {
         unifex::set_error(
           std::move(self.receiver_),
-          make_error_code(static_cast<ucs_status_t>(self.result_)));
+          stdexe_ucx_runtime::make_error_code(
+            static_cast<ucs_status_t>(self.result_)));
       }
     }
 
@@ -1275,7 +1294,7 @@ class ucx_am_context::send_sender {
   // Produces number of bytes read.
   template <
     template <typename...> class Variant, template <typename...> class Tuple>
-  using value_types = Variant<Tuple<ssize_t>>;
+  using value_types = Variant<Tuple<>>;
 
   // Note: Only case it might complete with exception_ptr is if the
   // receiver's set_value() exits with an exception.
@@ -1847,7 +1866,8 @@ class ucx_am_context::dispatch_connection_error_sender {
       } else {
         unifex::set_error(
           std::move(self.receiver_),
-          make_error_code(static_cast<ucs_status_t>(self.result_)));
+          stdexe_ucx_runtime::make_error_code(
+            static_cast<ucs_status_t>(self.result_)));
       }
     }
 
@@ -2094,7 +2114,8 @@ class ucx_am_context::connect_sender {
       } else {
         unifex::set_error(
           std::move(self.receiver_),
-          make_error_code(static_cast<ucs_status_t>(self.result_)));
+          stdexe_ucx_runtime::make_error_code(
+            static_cast<ucs_status_t>(self.result_)));
       }
     }
 
@@ -2339,7 +2360,7 @@ class ucx_am_context::accept_sender {
       if (get_stop_token(self.receiver_).stop_requested()) {
         unifex::set_done(std::move(self.receiver_));
       } else if (self.result_ >= 0) {
-        std::vector<std::pair<std::uint64_t, ucs_status_t>>
+        std::vector<std::pair<std::uint64_t, std::error_code>>
           conn_id_status_copy = self.connIdStatusVector_;
         if constexpr (noexcept(unifex::set_value(
                         std::move(self.receiver_),
@@ -2361,7 +2382,8 @@ class ucx_am_context::accept_sender {
       } else {
         unifex::set_error(
           std::move(self.receiver_),
-          make_error_code(static_cast<ucs_status_t>(self.result_)));
+          stdexe_ucx_runtime::make_error_code(
+            static_cast<ucs_status_t>(self.result_)));
       }
     }
 
@@ -2387,7 +2409,7 @@ class ucx_am_context::accept_sender {
     };
 
     ucx_am_context& context_;
-    std::vector<std::pair<std::uint64_t, ucs_status_t>> connIdStatusVector_;
+    std::vector<std::pair<std::uint64_t, std::error_code>> connIdStatusVector_;
     std::atomic_bool cancel_flag_{false};
     Receiver receiver_;
     manual_lifetime<typename stop_token_type_t<
@@ -2404,7 +2426,7 @@ class ucx_am_context::accept_sender {
   template <
     template <typename...> class Variant, template <typename...> class Tuple>
   using value_types =
-    Variant<Tuple<std::vector<std::pair<std::uint64_t, ucs_status_t>>>>;
+    Variant<Tuple<std::vector<std::pair<std::uint64_t, std::error_code>>>>;
 
   // Note: Only case it might complete with exception_ptr is if the
   // receiver's set_value() exits with an exception.
@@ -2529,7 +2551,8 @@ class ucx_am_context::accept_connection {
       void start() noexcept {
         if (listener_status_ != UCS_OK) {
           unifex::set_error(
-            std::move(receiver_), make_error_code(listener_status_));
+            std::move(receiver_),
+            stdexe_ucx_runtime::make_error_code(listener_status_));
         } else {
           start_accept();
         }

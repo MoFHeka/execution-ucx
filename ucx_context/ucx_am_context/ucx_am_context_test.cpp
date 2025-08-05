@@ -81,7 +81,6 @@ using stdexe_ucx_runtime::DefaultUcxMemoryResourceManager;
 using stdexe_ucx_runtime::UcxCudaMemoryResourceManager;
 #endif
 using stdexe_ucx_runtime::handle_error_connection;
-using stdexe_ucx_runtime::make_error_code;
 using stdexe_ucx_runtime::ucx_am_context;
 using stdexe_ucx_runtime::UcxAmDesc;
 using stdexe_ucx_runtime::UcxConnection;
@@ -188,9 +187,10 @@ class UcxContextCUDARunner : public UcxContextRunner {
 
  protected:
   void init() override {
-    auto status = ucx_am_context::init_ucp_context(name_, ucp_context_, false);
-    if (status != UCS_OK) {
-      throw std::runtime_error("UCX Context initialization failed");
+    auto ec = ucx_am_context::init_ucp_context(name_, ucp_context_, false);
+    if (ec) {
+      throw std::runtime_error(
+        "UCX Context initialization failed: " + ec.message());
     }
     CUcontext context;
     ASSERT_EQ(cuCtxGetCurrent(&context), CUDA_SUCCESS);
@@ -293,12 +293,12 @@ class UcxAmTest : public ::testing::Test {
         accept_endpoint(
           scheduler, std::move(serverSocket), sizeof(sockaddr_in)),
         single(stop_on_request(stopSource.get_token()))),
-      [&](std::vector<std::pair<std::uint64_t, ucs_status_t>>&&
+      [&](std::vector<std::pair<std::uint64_t, std::error_code>>&&
             conn_id_status_vector) {
         if (conn_id_status_vector.size() > 0) {
           for (auto [conn_id, status] : conn_id_status_vector) {
             EXPECT_NE(conn_id, std::uintptr_t(nullptr));
-            EXPECT_TRUE(status == UCS_OK || status == UCS_INPROGRESS);
+            EXPECT_TRUE(!status);
           }
         }
         spawn_detached(
@@ -316,10 +316,8 @@ class UcxAmTest : public ::testing::Test {
     std::uint64_t conn_id,
     ucx_am_data& sendData,
     std::atomic<bool>& sendSuccess) {
-    auto res = co_await connection_send(scheduler, conn_id, sendData);
-    if (res == UCS_OK) {
-      sendSuccess.store(true);
-    }
+    co_await connection_send(scheduler, conn_id, sendData);
+    sendSuccess.store(true);
   }
 
   task<void> clientConnectTask(
@@ -391,8 +389,7 @@ class UcxAmTest : public ::testing::Test {
     auto conn_id = active_message_bundle.connection().id();
     auto recvData = active_message_bundle.get_data();
     co_await launchProcessTask(processScheduler, recvData);
-    auto res = co_await connection_send(ucxScheduler, conn_id, recvData);
-    EXPECT_EQ(res, UCS_OK);
+    co_await connection_send(ucxScheduler, conn_id, recvData);
   }
 
   task<void> biDiServerStart(
@@ -407,12 +404,12 @@ class UcxAmTest : public ::testing::Test {
         accept_endpoint(
           scheduler, std::move(serverSocket), sizeof(sockaddr_in)),
         single(stop_on_request(stopSource.get_token()))),
-      [&](std::vector<std::pair<std::uint64_t, ucs_status_t>>&&
+      [&](std::vector<std::pair<std::uint64_t, std::error_code>>&&
             conn_id_status_vector) {
         if (conn_id_status_vector.size() > 0) {
           for (auto [conn_id, status] : conn_id_status_vector) {
             EXPECT_NE(conn_id, std::uintptr_t(nullptr));
-            EXPECT_TRUE(status == UCS_OK || status == UCS_INPROGRESS);
+            EXPECT_TRUE(!status);
           }
         }
         spawn_detached(
@@ -434,8 +431,7 @@ class UcxAmTest : public ::testing::Test {
     static_thread_pool::scheduler& processScheduler,
     std::uint64_t conn_id,
     ucx_am_data& sendData) {
-    auto res = co_await connection_send(ucxScheduler, conn_id, sendData);
-    EXPECT_EQ(res, UCS_OK);
+    co_await connection_send(ucxScheduler, conn_id, sendData);
     auto recvBundle =
       co_await connection_recv(ucxScheduler, sendData.data_type);
     co_return recvBundle.get_data();
@@ -787,7 +783,7 @@ TEST_F(UcxAmTest, SmallMessageTransfer) {
     clientConnectTask(clientScheduler, port, sendData, sendSuccess)));
 
   EXPECT_TRUE(messageReceived.load() && sendSuccess.load());
-  EXPECT_EQ(recvData.msg_length, messageSize);
+  EXPECT_EQ(recvData.data_length, messageSize);
   EXPECT_TRUE(verify_test_data(recvData.header, messageSize));
   EXPECT_TRUE(verify_test_data(recvData.data, messageSize));
 }
@@ -832,7 +828,7 @@ TEST_F(UcxAmTest, LargeMessageTransfer) {
     clientConnectTask(clientScheduler, port, sendData, sendSuccess)));
 
   EXPECT_TRUE(messageReceived.load() && sendSuccess.load());
-  EXPECT_EQ(recvData.msg_length, messageSize);
+  EXPECT_EQ(recvData.data_length, messageSize);
   EXPECT_TRUE(verify_test_data(recvData.header, headerSize));
   EXPECT_TRUE(verify_test_data(recvData.data, messageSize));
 }
