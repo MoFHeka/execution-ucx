@@ -51,7 +51,8 @@ typedef struct ucx_am_data {
   void* data;                   ///< Pointer to the message data payload.
   size_t data_length;           ///< Length of the message data payload.
   ucx_memory_type_t data_type;  ///< Memory type of the data buffer.
-  size_t msg_length;            ///< Actual active message length.
+  void* mem_h;                  ///< Memory handle for the data buffer. Could be
+                                ///< reinterpret_cast to ucp_mem_h.
   /* Release function for data, especially for AM Eager DATA */
   // void (*data_release_fn)(void*, size_t);  // NOLINT
   /* Atomic variable maybe useless here. Because even though if the cancel

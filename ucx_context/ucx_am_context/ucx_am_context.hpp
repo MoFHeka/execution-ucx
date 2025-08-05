@@ -742,12 +742,7 @@ class ucx_am_context::recv_sender {
           "passed to recv_sender constructor");
     }
 
-    ~operation() {
-      if (memh_) {
-        context_.unregister_ucx_memory(memh_);
-        memh_ = nullptr;
-      }
-    }
+    ~operation() {}
 
     void start() noexcept {
       if (!context_.is_running_on_io_thread()) {
@@ -829,7 +824,7 @@ class ucx_am_context::recv_sender {
           if (allocatedInnerData_ && data_.data) {
             mr_->deallocate(data_.data_type, data_.data, data_.data_length);
           }
-          data_.msg_length = amDesc.data_length;
+          data_.data_length = amDesc.data_length;
 
           this->execute_ = &operation::on_read_complete;
 
@@ -838,29 +833,20 @@ class ucx_am_context::recv_sender {
             // Setup memory and callback
             if (allocatedInnerData_) {
               data_.data = mr_->allocate(data_.data_type, amDesc.data_length);
-              data_.data_length = amDesc.data_length;
             }
             auto am_recv_cb =
               std::make_unique<CqeEntryCallback>(op_, [this]() -> ucx_am_cqe& {
                 return this->context_.get_completion_queue_entry();
               });
-            this->result_ = this->context_.register_ucx_memory(
-              data_.data, amDesc.data_length, memh_);
-            if (this->result_ < 0) {
-              auto& entry = this->context_.get_completion_queue_entry();
-              entry.user_data = op_;
-              entry.res = this->result_;
-              return;
-            }
+            auto impl_memh_ = reinterpret_cast<ucp_mem_h>(data_.mem_h);
             std::tie(this->result_, request_) = conn.get().recv_am_data(
-              data_.data, amDesc.data_length, memh_, std::move(amDesc),
+              data_.data, amDesc.data_length, impl_memh_, std::move(amDesc),
               std::move(am_recv_cb));
           } else {
             // Handle eager protocol
             if (amDesc.recv_attr & UCP_AM_RECV_ATTR_FLAG_DATA) {
               if (allocatedInnerData_) {
                 data_.data = mr_->allocate(data_.data_type, amDesc.data_length);
-                data_.data_length = amDesc.data_length;
               }
               mr_->memcpy(
                 data_.data_type, data_.data, ucx_memory_type::HOST, amDesc.desc,
@@ -870,7 +856,6 @@ class ucx_am_context::recv_sender {
               // Has been handled in the message callback
               // Eager message is always in host memory
               data_.data = amDesc.desc;
-              data_.data_length = amDesc.data_length;
               data_.data_type = ucx_memory_type::HOST;
             }
             this->result_ = conn.get().ucx_status();
@@ -1038,7 +1023,6 @@ class ucx_am_context::recv_sender {
     std::optional<std::unique_ptr<ucx_am_data>> dataInnerCreatedPtr_;
     ucx_am_data& data_;
     ucx_request* request_ = nullptr;
-    ucp_mem_h memh_ = nullptr;
     bool allocatedInnerData_ = false;
     const std::unique_ptr<ucx_memory_resource>& mr_;
     std::atomic_bool cancel_flag_{false};
@@ -1118,12 +1102,7 @@ class ucx_am_context::send_sender {
       }
     }
 
-    ~operation() {
-      if (memh_) {
-        context_.unregister_ucx_memory(memh_);
-        memh_ = nullptr;
-      }
-    }
+    ~operation() {}
 
     void start() noexcept {
       if (!context_.is_running_on_io_thread()) {
@@ -1163,19 +1142,12 @@ class ucx_am_context::send_sender {
             return this->context_.get_completion_queue_entry();
           });
         // Prepare buffer
-        this->result_ = this->context_.register_ucx_memory(
-          data_.data, data_.data_length, memh_);
-        if (this->result_ < 0) {
-          auto& entry = this->context_.get_completion_queue_entry();
-          entry.user_data = op_;
-          entry.res = this->result_;
-          return;
-        }
+        auto& conn_ref = conn_.value().get();
+        auto impl_memh_ = reinterpret_cast<ucp_mem_h>(data_.mem_h);
         // Call the send function
-        std::tie(this->result_, this->request_) =
-          conn_.value().get().send_am_data(
-            data_.header, data_.header_length, data_.data, data_.data_length,
-            memh_, std::move(am_send_cb));
+        std::tie(this->result_, this->request_) = conn_ref.send_am_data(
+          data_.header, data_.header_length, data_.data, data_.data_length,
+          impl_memh_, std::move(am_send_cb));
       };
 
       if (!context_.try_submit_io(populateSqe)) {
@@ -1288,7 +1260,6 @@ class ucx_am_context::send_sender {
     conn_opt_t conn_;
     ucx_am_data& data_;
     ucx_request* request_ = nullptr;
-    ucp_mem_h memh_ = nullptr;
     const std::unique_ptr<ucx_memory_resource>& mr_;
     std::atomic_bool cancel_flag_{false};
     Receiver receiver_;
