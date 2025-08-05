@@ -41,6 +41,8 @@ TODO(He Jia): For now only support Active Message.
 Please add Tag Message support in the future.
 */
 
+constexpr size_t DEFAULT_ZCOPY_THRESH = 4096;
+
 // Static member initialization
 std::uint32_t UcxConnection::num_instances_ = 0;
 
@@ -66,6 +68,54 @@ void CqeEntryCallback::operator()(ucs_status_t status) {
   auto& entry = get_entry_fn_();
   entry.user_data = user_data_;
   entry.res = status;
+}
+
+// Determine whether memory registration should be used based on UCP EP and
+// transport capabilities. Returns true if memory registration is recommended
+// for zero-copy or RDMA operations.
+
+bool is_rdma_transport_available(ucp_ep_h ep) {
+  if (!ep) {
+    return false;
+  }
+
+  ucp_ep_attr_t attr;
+  std::array<ucp_transport_entry_t, 16> transport_entries;  // 16 is enough
+  attr.field_mask = UCP_EP_ATTR_FIELD_TRANSPORTS;
+  attr.transports.entries = transport_entries.data();
+  attr.transports.num_entries = transport_entries.size();
+  attr.transports.entry_size = sizeof(ucp_transport_entry_t);
+
+  if (ucp_ep_query(ep, &attr) != UCS_OK) {
+    return false;
+  }
+
+  const char* rdma_transports[] = {"rc", "ud", "dc", "ib", "mlx", "roce"};
+  for (unsigned j = 0; j < attr.transports.num_entries; ++j) {
+    for (unsigned i = 0;
+         i < sizeof(rdma_transports) / sizeof(rdma_transports[0]);
+         ++i) {
+      if (strstr(
+            attr.transports.entries[j].transport_name, rdma_transports[i])) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+size_t get_zcopy_thresh() {
+  const char* val = getenv("UCX_ZCOPY_THRESH");
+  if (val == nullptr) {
+    return DEFAULT_ZCOPY_THRESH;
+  }
+  char* endptr = nullptr;
+  int64_t thresh = strtol(val, &endptr, 10);
+  if (endptr == val || thresh <= 0) {
+    return DEFAULT_ZCOPY_THRESH;
+  }
+  return static_cast<size_t>(thresh);
 }
 
 // UcxConnection implementation
@@ -224,7 +274,7 @@ bool UcxConnection::disconnect_progress(std::unique_ptr<UcxCallback> callback) {
 }
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_data(
-  const void* meta, size_t meta_length, const void* buffer, size_t length,
+  const void* header, size_t header_length, const void* buffer, size_t length,
   ucp_mem_h memh, std::unique_ptr<UcxCallback> callback) {
   if (ep_ == nullptr) {
     (*callback)(UCS_ERR_CANCELED);
@@ -242,7 +292,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_data(
   }
 
   ucs_status_ptr_t sptr = ucp_am_send_nbx(
-    ep_, DEFAULT_AM_MSG_ID, meta, meta_length, buffer, length, &param);
+    ep_, DEFAULT_AM_MSG_ID, header, header_length, buffer, length, &param);
   return process_request(
     "ucp_am_send_nbx", sptr, std::move(callback), UcxRequestType::Send);
 }
@@ -425,6 +475,10 @@ void UcxConnection::connect_am(std::unique_ptr<UcxCallback> callback) {
 void UcxConnection::established(ucs_status_t status) {
   ucx_status_ = status;
   invoke_callback(establish_cb_, status);
+
+  // Fast judge if zcopy is available
+  zcopy_thresh_ = get_zcopy_thresh();
+  is_rdma_transport_available_ = is_rdma_transport_available(ep_);
 }
 
 void UcxConnection::request_started(UcxRequest* r) {

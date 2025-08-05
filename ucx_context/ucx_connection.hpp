@@ -135,6 +135,10 @@ class CqeEntryCallback : public UcxCallback {
   std::function<ucx_am_cqe&()> get_entry_fn_;
 };
 
+bool is_rdma_transport_available(ucp_ep_h ep);
+
+bool is_zcopy_available(ucp_context_h context, size_t msg_len);
+
 struct UcxRequest {
   std::unique_ptr<UcxCallback> callback = std::unique_ptr<UcxCallback>(nullptr);
   std::optional<std::reference_wrapper<UcxConnection>> conn = std::nullopt;
@@ -234,8 +238,8 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
   /**
    * @brief Sends active message data
    *
-   * @param meta Metadata buffer
-   * @param meta_length Length of metadata
+   * @param header Data header buffer
+   * @param header_length Length of header
    * @param buffer Data buffer to send
    * @param length Length of data
    * @param memh Memory handle (optional)
@@ -243,7 +247,7 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
    * @return Tuple containing status and request pointer
    */
   std::tuple<ucs_status_t, UcxRequest*> send_am_data(
-    const void* meta, size_t meta_length, const void* buffer, size_t length,
+    const void* header, size_t header_length, const void* buffer, size_t length,
     ucp_mem_h memh,
     std::unique_ptr<UcxCallback> callback = EmptyCallback::get_unique());
 
@@ -303,6 +307,16 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
    * @return The log prefix string
    */
   const char* get_log_prefix() const { return log_prefix_; }
+
+  /**
+   * @brief Checks if zcopy should be used
+   *
+   * @param msg_len Message length
+   * @return true if zcopy should be used, false otherwise
+   */
+  bool should_use_zcopy(size_t msg_len) const {
+    return msg_len >= zcopy_thresh_ || is_rdma_transport_available_;
+  }
 
   /**
    * @brief Checks if the connection is established
@@ -462,6 +476,9 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
   void* close_request_;  // it's a ucs_status_ptr_t or UcxRequest*
   ucs_list_link_t all_requests_;
   ucs_status_t ucx_status_;
+  // Fast judge if zcopy is available
+  size_t zcopy_thresh_ = 0;
+  bool is_rdma_transport_available_ = false;
 };
 
 }  // namespace stdexe_ucx_runtime
