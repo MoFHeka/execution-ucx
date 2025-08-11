@@ -1,0 +1,355 @@
+diff --git a/configure.ac b/configure.ac
+index b7bc8ec07..a9666c8fe 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -135,8 +135,8 @@ m4_ifdef([AS_VAR_APPEND],
+ #
+ # Paths for loadable modules
+ #
+-AC_SUBST([modulesubdir],   [${PACKAGE_NAME}])               # module directory names
+-AC_SUBST([moduledir],      [${libdir}/${modulesubdir}])     # module installation directory
++AC_SUBST([modulesubdir],   [''])               # module directory names
++AC_SUBST([moduledir],      [${libdir}])     # module installation directory
+ AC_SUBST([localmoduledir], ['$(abs_top_builddir)/modules']) # local directory for module symlinks
+ AC_SUBST([objdir],         [${objdir}])                     # libtool objects dir, usually .libs
+ AC_SUBST([shrext],         [${shrext_cmds}])                # libtool shared library extension
+diff --git a/src/tools/perf/cuda/Makefile.am b/src/tools/perf/cuda/Makefile.am
+index 32d9d8dd9..5a6b1d648 100644
+--- a/src/tools/perf/cuda/Makefile.am
++++ b/src/tools/perf/cuda/Makefile.am
+@@ -9,7 +9,7 @@ if HAVE_CUDA
+ module_LTLIBRARIES               = libucx_perftest_cuda.la
+ libucx_perftest_cuda_la_CPPFLAGS = $(BASE_CPPFLAGS) $(CUDA_CPPFLAGS)
+ libucx_perftest_cuda_la_CFLAGS   = $(BASE_CFLAGS) $(CUDA_CFLAGS) $(LT_CFLAGS)
+-libucx_perftest_cuda_la_LDFLAGS  = $(CUDA_LDFLAGS) -version-info $(SOVERSION)
++libucx_perftest_cuda_la_LDFLAGS  = $(CUDA_LDFLAGS)
+ libucx_perftest_cuda_la_LIBADD   = $(CUDART_LIBS)
+ libucx_perftest_cuda_la_SOURCES  = cuda_alloc.c
+ 
+diff --git a/src/tools/perf/mad/Makefile.am b/src/tools/perf/mad/Makefile.am
+index 346021cf7..b3588e849 100644
+--- a/src/tools/perf/mad/Makefile.am
++++ b/src/tools/perf/mad/Makefile.am
+@@ -10,7 +10,7 @@ module_LTLIBRARIES              = libucx_perftest_mad.la
+ libucx_perftest_mad_la_CPPFLAGS = $(BASE_CPPFLAGS)
+ libucx_perftest_mad_la_CFLAGS   = $(BASE_CFLAGS) $(MAD_CFLAGS) \
+                                   $(OPENMP_CFLAGS) $(LT_CFLAGS)
+-libucx_perftest_mad_la_LDFLAGS  = $(MAD_LDFLAGS) -version-info $(SOVERSION)
++libucx_perftest_mad_la_LDFLAGS  = $(MAD_LDFLAGS)
+ libucx_perftest_mad_la_LIBADD   = $(MAD_LIBS)
+ libucx_perftest_mad_la_SOURCES  = perftest_mad.c
+ 
+diff --git a/src/tools/perf/rocm/Makefile.am b/src/tools/perf/rocm/Makefile.am
+index 7ad7ca10f..6131861d4 100644
+--- a/src/tools/perf/rocm/Makefile.am
++++ b/src/tools/perf/rocm/Makefile.am
+@@ -10,7 +10,7 @@ module_LTLIBRARIES               = libucx_perftest_rocm.la
+ libucx_perftest_rocm_la_CPPFLAGS = $(BASE_CPPFLAGS) $(HIP_CPPFLAGS)
+ libucx_perftest_rocm_la_CFLAGS   = $(BASE_CFLAGS) $(HIP_CFLAGS) \
+                                    $(LT_CFLAGS)
+-libucx_perftest_rocm_la_LDFLAGS  = $(HIP_LDFLAGS) $(HIP_LIBS) -version-info $(SOVERSION) \
++libucx_perftest_rocm_la_LDFLAGS  = $(HIP_LDFLAGS) $(HIP_LIBS) \
+                           $(patsubst %, -Xlinker %, -L$(ROCM_ROOT)/lib -rpath $(ROCM_ROOT)/hip/lib -rpath $(ROCM_ROOT)/lib) \
+                           $(patsubst %, -Xlinker %, --enable-new-dtags) \
+                           $(patsubst %, -Xlinker %, -rpath $(ROCM_ROOT)/lib64)
+diff --git a/src/tools/perf/ze/Makefile.am b/src/tools/perf/ze/Makefile.am
+index c09c7c84e..48275ed34 100644
+--- a/src/tools/perf/ze/Makefile.am
++++ b/src/tools/perf/ze/Makefile.am
+@@ -10,7 +10,7 @@ module_LTLIBRARIES             = libucx_perftest_ze.la
+ libucx_perftest_ze_la_CPPFLAGS = $(BASE_CPPFLAGS) $(ZE_CPPFLAGS)
+ libucx_perftest_ze_la_CFLAGS   = $(BASE_CFLAGS) $(ZE_CFLAGS) \
+                                  $(LT_CFLAGS)
+-libucx_perftest_ze_la_LDFLAGS  = $(ZE_LDFLAGS) $(ZE_LIBS) -version-info $(SOVERSION)
++libucx_perftest_ze_la_LDFLAGS  = $(ZE_LDFLAGS) $(ZE_LIBS)
+ libucx_perftest_ze_la_SOURCES  = ze_alloc.c
+ 
+ include $(top_srcdir)/config/module.am
+diff --git a/src/ucm/Makefile.am b/src/ucm/Makefile.am
+index 7866aa0ac..29dbbb166 100644
+--- a/src/ucm/Makefile.am
++++ b/src/ucm/Makefile.am
+@@ -11,7 +11,7 @@ SUBDIRS = . cuda rocm ze
+ lib_LTLIBRARIES    = libucm.la
+ libucm_ladir       = $(includedir)/ucm
+ libucm_la_LDFLAGS  = $(UCM_MODULE_LDFLAGS) \
+-                     -ldl -version-info $(SOVERSION)
++                     -ldl
+ libucm_la_CPPFLAGS = $(BASE_CPPFLAGS) -DUCM_MALLOC_PREFIX=ucm_dl
+ libucm_la_CFLAGS   = $(BASE_CFLAGS) $(CFLAGS_NO_DEPRECATED) \
+                      $(LT_CFLAGS)
+diff --git a/src/ucm/cuda/Makefile.am b/src/ucm/cuda/Makefile.am
+index e8eda0f50..39da17fa6 100644
+--- a/src/ucm/cuda/Makefile.am
++++ b/src/ucm/cuda/Makefile.am
+@@ -11,8 +11,7 @@ libucm_cuda_la_CPPFLAGS = $(BASE_CPPFLAGS) $(CUDA_CPPFLAGS)
+ libucm_cuda_la_CFLAGS   = $(BASE_CFLAGS) $(CUDA_CFLAGS) $(LT_CFLAGS)
+ libucm_cuda_la_LIBADD   = ../libucm.la $(CUDA_LIBS) $(CUDART_LIBS)
+ libucm_cuda_la_LDFLAGS  = $(UCM_MODULE_LDFLAGS) \
+-                          $(patsubst %, -Xlinker %, $(CUDA_LDFLAGS)) \
+-                          -version-info $(SOVERSION)
++                          $(patsubst %, -Xlinker %, $(CUDA_LDFLAGS))
+ 
+ noinst_HEADERS = \
+ 	cudamem.h
+diff --git a/src/ucm/rocm/Makefile.am b/src/ucm/rocm/Makefile.am
+index 57545b356..02e9bbe6c 100644
+--- a/src/ucm/rocm/Makefile.am
++++ b/src/ucm/rocm/Makefile.am
+@@ -12,7 +12,7 @@ libucm_rocm_la_CPPFLAGS = $(BASE_CPPFLAGS) $(ROCM_CPPFLAGS)
+ libucm_rocm_la_CFLAGS   = $(BASE_CFLAGS) $(ROCM_CFLAGS) $(LT_CFLAGS)
+ libucm_rocm_la_LIBADD   = ../libucm.la
+ libucm_rocm_la_LDFLAGS  = $(UCM_MODULE_LDFLAGS) \
+-                          $(ROCM_LDFLAGS) $(ROCM_LIBS) -version-info $(SOVERSION) \
++                          $(ROCM_LDFLAGS) $(ROCM_LIBS) \
+                           $(patsubst %, -Xlinker %, -L$(ROCM_ROOT)/lib -rpath $(ROCM_ROOT)/hip/lib -rpath $(ROCM_ROOT)/lib) \
+                           $(patsubst %, -Xlinker %, --enable-new-dtags) \
+                           $(patsubst %, -Xlinker %, -rpath $(ROCM_ROOT)/lib64)
+diff --git a/src/ucm/ze/Makefile.am b/src/ucm/ze/Makefile.am
+index 208ab9463..9c3bce7c4 100644
+--- a/src/ucm/ze/Makefile.am
++++ b/src/ucm/ze/Makefile.am
+@@ -11,8 +11,7 @@ libucm_ze_la_CPPFLAGS = $(BASE_CPPFLAGS) $(ZE_CPPFLAGS)
+ libucm_ze_la_CFLAGS   = $(BASE_CFLAGS) $(ZE_CFLAGS) $(LT_CFLAGS)
+ libucm_ze_la_LIBADD   = ../libucm.la $(ZE_LIBS)
+ libucm_ze_la_LDFLAGS  = $(UCM_MODULE_LDFLAGS) \
+-                          $(patsubst %, -Xlinker %, $(ZE_LDFLAGS)) \
+-                          -version-info $(SOVERSION)
++                          $(patsubst %, -Xlinker %, $(ZE_LDFLAGS))
+ 
+ noinst_HEADERS = \
+ 	zemem.h
+diff --git a/src/ucp/Makefile.am b/src/ucp/Makefile.am
+index 20682e7ca..f588aab31 100644
+--- a/src/ucp/Makefile.am
++++ b/src/ucp/Makefile.am
+@@ -10,7 +10,7 @@ lib_LTLIBRARIES     = libucp.la
+ libucp_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+ libucp_la_LIBS     =
+ libucp_la_CPPFLAGS = $(BASE_CPPFLAGS)
+-libucp_la_LDFLAGS  = -ldl -version-info $(SOVERSION)
++libucp_la_LDFLAGS  = -ldl
+ libucp_la_LIBADD   = ../ucs/libucs.la ../uct/libuct.la
+ libucp_ladir       = $(includedir)/ucp
+ 
+diff --git a/src/ucs/Makefile.am b/src/ucs/Makefile.am
+index 699a4addc..1943c4ae5 100644
+--- a/src/ucs/Makefile.am
++++ b/src/ucs/Makefile.am
+@@ -16,7 +16,7 @@ libucs_la_CPPFLAGS = $(BASE_CPPFLAGS) $(BFD_CPPFLAGS) \
+                      -DUCX_MODULE_DIR=\"$(moduledir)\" \
+                      -DUCX_CONFIG_DIR=\"$(ucx_config_dir)\"
+ libucs_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+-libucs_la_LDFLAGS  = -ldl $(BFD_LDFLAGS) -version-info $(SOVERSION)
++libucs_la_LDFLAGS  = -ldl $(BFD_LDFLAGS)
+ libucs_ladir       = $(includedir)/ucs
+ libucs_la_LIBADD   = $(LIBM) $(top_builddir)/src/ucm/libucm.la $(BFD_LIBS)
+ 
+@@ -235,10 +235,10 @@ ucs_stats_parser_LDADD   = libucs.la
+ ucs_stats_parser_SOURCES = stats/stats_parser.c
+ endif
+ 
+-all-local: $(objdir)/$(modulesubdir)
++all-local: $(objdir)
+ 
+-$(objdir)/$(modulesubdir): $(lib_LTLIBRARIES)
+-	$(AM_V_at)$(LN_RS) -fn $(localmoduledir) $(objdir)/$(modulesubdir)
++$(objdir): $(lib_LTLIBRARIES)
++	$(AM_V_at)$(LN_RS) -fn $(localmoduledir) $(objdir)
+ 
+ PKG_CONFIG_NAME=ucs
+ 
+diff --git a/src/ucs/signal/Makefile.am b/src/ucs/signal/Makefile.am
+index 96a6e8079..38fff432f 100644
+--- a/src/ucs/signal/Makefile.am
++++ b/src/ucs/signal/Makefile.am
+@@ -8,6 +8,6 @@ lib_LTLIBRARIES = libucs_signal.la
+ 
+ libucs_signal_la_CPPFLAGS = $(BASE_CPPFLAGS)
+ libucs_signal_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+-libucs_signal_la_LDFLAGS  = -version-info $(SOVERSION)
++libucs_signal_la_LDFLAGS  = 
+ libucs_signal_la_LIBADD   = $(top_builddir)/src/ucs/libucs.la
+ libucs_signal_la_SOURCES  = signal.c
+diff --git a/src/ucs/vfs/fuse/Makefile.am b/src/ucs/vfs/fuse/Makefile.am
+index bb4c555f7..a1b7e8582 100644
+--- a/src/ucs/vfs/fuse/Makefile.am
++++ b/src/ucs/vfs/fuse/Makefile.am
+@@ -12,7 +12,7 @@ libucs_fuse_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+ libucs_fuse_la_LIBADD   = $(FUSE3_LIBS) \
+                           $(top_builddir)/src/ucs/vfs/sock/libucs_vfs_sock.la \
+                           $(top_builddir)/src/ucs/libucs.la
+-libucs_fuse_la_LDFLAGS  = $(FUSE3_LDFLAGS) -version-info $(SOVERSION)
++libucs_fuse_la_LDFLAGS  = $(FUSE3_LDFLAGS)
+ libucs_fuse_la_SOURCES  = vfs_fuse.c
+ 
+ PKG_CONFIG_NAME=fuse
+diff --git a/src/uct/Makefile.am b/src/uct/Makefile.am
+index b3b9df153..67d639da1 100644
+--- a/src/uct/Makefile.am
++++ b/src/uct/Makefile.am
+@@ -13,7 +13,7 @@ lib_LTLIBRARIES    = libuct.la
+ libuct_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+ libuct_la_CPPFLAGS = $(BASE_CPPFLAGS)
+ libuct_la_LIBADD   = $(top_builddir)/src/ucs/libucs.la
+-libuct_la_LDFLAGS  = -ldl -version-info $(SOVERSION)
++libuct_la_LDFLAGS  = -ldl
+ libuct_ladir       = $(includedir)/uct
+ 
+ nobase_dist_libuct_la_HEADERS = \
+diff --git a/src/uct/cuda/Makefile.am b/src/uct/cuda/Makefile.am
+index 8c76de0d4..54fe2cef5 100644
+--- a/src/uct/cuda/Makefile.am
++++ b/src/uct/cuda/Makefile.am
+@@ -10,7 +10,7 @@ SUBDIRS = . gdr_copy
+ module_LTLIBRARIES      = libuct_cuda.la
+ libuct_cuda_la_CPPFLAGS = $(BASE_CPPFLAGS) $(CUDA_CPPFLAGS)
+ libuct_cuda_la_CFLAGS   = $(BASE_CFLAGS) $(CUDA_CFLAGS) $(LT_CFLAGS)
+-libuct_cuda_la_LDFLAGS  = $(CUDA_LDFLAGS) -version-info $(SOVERSION)
++libuct_cuda_la_LDFLAGS  = $(CUDA_LDFLAGS)
+ libuct_cuda_la_LIBADD   = $(top_builddir)/src/ucs/libucs.la \
+                           $(top_builddir)/src/uct/libuct.la \
+                           $(CUDA_LIBS) $(NVML_LIBS)
+diff --git a/src/uct/cuda/gdr_copy/Makefile.am b/src/uct/cuda/gdr_copy/Makefile.am
+index 06ad3dfb9..2c505479a 100644
+--- a/src/uct/cuda/gdr_copy/Makefile.am
++++ b/src/uct/cuda/gdr_copy/Makefile.am
+@@ -8,7 +8,7 @@ if HAVE_GDR_COPY
+ module_LTLIBRARIES              = libuct_cuda_gdrcopy.la
+ libuct_cuda_gdrcopy_la_CPPFLAGS = $(BASE_CPPFLAGS) $(GDR_COPY_CPPFLAGS)
+ libuct_cuda_gdrcopy_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+-libuct_cuda_gdrcopy_la_LDFLAGS  = $(GDR_COPY_LDFLAGS) -version-info $(SOVERSION)
++libuct_cuda_gdrcopy_la_LDFLAGS  = $(GDR_COPY_LDFLAGS)
+ libuct_cuda_gdrcopy_la_LIBADD   = $(top_builddir)/src/ucs/libucs.la \
+                                   $(top_builddir)/src/uct/cuda/libuct_cuda.la \
+                                   $(GDR_COPY_LIBS)
+diff --git a/src/uct/ib/Makefile.am b/src/uct/ib/Makefile.am
+index a6cc3daca..14ec9508f 100644
+--- a/src/uct/ib/Makefile.am
++++ b/src/uct/ib/Makefile.am
+@@ -12,7 +12,7 @@ libuct_ib_la_CPPFLAGS = $(BASE_CPPFLAGS) $(IBVERBS_CPPFLAGS)
+ libuct_ib_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+ libuct_ib_la_LIBADD   = $(top_builddir)/src/ucs/libucs.la \
+                         $(top_builddir)/src/uct/libuct.la
+-libuct_ib_la_LDFLAGS  = $(IBVERBS_LDFLAGS) -version-info $(SOVERSION)
++libuct_ib_la_LDFLAGS  = $(IBVERBS_LDFLAGS)
+ 
+ noinst_HEADERS = \
+ 	base/ib_device.h \
+diff --git a/src/uct/ib/mlx5/Makefile.am b/src/uct/ib/mlx5/Makefile.am
+index 6d078970f..87226dee9 100644
+--- a/src/uct/ib/mlx5/Makefile.am
++++ b/src/uct/ib/mlx5/Makefile.am
+@@ -8,7 +8,7 @@ if HAVE_MLX5_DV
+ module_LTLIBRARIES         = libuct_ib_mlx5.la
+ libuct_ib_mlx5_la_CPPFLAGS = $(BASE_CPPFLAGS) $(IBVERBS_CPPFLAGS)
+ libuct_ib_mlx5_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+-libuct_ib_mlx5_la_LDFLAGS  = $(LIB_MLX5) $(IBVERBS_LDFLAGS) -version-info $(SOVERSION)
++libuct_ib_mlx5_la_LDFLAGS  = $(LIB_MLX5) $(IBVERBS_LDFLAGS)
+ libuct_ib_mlx5_la_LIBADD   = $(top_builddir)/src/ucs/libucs.la \
+                              $(top_builddir)/src/uct/libuct.la \
+                              $(top_builddir)/src/uct/ib/libuct_ib.la
+diff --git a/src/uct/ib/rdmacm/Makefile.am b/src/uct/ib/rdmacm/Makefile.am
+index 8cfcf54d0..66abd52c8 100644
+--- a/src/uct/ib/rdmacm/Makefile.am
++++ b/src/uct/ib/rdmacm/Makefile.am
+@@ -19,7 +19,7 @@ if HAVE_DEVX
+ libuct_rdmacm_la_LIBADD  += $(LIB_MLX5)
+ endif
+ 
+-libuct_rdmacm_la_LDFLAGS  = $(IBVERBS_LDFLAGS) $(RDMACM_LDFLAGS) -version-info $(SOVERSION)
++libuct_rdmacm_la_LDFLAGS  = $(IBVERBS_LDFLAGS) $(RDMACM_LDFLAGS)
+ 
+ noinst_HEADERS = \
+ 	rdmacm_cm.h \
+diff --git a/src/uct/rocm/Makefile.am b/src/uct/rocm/Makefile.am
+index 310ca2e83..f710597ee 100644
+--- a/src/uct/rocm/Makefile.am
++++ b/src/uct/rocm/Makefile.am
+@@ -10,7 +10,7 @@ libuct_rocm_la_CPPFLAGS = $(BASE_CPPFLAGS) $(ROCM_CPPFLAGS)
+ libuct_rocm_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+ libuct_rocm_la_LIBADD   = $(top_builddir)/src/ucs/libucs.la \
+                           $(top_builddir)/src/uct/libuct.la
+-libuct_rocm_la_LDFLAGS  = $(ROCM_LDFLAGS) $(ROCM_LIBS) -version-info $(SOVERSION) \
++libuct_rocm_la_LDFLAGS  = $(ROCM_LDFLAGS) $(ROCM_LIBS) \
+                           $(patsubst %, -Xlinker %, -L$(ROCM_ROOT)/lib -rpath $(ROCM_ROOT)/hip/lib -rpath $(ROCM_ROOT)/lib) \
+                           $(patsubst %, -Xlinker %, --enable-new-dtags) \
+                           $(patsubst %, -Xlinker %, -rpath $(ROCM_ROOT)/lib64)
+diff --git a/src/uct/sm/mm/xpmem/Makefile.am b/src/uct/sm/mm/xpmem/Makefile.am
+index 17d360439..29728d9c8 100644
+--- a/src/uct/sm/mm/xpmem/Makefile.am
++++ b/src/uct/sm/mm/xpmem/Makefile.am
+@@ -11,7 +11,7 @@ libuct_xpmem_la_CFLAGS   = $(BASE_CFLAGS) $(XPMEM_CFLAGS) $(LT_CFLAGS)
+ libuct_xpmem_la_CPPFLAGS = $(BASE_CPPFLAGS)
+ libuct_xpmem_la_LIBADD   = $(top_builddir)/src/ucs/libucs.la \
+                            $(top_builddir)/src/uct/libuct.la
+-libuct_xpmem_la_LDFLAGS  = $(XPMEM_LIBS) -version-info $(SOVERSION)
++libuct_xpmem_la_LDFLAGS  = $(XPMEM_LIBS)
+ libuct_xpmem_la_SOURCES  = mm_xpmem.c
+ 
+ PKG_CONFIG_NAME=xpmem
+diff --git a/src/uct/sm/scopy/cma/Makefile.am b/src/uct/sm/scopy/cma/Makefile.am
+index cddba4dcd..cc6dfd3c0 100644
+--- a/src/uct/sm/scopy/cma/Makefile.am
++++ b/src/uct/sm/scopy/cma/Makefile.am
+@@ -10,7 +10,7 @@ libuct_cma_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+ libuct_cma_la_CPPFLAGS = $(BASE_CPPFLAGS)
+ libuct_cma_la_LIBADD   = $(top_builddir)/src/ucs/libucs.la \
+                          $(top_builddir)/src/uct/libuct.la
+-libuct_cma_la_LDFLAGS  = -version-info $(SOVERSION)
++libuct_cma_la_LDFLAGS  = 
+ 
+ noinst_HEADERS = \
+ 	cma_iface.h \
+diff --git a/src/uct/sm/scopy/knem/Makefile.am b/src/uct/sm/scopy/knem/Makefile.am
+index a0ee227ca..5b42ff91e 100644
+--- a/src/uct/sm/scopy/knem/Makefile.am
++++ b/src/uct/sm/scopy/knem/Makefile.am
+@@ -10,7 +10,7 @@ libuct_knem_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+ libuct_knem_la_CPPFLAGS = $(BASE_CPPFLAGS) $(KNEM_CPPFLAGS)
+ libuct_knem_la_LIBADD   = $(top_builddir)/src/ucs/libucs.la \
+                           $(top_builddir)/src/uct/libuct.la
+-libuct_knem_la_LDFLAGS  = -version-info $(SOVERSION) $(UCT_MODULE_LDFLAGS)
++libuct_knem_la_LDFLAGS  = $(UCT_MODULE_LDFLAGS)
+ 
+ noinst_HEADERS = \
+ 	knem_ep.h \
+diff --git a/src/uct/ugni/Makefile.am b/src/uct/ugni/Makefile.am
+index c654131c6..0c5fd69fa 100644
+--- a/src/uct/ugni/Makefile.am
++++ b/src/uct/ugni/Makefile.am
+@@ -11,7 +11,7 @@ libuct_ugni_la_CFLAGS   = $(BASE_CFLAGS) $(CRAY_UGNI_CFLAGS) \
+                           $(LT_CFLAGS)
+ libuct_ugni_la_LIBADD   = $(top_builddir)/src/ucs/libucs.la \
+                           $(top_builddir)/src/uct/libuct.la
+-libuct_ugni_la_LDFLAGS  = $(CRAY_UGNI_LIBS) -version-info $(SOVERSION)
++libuct_ugni_la_LDFLAGS  = $(CRAY_UGNI_LIBS)
+ 
+ noinst_HEADERS = \
+ 	base/ugni_def.h \
+diff --git a/src/uct/ze/Makefile.am b/src/uct/ze/Makefile.am
+index c2ef39c07..d8a4fd105 100644
+--- a/src/uct/ze/Makefile.am
++++ b/src/uct/ze/Makefile.am
+@@ -12,7 +12,7 @@ libuct_ze_la_CPPFLAGS = $(BASE_CPPFLAGS) $(ZE_CPPFLAGS)
+ libuct_ze_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+ libuct_ze_la_LIBADD   = $(top_builddir)/src/ucs/libucs.la \
+                           $(top_builddir)/src/uct/libuct.la
+-libuct_ze_la_LDFLAGS  = $(ZE_LDFLAGS) $(ZE_LIBS) -version-info $(SOVERSION) \
++libuct_ze_la_LDFLAGS  = $(ZE_LDFLAGS) $(ZE_LIBS) \
+                           $(patsubst %, -Xlinker %, -L$(ZE_ROOT)/lib -rpath $(ZE_ROOT)/hip/lib -rpath $(ZE_ROOT)/lib) \
+                           $(patsubst %, -Xlinker %, --enable-new-dtags) \
+                           $(patsubst %, -Xlinker %, -rpath $(ZE_ROOT)/lib64)
+diff --git a/test/gtest/ucs/test_module/Makefile.am b/test/gtest/ucs/test_module/Makefile.am
+index 0fc07b0a4..660e59ea7 100644
+--- a/test/gtest/ucs/test_module/Makefile.am
++++ b/test/gtest/ucs/test_module/Makefile.am
+@@ -7,7 +7,7 @@
+ module_LTLIBRARIES         = libtest_module.la
+ libtest_module_la_CPPFLAGS = $(BASE_CPPFLAGS)
+ libtest_module_la_CFLAGS   = $(BASE_CFLAGS) $(LT_CFLAGS)
+-libtest_module_la_LDFLAGS  = -version-info $(SOVERSION)
++libtest_module_la_LDFLAGS  = 
+ libtest_module_la_SOURCES  = test_module.c
+ 
+ include $(top_srcdir)/config/module.am

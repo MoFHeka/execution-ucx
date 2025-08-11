@@ -140,7 +140,7 @@ UcxConnection::UcxConnection(
   set_log_prefix((const struct sockaddr*)&in_addr, sizeof(in_addr));
   ucs_list_head_init(&all_requests_);
   UCX_CONN_DEBUG << "created new connection " << this
-                 << " total: " << num_instances_ << "\n";
+                 << " total: " << num_instances_ << std::endl;
 }
 
 UcxConnection::~UcxConnection() {
@@ -148,16 +148,14 @@ UcxConnection::~UcxConnection() {
    * the connection */
   if (ep_ != nullptr) {
     UCX_CONN_ERROR << "Disconnect connection before destroying! closing ep "
-                   << ep_ << " mode force"
-                   << "\n";
+                   << ep_ << " mode force" << std::endl;
     ucp_ep_close_nb(ep_, UCP_EP_CLOSE_MODE_FORCE);
   }
   assert(ep_ == nullptr);
   assert(ucs_list_is_empty(&all_requests_));
   assert(!UCS_PTR_IS_PTR(close_request_));
 
-  UCX_CONN_DEBUG << "UcxConnection destroyed"
-                 << "\n";
+  UCX_CONN_DEBUG << "UcxConnection destroyed" << std::endl;
   --num_instances_;
 }
 
@@ -185,7 +183,17 @@ void UcxConnection::connect(
   UCX_CONN_LOG << "Connecting to "
                << ucs_sockaddr_str(
                     dst_saddr, sockaddr_str, UCS_SOCKADDR_STRING_LEN)
-               << "\n";
+               << std::endl;
+
+  connect_common(ep_params, std::move(callback));
+}
+
+void UcxConnection::connect(
+  const ucp_address_t* ucp_address, std::unique_ptr<UcxCallback> callback) {
+  ucp_ep_params_t ep_params;
+  ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS;
+  ep_params.address = ucp_address;
+  UCX_CONN_LOG << "Connecting to UCP address " << ucp_address << std::endl;
 
   connect_common(ep_params, std::move(callback));
 }
@@ -202,7 +210,7 @@ void UcxConnection::accept(
       sizeof(conn_req_attr.client_address));
   } else {
     UCX_CONN_ERROR << "ucp_conn_request_query() failed: "
-                   << ucs_status_string(status) << "\n";
+                   << ucs_status_string(status) << std::endl;
   }
 
   ucp_ep_params_t ep_params;
@@ -216,7 +224,7 @@ void UcxConnection::disconnect(std::unique_ptr<UcxCallback> callback) {
     return;
   }
 
-  UCX_CONN_DEBUG << "disconnect, ep is " << ep_ << "\n";
+  UCX_CONN_DEBUG << "disconnect, ep is " << ep_ << std::endl;
 
   assert(disconnect_cb_ == nullptr);
   disconnect_cb_ = std::move(callback);
@@ -266,8 +274,7 @@ bool UcxConnection::disconnect_progress(std::unique_ptr<UcxCallback> callback) {
     }
   }
 
-  UCX_CONN_LOG << "disconnection completed"
-               << "\n";
+  UCX_CONN_LOG << "disconnection completed" << std::endl;
 
   invoke_callback(disconnect_cb_, UCS_OK);
   return true;
@@ -275,17 +282,20 @@ bool UcxConnection::disconnect_progress(std::unique_ptr<UcxCallback> callback) {
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_data(
   const void* header, size_t header_length, const void* buffer, size_t length,
-  ucp_mem_h memh, std::unique_ptr<UcxCallback> callback) {
+  ucp_mem_h memh, ucs_memory_type_t memory_type,
+  std::unique_ptr<UcxCallback> callback) {
   if (ep_ == nullptr) {
     (*callback)(UCS_ERR_CANCELED);
     return std::make_tuple(UCS_ERR_CANCELED, nullptr);
   }
 
   ucp_request_param_t param;
-  param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS;
+  param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS
+                       | UCP_OP_ATTR_FIELD_MEMORY_TYPE;
   param.cb.send = (ucp_send_nbx_callback_t)common_request_callback;
   param.flags = UCP_AM_SEND_FLAG_REPLY;
   param.datatype = UCP_DATATYPE_CONTIG;
+  param.memory_type = memory_type;
   if (memh) {
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_MEMH;
     param.memh = memh;
@@ -299,7 +309,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_data(
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_data(
   void* buffer, size_t length, ucp_mem_h memh, const UcxAmDesc&& data_desc,
-  std::unique_ptr<UcxCallback> callback) {
+  ucs_memory_type_t memory_type, std::unique_ptr<UcxCallback> callback) {
   assert(ep_ != nullptr);
 
   if (__builtin_expect(!ucx_am_is_rndv(data_desc), false)) {
@@ -308,9 +318,10 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_data(
   }
 
   ucp_request_param_t param;
-  param.op_attr_mask =
-    UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FLAG_NO_IMM_CMPL;
+  param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FLAG_NO_IMM_CMPL
+                       | UCP_OP_ATTR_FIELD_MEMORY_TYPE;
   param.cb.recv_am = (ucp_am_recv_data_nbx_callback_t)am_data_recv_callback;
+  param.memory_type = memory_type;
   if (memh) {
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_MEMH;
     param.memh = memh;
@@ -324,7 +335,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_data(
 
 void UcxConnection::cancel_request(UcxRequest* request) {
   UCX_CONN_DEBUG << "canceling " << request->what << " request " << request
-                 << "\n";
+                 << std::endl;
   ucp_request_cancel(worker_, request);
 }
 
@@ -339,7 +350,7 @@ void UcxConnection::cancel_send() {
     ++count;
     if (request->type == UcxRequestType::Send) {
       UCX_CONN_DEBUG << "canceling " << request->what << " request " << request
-                     << " #" << count << "\n";
+                     << " #" << count << std::endl;
       ucp_request_cancel(worker_, request);
     }
   }
@@ -356,7 +367,7 @@ void UcxConnection::cancel_recv() {
     ++count;
     if (request->type == UcxRequestType::Recv) {
       UCX_CONN_DEBUG << "canceling " << request->what << " request " << request
-                     << " #" << count << "\n";
+                     << " #" << count << std::endl;
       ucp_request_cancel(worker_, request);
     }
   }
@@ -382,7 +393,7 @@ void UcxConnection::handle_connection_error(ucs_status_t status) {
     return;
   }
 
-  UCX_CONN_LOG << "detected error: " << ucs_status_string(status) << "\n";
+  UCX_CONN_LOG << "detected error: " << ucs_status_string(status) << std::endl;
   ucx_status_ = status;
 
   /* the upper layer should close the connection */
@@ -443,7 +454,8 @@ void UcxConnection::connect_common(
   // create endpoint
   ep_params.field_mask |=
     UCP_EP_PARAM_FIELD_ERR_HANDLER | UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
-  ep_params.err_mode = UCP_ERR_HANDLING_MODE_PEER;
+  ep_params.err_mode =
+    handle_err_cb_ ? UCP_ERR_HANDLING_MODE_PEER : UCP_ERR_HANDLING_MODE_NONE;
   ep_params.err_handler.cb = error_callback;
   ep_params.err_handler.arg = reinterpret_cast<void*>(this);
 
@@ -451,13 +463,13 @@ void UcxConnection::connect_common(
   if (status != UCS_OK) {
     assert(ep_ == nullptr);
     UCX_CONN_ERROR << "ucp_ep_create() failed: " << ucs_status_string(status)
-                   << "\n";
+                   << std::endl;
     handle_connection_error(status);
     return;
   }
 
   UCX_CONN_DEBUG << "created endpoint " << ep_ << ", connection id " << conn_id_
-                 << "\n";
+                 << std::endl;
 
   // When connecting sucessfully, the establish_cb_ will be called.
   // establish_cb_ will call on_complete function and then add this connection
@@ -494,8 +506,7 @@ void UcxConnection::request_completed(UcxRequest* r) {
     UCX_CONN_ERROR << "completing " << r->what << " request " << r
                    << " with status \"" << ucs_status_string(r->status)
                    << "\" (" << r->status << ")"
-                   << " during disconnect"
-                   << "\n";
+                   << " during disconnect" << std::endl;
   }
 }
 
@@ -508,7 +519,8 @@ void UcxConnection::ep_close(enum ucp_ep_close_mode mode) {
 
   assert(close_request_ == nullptr);
 
-  UCX_CONN_DEBUG << "closing ep " << ep_ << " mode " << mode_str[mode] << "\n";
+  UCX_CONN_DEBUG << "closing ep " << ep_ << " mode " << mode_str[mode]
+                 << std::endl;
   close_request_ = ucp_ep_close_nb(ep_, mode);
   ep_ = nullptr;
 }
@@ -525,7 +537,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::process_request(
     status = UCS_PTR_STATUS(ptr_status);
     UCX_CONN_ERROR << what
                    << " failed with status: " << ucs_status_string(status)
-                   << "\n";
+                   << std::endl;
     (*callback)(status);
     return std::make_tuple(status, nullptr);
   } else {

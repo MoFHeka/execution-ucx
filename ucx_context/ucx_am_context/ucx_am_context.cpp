@@ -71,14 +71,17 @@ ucx_am_context::ucx_am_context(
   const std::unique_ptr<ucx_memory_resource>& memoryResource,
   const std::string_view ucxContextName,
   const time_duration connectionTimeout,
-  const std::optional<std::reference_wrapper<UcxAutoDeviceContext>>
-    deviceContext,
-  const uint64_t clientId)
+  const bool connectionHandleError,
+  const uint64_t clientId,
+  const std::unique_ptr<UcxAutoDeviceContext>
+    deviceContext)
   : mr_(memoryResource),
     ucxAmContextName_(ucxContextName),
     connTimeout_(connectionTimeout),
-    deviceContext_(deviceContext),
-    clientId_(clientId) {
+    connectionHandleError_(connectionHandleError),
+    clientId_(clientId),
+    deviceContext_(std::move(
+      const_cast<std::unique_ptr<UcxAutoDeviceContext>&>(deviceContext))) {
   std::error_code ec = ucx_am_context::init(ucxContextName);
   if (ec) {
     throw std::runtime_error(
@@ -91,28 +94,34 @@ ucx_am_context::ucx_am_context(
   UCX_CTX_DEBUG << "UCX Context construction done\n";
 }
 
-ucx_am_context::ucx_am_context(
-  const std::unique_ptr<ucx_memory_resource>& memoryResource,
-  const ucp_context_h ucpContext,
-  const time_duration connectionTimeout,
-  const std::optional<std::reference_wrapper<UcxAutoDeviceContext>>
-    deviceContext,
-  const uint64_t clientId)
-  : mr_(memoryResource),
-    connTimeout_(connectionTimeout),
-    deviceContext_(deviceContext),
-    clientId_(clientId),
-    ucpContext_(const_cast<ucp_context_h>(ucpContext)) {
+std::string context_name_from_ucp_context_(ucp_context_h ucpContext) {
   assert(ucpContext != nullptr);
-  isUcpContextExternal_ = true;
   ucp_context_attr_t ucpCtxAttr;
   ucs_status_t status = ucp_context_query(ucpContext, &ucpCtxAttr);
   if (status != UCS_OK) {
     throw std::runtime_error(
       "UCX Context query failed from passed ucp_context_h");
   }
-  ucxAmContextName_ = std::string(ucpCtxAttr.name);
+  return std::string(ucpCtxAttr.name);
+}
 
+ucx_am_context::ucx_am_context(
+  const std::unique_ptr<ucx_memory_resource>& memoryResource,
+  const ucp_context_h ucpContext,
+  const time_duration connectionTimeout,
+  const bool connectionHandleError,
+  const uint64_t clientId,
+  const std::unique_ptr<UcxAutoDeviceContext>
+    deviceContext)
+  : mr_(memoryResource),
+    ucxAmContextName_(context_name_from_ucp_context_(ucpContext)),
+    connTimeout_(connectionTimeout),
+    connectionHandleError_(connectionHandleError),
+    clientId_(clientId),
+    deviceContext_(std::move(
+      const_cast<std::unique_ptr<UcxAutoDeviceContext>&>(deviceContext))),
+    ucpContext_(const_cast<ucp_context_h>(ucpContext)),
+    isUcpContextExternal_(true) {
   std::error_code ec = ucx_am_context::init_with_internal_ucp_context();
   if (ec) {
     throw std::runtime_error(
@@ -149,9 +158,8 @@ void ucx_am_context::run_impl(const bool& shouldStop) {
 
   // Activate the device context if it is provided.
   std::unique_ptr<OperationRAII> deviceAutoContextOperation = nullptr;
-  if (deviceContext_.has_value()) {
-    deviceAutoContextOperation =
-      (deviceContext_.value().get())(ucpContext_, ucpWorker_);
+  if (deviceContext_) {
+    deviceAutoContextOperation = (*deviceContext_)(ucpContext_, ucpWorker_);
   }
 
   while (ucpContextInitialized_) {
@@ -581,7 +589,8 @@ bool ucx_am_context::try_submit_timer_io_cancel() noexcept {
 }
 
 std::error_code ucx_am_context::init_ucp_context(
-  std::string_view name, ucp_context_h& ucpContext, bool printConfig) {
+  std::string_view name, ucp_context_h* ucpContext, bool mtWorkersShared,
+  bool printConfig) {
   ucs_status_t status;
 
   ucp_params_t ucp_params;
@@ -592,6 +601,10 @@ std::error_code ucx_am_context::init_ucp_context(
   ucp_params.request_init = ucx_connection::request_init;
   ucp_params.request_size = sizeof(ucx_request);
   ucp_params.name = name.data();
+  if (mtWorkersShared) {
+    ucp_params.field_mask |= UCP_PARAM_FIELD_MT_WORKERS_SHARED;
+    ucp_params.mt_workers_shared = 1;
+  }
 
   ucp_config_t* config;
   status = ucp_config_read(nullptr, nullptr, &config);
@@ -601,7 +614,7 @@ std::error_code ucx_am_context::init_ucp_context(
     ucp_config_print(config, stdout, NULL, UCS_CONFIG_PRINT_CONFIG);
   }
 
-  status = ucp_init(&ucp_params, config, &ucpContext);
+  status = ucp_init(&ucp_params, config, ucpContext);
 
   ucp_config_release(config);
 
@@ -627,6 +640,16 @@ std::error_code ucx_am_context::init_ucp_worker() {
 
   ucs_status_t status =
     ucp_worker_create(ucpContext_, &worker_params, &ucpWorker_);
+  return stdexe_ucx_runtime::make_error_code(status);
+}
+
+std::error_code ucx_am_context::get_ucp_address(
+  std::vector<std::byte>& address_buffer) {
+  ucp_worker_attr_t attr;
+  attr.field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS;
+  ucs_status_t status = ucp_worker_query(ucpWorker_, &attr);
+  auto address = reinterpret_cast<const std::byte*>(attr.address);
+  address_buffer.assign(address, address + attr.address_length);
   return stdexe_ucx_runtime::make_error_code(status);
 }
 
@@ -673,7 +696,8 @@ std::error_code ucx_am_context::init(std::string_view name, bool forceInit) {
   }
 
   /* Create context */
-  ec = init_ucp_context(name, ucpContext_, forceInit);
+  ec =
+    init_ucp_context(name, &ucpContext_, /*mtWorkersShared=*/false, forceInit);
   if (ec) {
     UCX_CTX_ERROR << "ucp_init() failed: " << ec.message();
     return ec;
@@ -844,15 +868,40 @@ std::uint64_t ucx_am_context::create_new_connection(
   const struct sockaddr* src_saddr, const struct sockaddr* dst_saddr,
   socklen_t addrlen) {
   // Create a new connection instance
+  std::unique_ptr<ucx_handle_err_callback> handle_err_cb = nullptr;
+  if (connectionHandleError_) {
+    handle_err_cb = std::make_unique<ucx_handle_err_callback>(*this);
+  }
   auto new_conn = std::make_unique<ucx_connection>(
-    ucpWorker_, std::make_unique<ucx_handle_err_callback>(*this),
-    [this]() { return get_client_id(); });
+    ucpWorker_, std::move(handle_err_cb), [this]() { return get_client_id(); });
 
   // Call UcxConnection::connect to establish connection
   new_conn->connect(
     src_saddr, dst_saddr, addrlen,
     std::make_unique<ucx_connect_callback>(*this, new_conn.get()));
 
+  return handle_new_connection(std::move(new_conn));
+}
+
+std::uint64_t ucx_am_context::create_new_connection(
+  const ucp_address_t* ucp_address) {
+  // Create a new connection instance
+  std::unique_ptr<ucx_handle_err_callback> handle_err_cb = nullptr;
+  if (connectionHandleError_) {
+    handle_err_cb = std::make_unique<ucx_handle_err_callback>(*this);
+  }
+  auto new_conn = std::make_unique<ucx_connection>(
+    ucpWorker_, std::move(handle_err_cb), [this]() { return get_client_id(); });
+
+  // Call UcxConnection::connect to establish connection
+  new_conn->connect(
+    ucp_address, std::make_unique<ucx_connect_callback>(*this, new_conn.get()));
+
+  return handle_new_connection(std::move(new_conn));
+}
+
+std::uint64_t ucx_am_context::handle_new_connection(
+  std::unique_ptr<ucx_connection> new_conn) {
   // Get new connection ID and add to active map
   auto conn_id = new_conn->id();
   if (new_conn->ucx_status() == UCS_OK) {
@@ -1151,15 +1200,36 @@ ucx_am_context::connect_sender tag_invoke(
     static_cast<socklen_t>(addrlen)};
 }
 
+ucx_am_context::connect_sender tag_invoke(
+  tag_t<connect_endpoint>,
+  ucx_am_context::scheduler scheduler,
+  std::vector<std::byte>& address_buffer) {
+  assert(address_buffer.size() > 0);
+  std::vector<std::byte> ucp_address_buffer(
+    address_buffer.begin(), address_buffer.end());
+  return ucx_am_context::connect_sender{
+    *scheduler.context_, std::move(ucp_address_buffer)};
+}
+
+ucx_am_context::connect_sender tag_invoke(
+  tag_t<connect_endpoint>,
+  ucx_am_context::scheduler scheduler,
+  std::vector<std::byte>&& address_buffer) {
+  return ucx_am_context::connect_sender{
+    *scheduler.context_, std::move(address_buffer)};
+}
+
 ucx_am_context::accept_connection tag_invoke(
   tag_t<accept_endpoint>, ucx_am_context::scheduler scheduler,
   std::unique_ptr<sockaddr> socket, size_t addrlen) {
+  UNIFEX_ASSERT(scheduler.context_->is_connection_handle_error());
   return ucx_am_context::accept_connection{
     *scheduler.context_, std::move(socket), addrlen};
 }
 
 ucx_am_context::accept_connection tag_invoke(
   tag_t<accept_endpoint>, ucx_am_context::scheduler scheduler, port_t port) {
+  UNIFEX_ASSERT(scheduler.context_->is_connection_handle_error());
   return ucx_am_context::accept_connection{*scheduler.context_, port};
 }
 

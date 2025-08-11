@@ -15,7 +15,7 @@ cc_library(
     ],
     copts = ["-std=c++17"],
     deps = [
-        "@ucx",
+        "@ucx//:ucx_runtime",
     ],
 )
 

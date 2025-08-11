@@ -22,8 +22,11 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include <unifex/detail/prologue.hpp>
 #include <unifex/tag_invoke.hpp>
@@ -120,6 +123,25 @@ inline constexpr bool is_length_type_v =
   || std::is_same_v<std::decay_t<T>, socklen_t>;
 
 /**
+ * @brief Type trait to determine if a type is a valid send parameter for
+ * connect_endpoint.
+ *
+ * This trait evaluates to true if the type T (after removing cv and reference
+ * qualifiers) is one of the following:
+ *   - std::string_view
+ *   - std::string
+ *   - void* (will be casted to ucp_address_t*)
+ *
+ * @tparam T The type to check.
+ */
+template <typename T>
+inline constexpr bool is_send_parameter_v =
+  std::is_same_v<std::decay_t<T>, std::string_view>
+  || std::is_same_v<std::decay_t<T>, std::string>
+  || std::is_same_v<std::decay_t<T>, void*>
+  || std::is_same_v<std::decay_t<T>, std::vector<std::byte>>;
+
+/**
  * @brief CPO for establishing an outbound connection to a remote endpoint.
  *
  * Creates a sender that, when started, attempts to connect to the specified
@@ -172,6 +194,34 @@ inline constexpr struct connect_endpoint_cpo final {
       std::move(src_saddr),
       std::move(dst_saddr),
       addrlen);
+  }
+
+  /**
+   * @brief Overload of connect_endpoint_cpo for send parameters.
+   *
+   * This overload enables connect_endpoint to be invoked with a scheduler and a
+   * send parameter (such as std::string_view, std::string, or void*). The
+   * function forwards the call to tag_invoke, enabling customization point
+   * behavior.
+   *
+   * @tparam Scheduler The type of the scheduler.
+   * @tparam SendParam The type of the send parameter, constrained by
+   * is_send_parameter_v.
+   * @param sched The scheduler to use for the operation.
+   * @param send_param The send parameter to be used in the connection
+   * operation.
+   * @return The result of tag_invoke for connect_endpoint_cpo with the given
+   * arguments.
+   */
+  template <
+    typename Scheduler,
+    typename SendParam,
+    std::enable_if_t<is_send_parameter_v<SendParam>, int> = 0>
+  constexpr auto operator()(Scheduler&& sched, SendParam&& send_param) const
+    noexcept(
+      is_nothrow_tag_invocable_v<connect_endpoint_cpo, Scheduler, SendParam>)
+      -> tag_invoke_result_t<connect_endpoint_cpo, Scheduler, SendParam> {
+    return tag_invoke(*this, static_cast<Scheduler&&>(sched), send_param);
   }
 } connect_endpoint{};
 

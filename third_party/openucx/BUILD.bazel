@@ -3,7 +3,7 @@ Unified Communication X (UCX) is an award winning, optimized production proven-c
 """
 
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
-load("@//build_deps/bazel_rules:extract_from_filegroup.bzl", "find_and_group_outputs")
+load("@rules_cuda//cuda:defs.bzl", "requires_cuda")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -83,23 +83,25 @@ configure_make(
         "libuct.so",
         "libuct.so.0",
         "libuct.so.0.0.0",
-        "ucx/libuct_cma.so",
-        "ucx/libuct_cma.so.0",
-        "ucx/libuct_cma.so.0.0.0",
-        "ucx/libuct_ib.so",
-        "ucx/libuct_ib.so.0",
-        "ucx/libuct_ib.so.0.0.0",
-        "ucx/libuct_ib_mlx5.so",
-        "ucx/libuct_ib_mlx5.so.0",
-        "ucx/libuct_ib_mlx5.so.0.0.0",
+        # ucx directory prefix has been removed
+        "libuct_cma.so",
+        "libuct_cma.so.0",
+        "libuct_cma.so.0.0.0",
+        "libuct_ib.so",
+        "libuct_ib.so.0",
+        "libuct_ib.so.0.0.0",
+        "libuct_ib_mlx5.so",
+        "libuct_ib_mlx5.so.0",
+        "libuct_ib_mlx5.so.0.0.0",
     ] + select({
         "@rules_cuda//cuda:is_enabled": [
-            "ucx/libucm_cuda.so",
-            "ucx/libucm_cuda.so.0",
-            "ucx/libucm_cuda.so.0.0.0",
-            "ucx/libuct_cuda.so",
-            "ucx/libuct_cuda.so.0",
-            "ucx/libuct_cuda.so.0.0.0",
+            # ucx directory prefix has been removed
+            "libucm_cuda.so",
+            "libucm_cuda.so.0",
+            "libucm_cuda.so.0.0.0",
+            "libuct_cuda.so",
+            "libuct_cuda.so.0",
+            "libuct_cuda.so.0.0.0",
         ],
         "//conditions:default": [
         ],
@@ -110,13 +112,14 @@ configure_make(
         "libucs_signal.a",
         "libucs.a",
         "libuct.a",
-        "ucx/libuct_cma.a",
-        "ucx/libuct_ib.a",
-        "ucx/libuct_ib_mlx5.a",
+        # ucx directory prefix has been removed
+        "libuct_cma.a",
+        "libuct_ib.a",
+        "libuct_ib_mlx5.a",
     ] + select({
         "@rules_cuda//cuda:is_enabled": [
-            "ucx/libucm_cuda.a",
-            "ucx/libuct_cuda.a",
+            "libucm_cuda.a",
+            "libuct_cuda.a",
         ],
         "//conditions:default": [
         ],
@@ -139,6 +142,26 @@ filegroup(
 )
 
 filegroup(
+    name = "ucx_libs_all",
+    srcs = [":ucx"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "ucx_shared_libs",
+    srcs = [":ucx"],
+    output_group = "shared_libs",
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "ucx_static_libs",
+    srcs = [":ucx"],
+    output_group = "static_libs",
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
     name = "_ucx_header_includes",
     srcs = [":ucx"],
     output_group = "include",
@@ -153,112 +176,45 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
-find_and_group_outputs(
-    name = "_lib_ucm_cuda",
-    pattern = "libucm.so",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-find_and_group_outputs(
-    name = "_lib_ucm_cuda_static",
-    pattern = "libucm.a",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-cc_import(
-    name = "lib_ucm_cuda",
-    shared_library = ":_lib_ucm_cuda",
-    static_library = ":_lib_ucm_cuda_static",
-    visibility = ["//visibility:private"],
-)
-
-find_and_group_outputs(
-    name = "_lib_ucm",
-    pattern = "libucm.so",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-find_and_group_outputs(
-    name = "_lib_ucm_static",
-    pattern = "libucm.a",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-cc_import(
-    name = "lib_ucm",
-    shared_library = ":_lib_ucm",
-    static_library = ":_lib_ucm_static",
+cc_library(
+    name = "ucx_prebuilt",
+    srcs = [
+        ":ucx_libs_all",
+    ],
+    linkopts = [
+        "-Wl,--as-needed",
+    ],
     visibility = ["//visibility:public"],
 )
 
 cc_library(
     name = "ucm",
-    includes = ["include"],
+    includes = ["ucx/include"],
     linkopts = [
         "-Wl,--as-needed",
     ],
     linkstatic = False,
     deps = [
         ":ucx_headers",
-        ":lib_ucm",
-    ] + select({
-        "@rules_cuda//cuda:is_enabled": [
-            ":lib_ucm_cuda",
-        ],
-        "//conditions:default": [
-        ],
-    }),
+    ],
 )
 
 cc_library(
     name = "ucm_static",
-    includes = ["include"],
+    includes = ["ucx/include"],
     linkopts = [
         "-Wl,--as-needed",
     ],
     linkstatic = True,
     deps = [
         ":ucx_headers",
-        ":lib_ucm",
-    ] + select({
-        "@rules_cuda//cuda:is_enabled": [
-            ":lib_ucm_cuda",
-        ],
-        "//conditions:default": [
-        ],
-    }),
-)
-
-find_and_group_outputs(
-    name = "_lib_ucs_signal",
-    pattern = "libucs_signal.so",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-find_and_group_outputs(
-    name = "_lib_ucs_signal_static",
-    pattern = "libucs_signal.a",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-cc_import(
-    name = "lib_ucs_signal",
-    shared_library = ":_lib_ucs_signal",
-    static_library = ":_lib_ucs_signal_static",
-    visibility = ["//visibility:public"],
+    ],
 )
 
 cc_library(
     name = "ucs_signal",
     linkstatic = False,
     deps = [
-        ":lib_ucs_signal",
         ":ucx_headers",
     ],
 )
@@ -267,30 +223,8 @@ cc_library(
     name = "ucs_signal_static",
     linkstatic = True,
     deps = [
-        ":lib_ucs_signal",
         ":ucx_headers",
     ],
-)
-
-find_and_group_outputs(
-    name = "_lib_ucs",
-    pattern = "libucs.so",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-find_and_group_outputs(
-    name = "_lib_ucs_static",
-    pattern = "libucs.a",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-cc_import(
-    name = "lib_ucs",
-    shared_library = ":_lib_ucs",
-    static_library = ":_lib_ucs_static",
-    visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -305,10 +239,10 @@ cc_library(
     linkstatic = False,
     visibility = ["@ucc//:__pkg__"],
     deps = [
-        ":lib_ucs",
         ":ucm",
-        ":ucs_signal",  # unknown bug
+        ":ucs_signal",
         ":ucx_headers",
+        ":ucx_prebuilt",
     ],
 )
 
@@ -324,116 +258,11 @@ cc_library(
     linkstatic = True,
     visibility = ["@ucc//:__pkg__"],
     deps = [
-        ":lib_ucs",
         ":ucm_static",
-        ":ucs_signal_static",  # unknown bug
+        ":ucs_signal_static",
         ":ucx_headers",
+        ":ucx_prebuilt",
     ],
-)
-
-find_and_group_outputs(
-    name = "_lib_uct_cma",
-    pattern = "libuct_cma.so",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-find_and_group_outputs(
-    name = "_lib_uct_cma_static",
-    pattern = "libuct_cma.a",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-cc_import(
-    name = "lib_uct_cma",
-    shared_library = ":_lib_uct_cma",
-    static_library = ":_lib_uct_cma_static",
-    visibility = ["//visibility:public"],
-)
-
-find_and_group_outputs(
-    name = "_lib_uct_ib",
-    pattern = "libuct_ib.so",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-find_and_group_outputs(
-    name = "_lib_uct_ib_static",
-    pattern = "libuct_ib.a",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-cc_import(
-    name = "lib_uct_ib",
-    shared_library = ":_lib_uct_ib",
-    static_library = ":_lib_uct_ib_static",
-    visibility = ["//visibility:public"],
-)
-
-find_and_group_outputs(
-    name = "_lib_uct_ib_mlx5",
-    pattern = "libuct_ib_mlx5.so",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-find_and_group_outputs(
-    name = "_lib_uct_ib_mlx5_static",
-    pattern = "libuct_ib_mlx5.a",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-cc_import(
-    name = "lib_uct_ib_mlx5",
-    shared_library = ":_lib_uct_ib_mlx5",
-    static_library = ":_lib_uct_ib_mlx5_static",
-    visibility = ["//visibility:private"],
-)
-
-find_and_group_outputs(
-    name = "_lib_uct_cuda",
-    pattern = "libuct_cuda.so",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-find_and_group_outputs(
-    name = "_lib_uct_cuda_static",
-    pattern = "libuct_cuda.a",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-cc_import(
-    name = "lib_uct_cuda",
-    shared_library = ":_lib_uct_cuda",
-    static_library = ":_lib_uct_cuda_static",
-    visibility = ["//visibility:public"],
-)
-
-find_and_group_outputs(
-    name = "_lib_uct",
-    pattern = "libuct.so",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-find_and_group_outputs(
-    name = "_lib_uct_static",
-    pattern = "libuct.a",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-cc_import(
-    name = "lib_uct",
-    shared_library = ":_lib_uct",
-    static_library = ":_lib_uct_static",
-    visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -443,19 +272,10 @@ cc_library(
     ],
     linkstatic = False,
     deps = [
-        ":lib_uct",
         ":ucs",
         ":ucx_headers",
-        ":lib_uct_cma",
-        ":lib_uct_ib",
-        ":lib_uct_ib_mlx5",
-    ] + select({
-        "@rules_cuda//cuda:is_enabled": [
-            ":lib_uct_cuda",
-        ],
-        "//conditions:default": [
-        ],
-    }),
+        ":ucx_prebuilt",
+    ],
 )
 
 cc_library(
@@ -465,40 +285,10 @@ cc_library(
     ],
     linkstatic = True,
     deps = [
-        ":lib_uct",
         ":ucs_static",
         ":ucx_headers",
-        ":lib_uct_cma",
-        ":lib_uct_ib",
-        ":lib_uct_ib_mlx5",
-    ] + select({
-        "@rules_cuda//cuda:is_enabled": [
-            ":lib_uct_cuda",
-        ],
-        "//conditions:default": [
-        ],
-    }),
-)
-
-find_and_group_outputs(
-    name = "_lib_ucp",
-    pattern = "libucp.so",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-find_and_group_outputs(
-    name = "_lib_ucp_static",
-    pattern = "libucp.a",
-    targets_to_inspect = [":ucx"],
-    visibility = ["//visibility:private"],
-)
-
-cc_import(
-    name = "lib_ucp",
-    shared_library = ":_lib_ucp",
-    static_library = ":_lib_ucp_static",
-    visibility = ["//visibility:public"],
+        ":ucx_prebuilt",
+    ],
 )
 
 cc_library(
@@ -508,8 +298,8 @@ cc_library(
     ],
     linkstatic = False,
     deps = [
-        ":lib_ucp",
         ":ucx_headers",
+        ":ucx_prebuilt",
     ],
 )
 
@@ -520,8 +310,8 @@ cc_library(
     ],
     linkstatic = True,
     deps = [
-        ":lib_ucp",
         ":ucx_headers",
+        ":ucx_prebuilt",
     ],
 )
 

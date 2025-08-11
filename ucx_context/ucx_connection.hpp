@@ -203,6 +203,15 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
     socklen_t addrlen, std::unique_ptr<UcxCallback> callback);
 
   /**
+   * @brief Establishes a connection to a remote endpoint
+   *
+   * @param ucp_address The UCP address from ucp_worker_get_address.
+   * @param callback Callback to be called when connection is established
+   */
+  void connect(
+    const ucp_address_t* ucp_address, std::unique_ptr<UcxCallback> callback);
+
+  /**
    * @brief Accepts an incoming connection request
    *
    * @param conn_req The connection request handle
@@ -248,7 +257,7 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
    */
   std::tuple<ucs_status_t, UcxRequest*> send_am_data(
     const void* header, size_t header_length, const void* buffer, size_t length,
-    ucp_mem_h memh,
+    ucp_mem_h memh, ucs_memory_type_t memory_type,
     std::unique_ptr<UcxCallback> callback = EmptyCallback::get_unique());
 
   /**
@@ -258,11 +267,13 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
    * @param length Length of buffer
    * @param memh Memory handle (optional)
    * @param data_desc Active message descriptor
+   * @param memory_type The memory type of the receive buffer
    * @param callback Callback to be called when receive is complete
    * @return Tuple containing status and request pointer
    */
   std::tuple<ucs_status_t, UcxRequest*> recv_am_data(
     void* buffer, size_t length, ucp_mem_h memh, const UcxAmDesc&& data_desc,
+    ucs_memory_type_t memory_type,
     std::unique_ptr<UcxCallback> callback = EmptyCallback::get_unique());
 
   /**

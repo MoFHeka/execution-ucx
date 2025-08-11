@@ -357,6 +357,7 @@ void RunServer(
     std::vector<uint8_t> recv_data(arg.data_desc->data_length);
     auto [status, request] = conn->recv_am_data(
       recv_data.data(), recv_data.size(), nullptr, std::move(*arg.data_desc),
+      UCS_MEMORY_TYPE_HOST,
       std::make_unique<recv_am_nbx_callback>(recv_nbx_called));
     ASSERT_EQ(status, UCS_OK);
     ASSERT_EQ(request->type, UcxRequestType::Recv);
@@ -476,7 +477,7 @@ void RunClient(
   // Send data
   auto [status_send, request] = conn->send_am_data(
     header_data.data(), header_data.size(), send_data.data(), send_data.size(),
-    nullptr, std::move(send_callback));
+    nullptr, UCS_MEMORY_TYPE_HOST, std::move(send_callback));
   ASSERT_EQ(status_send, UCS_OK);
   ASSERT_EQ(request->type, UcxRequestType::Send);
   ASSERT_TRUE(request->status == UCS_OK || request->status == UCS_INPROGRESS);

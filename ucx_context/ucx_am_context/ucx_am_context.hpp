@@ -35,6 +35,7 @@ limitations under the License.
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -179,14 +180,17 @@ class ucx_am_context {
    * @param deviceContext An optional device context for hardware-specific
    * operations.
    * @param clientId A unique identifier for this client.
+   * @param connectionHandleError If true, connection will call
+   * ucx_handle_err_callback when error occurs. But it may make UCX TLS only use
+   * TCP.
    */
   ucx_am_context(
     const std::unique_ptr<ucx_memory_resource>& memoryResource,
     const std::string_view ucxContextName = "default",
     const time_duration connectionTimeout = std::chrono::seconds(30),
-    const std::optional<std::reference_wrapper<UcxAutoDeviceContext>>
-      deviceContext = std::nullopt,
-    const uint64_t clientId = CLIENT_ID_UNDEFINED);
+    const bool connectionHandleError = false,
+    const uint64_t clientId = CLIENT_ID_UNDEFINED,
+    const std::unique_ptr<UcxAutoDeviceContext> deviceContext = nullptr);
   /**
    * @brief Constructs a ucx_am_context with an existing UCP context.
    *
@@ -197,14 +201,17 @@ class ucx_am_context {
    * @param deviceContext An optional device context for hardware-specific
    * operations.
    * @param clientId A unique identifier for this client.
+   * @param connectionHandleError If true, connection will call
+   * ucx_handle_err_callback when error occurs. But it may make UCX TLS only use
+   * TCP.
    */
   ucx_am_context(
     const std::unique_ptr<ucx_memory_resource>& memoryResource,
     const ucp_context_h ucpContext,
     const time_duration connectionTimeout = std::chrono::seconds(30),
-    const std::optional<std::reference_wrapper<UcxAutoDeviceContext>>
-      deviceContext = std::nullopt,
-    const uint64_t clientId = CLIENT_ID_UNDEFINED);
+    const bool connectionHandleError = false,
+    const uint64_t clientId = CLIENT_ID_UNDEFINED,
+    const std::unique_ptr<UcxAutoDeviceContext> deviceContext = nullptr);
   /**
    * @brief Destroys the ucx_am_context, cleaning up UCX resources.
    */
@@ -214,11 +221,14 @@ class ucx_am_context {
    * @brief Initializes a UCP context.
    * @param name A name for the context.
    * @param ucpContext[out] The created UCP context handle.
+   * @param mtWorkersShared If true, use shared context for multiple UCX
+   * workers.
    * @param printConfig If true, print the UCP configuration.
    * @return std::error_code The status of the operation.
    */
   static std::error_code init_ucp_context(
-    std::string_view name, ucp_context_h& ucpContext, bool printConfig);
+    std::string_view name, ucp_context_h* ucpContext, bool mtWorkersShared,
+    bool printConfig);
   /**
    * @brief Destroys a UCP context.
    * @param ucpContext The UCP context handle to destroy.
@@ -234,6 +244,12 @@ class ucx_am_context {
    * @return std::error_code The status of the operation.
    */
   std::error_code init_ucp_worker();
+  /**
+   * @brief Gets the address of the UCP worker.
+   * @param address_buffer[out] The address of the UCP worker.
+   * @return std::error_code The status of the operation.
+   */
+  std::error_code get_ucp_address(std::vector<std::byte>& address_buffer);
 
   /**
    * @brief Initializes the UCX AM context, including worker and AM handlers.
@@ -289,6 +305,15 @@ class ucx_am_context {
    * @param memh Reference to the ucp_mem_h handle to unregister.
    */
   void unregister_ucx_memory(ucp_mem_h& memh);
+
+  /**
+   * @brief Checks if handle error in connection is enabled.
+   *
+   * @return true if handle error in connection is enabled, false otherwise.
+   */
+  bool is_connection_handle_error() const noexcept {
+    return connectionHandleError_;
+  }
 
  protected:
   class ucx_accept_callback;
@@ -388,6 +413,12 @@ class ucx_am_context {
     const struct sockaddr* src_saddr,
     const struct sockaddr* dst_saddr,
     socklen_t addrlen);
+
+  std::uint64_t create_new_connection(const ucp_address_t* ucp_address);
+
+  // Helper method to handle common connection creation logic
+  inline std::uint64_t handle_new_connection(
+    std::unique_ptr<ucx_connection> new_conn);
 
   std::uint64_t recreate_connection_from_failed(conn_pair_t conn);
 
@@ -547,20 +578,22 @@ class ucx_am_context {
   const std::unique_ptr<ucx_memory_resource>& mr_;
 
   // UCX context init parameters
-  std::string ucxAmContextName_ = "default";
+  const std::string ucxAmContextName_ = "default";
 
-  time_duration connTimeout_ = std::chrono::seconds(300);
+  const time_duration connTimeout_ = std::chrono::seconds(300);
 
-  std::optional<std::reference_wrapper<UcxAutoDeviceContext>> deviceContext_;
+  const bool connectionHandleError_ = false;
 
-  uint64_t clientId_ = CLIENT_ID_UNDEFINED;
+  const uint64_t clientId_ = CLIENT_ID_UNDEFINED;
+
+  const std::unique_ptr<UcxAutoDeviceContext> deviceContext_ = nullptr;
 
   // UCX context handle.
   ucp_context_h ucpContext_ = nullptr;
   ucp_worker_h ucpWorker_ = nullptr;
   ucp_listener_h ucpListener_ = nullptr;
   bool ucpContextInitialized_ = false;
-  bool isUcpContextExternal_ = false;
+  const bool isUcpContextExternal_ = false;
 
   // UCX arrived active message pending queue
   std::deque<ucx_am_desc> amDescQueue_;
@@ -837,10 +870,10 @@ class ucx_am_context::recv_sender {
           data_.header = amDesc.header;
           data_.header_length = amDesc.header_length;
 
+          allocatedInnerData_ =
+            !data_.data || data_.data_length < amDesc.data_length;
           // TODO(He Jia): Be careful, the data_ will be reallocated when its
           // length is not enough. Not sure if it's a good idea.
-          bool allocatedInnerData_ =
-            !data_.data || data_.data_length < amDesc.data_length;
           if (allocatedInnerData_ && data_.data) {
             mr_->deallocate(data_.data_type, data_.data, data_.data_length);
           }
@@ -861,7 +894,7 @@ class ucx_am_context::recv_sender {
             auto impl_memh_ = reinterpret_cast<ucp_mem_h>(data_.mem_h);
             std::tie(this->result_, request_) = conn.get().recv_am_data(
               data_.data, amDesc.data_length, impl_memh_, std::move(amDesc),
-              std::move(am_recv_cb));
+              mem_type_map(data_.data_type), std::move(am_recv_cb));
           } else {
             // Handle eager protocol
             if (amDesc.recv_attr & UCP_AM_RECV_ATTR_FLAG_DATA) {
@@ -1168,7 +1201,7 @@ class ucx_am_context::send_sender {
         // Call the send function
         std::tie(this->result_, this->request_) = conn_ref.send_am_data(
           data_.header, data_.header_length, data_.data, data_.data_length,
-          impl_memh_, std::move(am_send_cb));
+          impl_memh_, mem_type_map(data_.data_type), std::move(am_send_cb));
       };
 
       if (!context_.try_submit_io(populateSqe)) {
@@ -1598,6 +1631,12 @@ class ucx_am_context::scheduler {
   friend connect_sender tag_invoke(
     tag_t<connect_endpoint>, scheduler scheduler, std::nullptr_t src_saddr,
     std::unique_ptr<sockaddr> dst_saddr, size_t addrlen);
+  friend connect_sender tag_invoke(
+    tag_t<connect_endpoint>, scheduler scheduler,
+    std::vector<std::byte>& address_buffer);
+  friend connect_sender tag_invoke(
+    tag_t<connect_endpoint>, scheduler scheduler,
+    std::vector<std::byte>&& address_buffer);
   friend dispatch_connection_error_sender tag_invoke(
     tag_t<handle_error_connection>, scheduler scheduler,
     std::function<bool(std::uint64_t conn_id, ucs_status_t status)> handler);
@@ -1967,6 +2006,7 @@ class ucx_am_context::connect_sender {
         src_saddr_(std::move(const_cast<connect_sender&>(sender).src_saddr_)),
         dst_saddr_(std::move(const_cast<connect_sender&>(sender).dst_saddr_)),
         addrlen_(sender.addrlen_),
+        ucp_address_buffer_(std::move(sender.ucp_address_buffer_)),
         receiver_(static_cast<Receiver2&&>(r)) {}
 
     operation(operation&&) = delete;
@@ -2006,8 +2046,13 @@ class ucx_am_context::connect_sender {
         }
 
         // Create a new connection using the provided addresses
-        conn_id_ = context_.create_new_connection(
-          src_saddr_.get(), dst_saddr_.get(), addrlen_);
+        if (ucp_address_buffer_.size() > 0) {
+          conn_id_ = context_.create_new_connection(
+            reinterpret_cast<const ucp_address_t*>(ucp_address_buffer_.data()));
+        } else {
+          conn_id_ = context_.create_new_connection(
+            src_saddr_.get(), dst_saddr_.get(), addrlen_);
+        }
         auto conn_opt = context_.conn_manager_.get_connection(conn_id_);
 
         if (!conn_opt.has_value()) {
@@ -2144,6 +2189,7 @@ class ucx_am_context::connect_sender {
     std::unique_ptr<sockaddr> src_saddr_;
     std::unique_ptr<sockaddr> dst_saddr_;
     socklen_t addrlen_;
+    std::vector<std::byte> ucp_address_buffer_;
     std::uint64_t conn_id_ = 0;
     std::optional<std::reference_wrapper<UcxConnection>> conn_;
     std::atomic_bool cancel_flag_{false};
@@ -2190,7 +2236,19 @@ class ucx_am_context::connect_sender {
     : context_(context),
       src_saddr_(std::move(src_saddr)),
       dst_saddr_(std::move(dst_saddr)),
-      addrlen_(addrlen) {}
+      addrlen_(addrlen),
+      ucp_address_buffer_() {}
+
+  /**
+   * @brief Construct a new connect sender object with a UCX address.
+   *
+   * @param context The ucx_am_context to use.
+   * @param ucp_address_buffer The UCP address from ucp_worker_get_address.
+   */
+  connect_sender(
+    ucx_am_context& context,
+    std::vector<std::byte>&& ucp_address_buffer) noexcept
+    : context_(context), ucp_address_buffer_(std::move(ucp_address_buffer)) {}
 
   /**
    * @brief Move constructor for connect_sender.
@@ -2199,7 +2257,8 @@ class ucx_am_context::connect_sender {
     : context_(other.context_),
       src_saddr_(std::move(other.src_saddr_)),
       dst_saddr_(std::move(other.dst_saddr_)),
-      addrlen_(other.addrlen_) {}
+      addrlen_(other.addrlen_),
+      ucp_address_buffer_(std::move(other.ucp_address_buffer_)) {}
 
   /**
    * @brief Connects a receiver to the sender.
@@ -2220,6 +2279,7 @@ class ucx_am_context::connect_sender {
   std::unique_ptr<sockaddr> src_saddr_;
   std::unique_ptr<sockaddr> dst_saddr_;
   socklen_t addrlen_;
+  std::vector<std::byte> ucp_address_buffer_;
 };
 
 class ucx_am_context::accept_sender {

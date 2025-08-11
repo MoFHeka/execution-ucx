@@ -43,6 +43,7 @@ limitations under the License.
 #include <unifex/on.hpp>
 #include <unifex/overload.hpp>
 #include <unifex/range_stream.hpp>
+#include <unifex/repeat_effect_until.hpp>
 #include <unifex/scope_guard.hpp>
 #include <unifex/sequence.hpp>
 #include <unifex/single.hpp>
@@ -80,6 +81,7 @@ using stdexe_ucx_runtime::DefaultUcxMemoryResourceManager;
 #if CUDA_ENABLED
 using stdexe_ucx_runtime::UcxCudaMemoryResourceManager;
 #endif
+using stdexe_ucx_runtime::active_message_bundle;
 using stdexe_ucx_runtime::handle_error_connection;
 using stdexe_ucx_runtime::ucx_am_context;
 using stdexe_ucx_runtime::UcxAmDesc;
@@ -94,10 +96,12 @@ using unifex::inplace_stop_source;
 using unifex::just;
 using unifex::just_done;
 using unifex::just_error;
+using unifex::just_from;
 using unifex::let_done;
 using unifex::let_error;
 using unifex::on;
 using unifex::range_stream;
+using unifex::repeat_effect_until;
 using unifex::schedule_after;
 using unifex::sequence;
 using unifex::single;
@@ -164,7 +168,8 @@ class UcxContextHostRunner : public UcxContextRunner {
  protected:
   void init() override {
     memoryResource_.reset(new DefaultUcxMemoryResourceManager());
-    context_.reset(new ucx_am_context(memoryResource_, name_, timeout_));
+    context_.reset(new ucx_am_context(
+      memoryResource_, name_, timeout_, /*connectionHandleError=*/true));
     thread_ = std::thread([this] { context_->run(stopSource_.get_token()); });
     // Wait for context to initialize
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -172,11 +177,14 @@ class UcxContextHostRunner : public UcxContextRunner {
 };
 
 #if CUDA_ENABLED
+
+static ucp_context_h common_gpu_ucp_context_ = nullptr;
 class UcxContextCUDARunner : public UcxContextRunner {
  public:
   UcxContextCUDARunner(
-    std::string name, std::chrono::seconds timeout = std::chrono::seconds(300))
-    : UcxContextRunner(name, timeout) {
+    std::string name, bool use_ucp_address,
+    std::chrono::seconds timeout = std::chrono::seconds(300))
+    : UcxContextRunner(name, timeout), use_ucp_address_(use_ucp_address) {
     init();
   }
 
@@ -187,24 +195,42 @@ class UcxContextCUDARunner : public UcxContextRunner {
 
  protected:
   void init() override {
-    auto ec = ucx_am_context::init_ucp_context(name_, ucp_context_, false);
-    if (ec) {
-      throw std::runtime_error(
-        "UCX Context initialization failed: " + ec.message());
+    if (ucp_context_ == nullptr) {
+      auto ec = ucx_am_context::init_ucp_context(
+        name_, &ucp_context_,
+        /*mtWorkersShared=*/true, /*printConfig=*/false);
+      if (ec) {
+        throw std::runtime_error(
+          "UCX Context initialization failed: " + ec.message());
+      }
     }
-    CUcontext context;
-    ASSERT_EQ(cuCtxGetCurrent(&context), CUDA_SUCCESS);
-    auto_cuda_context_ = std::make_unique<UcxAutoCudaDeviceContext>(context);
+    if (!use_ucp_address_) {
+      // Only test with UcxAutoCudaDeviceContext when use_ucp_address_ is false.
+      CUcontext context;
+      ASSERT_EQ(cuCtxGetCurrent(&context), CUDA_SUCCESS);
+      auto_cuda_context_ = std::make_unique<UcxAutoCudaDeviceContext>(context);
+    }
     memoryResource_.reset(new UcxCudaMemoryResourceManager());
     context_.reset(new ucx_am_context(
-      memoryResource_, ucp_context_, timeout_, std::ref(*auto_cuda_context_)));
-    thread_ = std::thread([this] { context_->run(stopSource_.get_token()); });
+      memoryResource_, ucp_context_, timeout_,
+      /*connectionHandleError=*/!use_ucp_address_,
+      /*clientId=*/stdexe_ucx_runtime::CLIENT_ID_UNDEFINED,
+      std::move(auto_cuda_context_)));
+    thread_ = std::thread([this] {
+      if (use_ucp_address_) {
+        // You can use cudaSetDevice or UcxAutoCudaDeviceContext to set CUDA
+        // context.
+        cudaSetDevice(0);
+      }
+      context_->run(stopSource_.get_token());
+    });
     // Wait for context to initialize
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
-  ucp_context_h ucp_context_ = nullptr;
+  ucp_context_h ucp_context_ = common_gpu_ucp_context_;
   std::unique_ptr<UcxAutoDeviceContext> auto_cuda_context_ = nullptr;
+  bool use_ucp_address_ = false;
 };
 #endif
 
@@ -365,11 +391,7 @@ class UcxAmTest : public ::testing::Test {
                       break;
 #if CUDA_ENABLED
                     case ucx_memory_type::CUDA:
-                      if (recvData.data_length > kUcxRndvThreshold) {
-                        processRecvDataCuda(recvData);
-                      } else {
-                        processRecvDataHost(recvData);
-                      }
+                      processRecvDataCuda(recvData);
                       break;
 #endif
                     default:
@@ -380,16 +402,25 @@ class UcxAmTest : public ::testing::Test {
     co_return;
   }
 
+  task<void> biDiServerRecvSendTaskImpl(
+    ucx_am_context::scheduler& ucxScheduler,
+    static_thread_pool::scheduler& processScheduler,
+    active_message_bundle& data) {
+    auto conn_id = data.connection().id();
+    auto recvData = data.get_data();
+    co_await launchProcessTask(processScheduler, recvData);
+    co_await connection_send(ucxScheduler, conn_id, recvData);
+    co_return;
+  }
+
   task<void> biDiServerRecvSendTask(
     ucx_am_context::scheduler& ucxScheduler,
     static_thread_pool::scheduler& processScheduler,
     ucx_memory_type recvDataType) {
     auto active_message_bundle =
       co_await connection_recv(ucxScheduler, recvDataType);
-    auto conn_id = active_message_bundle.connection().id();
-    auto recvData = active_message_bundle.get_data();
-    co_await launchProcessTask(processScheduler, recvData);
-    co_await connection_send(ucxScheduler, conn_id, recvData);
+    co_await biDiServerRecvSendTaskImpl(
+      ucxScheduler, processScheduler, active_message_bundle);
   }
 
   task<void> biDiServerStart(
@@ -426,6 +457,44 @@ class UcxAmTest : public ::testing::Test {
     co_return;
   }
 
+  task<void> biDiServerRepeatRecvSendTask(
+    ucx_am_context::scheduler& ucxScheduler,
+    static_thread_pool::scheduler& processScheduler,
+    ucx_memory_type recvDataType, inplace_stop_source& stopSource) {
+    co_await repeat_effect_until(
+      with_query_value(
+        defer([&]() {
+          return biDiServerRecvSendTask(
+            ucxScheduler, processScheduler, recvDataType);
+        }),
+        get_stop_token,
+        stopSource.get_token()),
+      [&]() {
+        assert(stopSource.stop_requested() == false);
+        return stopSource.stop_requested();
+      });
+    co_return;
+  }
+
+  task<void> biDiServerStart(
+    ucx_am_context::scheduler& scheduler,
+    static_thread_pool::scheduler& processScheduler,
+    std::vector<std::byte>& client_ucp_address, ucx_memory_type recvDataType,
+    inplace_stop_source& stopSource) {
+    async_scope scope;
+    auto workerThread = processScheduler;
+    [[maybe_unused]] auto conn_id =
+      co_await connect_endpoint(scheduler, client_ucp_address);
+    spawn_detached(
+      on(
+        workerThread,
+        biDiServerRepeatRecvSendTask(
+          scheduler, processScheduler, recvDataType, stopSource)),
+      scope);
+    co_await scope.join();
+    co_return;
+  }
+
   task<ucx_am_data> biDiClientSendRecvTask(
     ucx_am_context::scheduler& ucxScheduler,
     static_thread_pool::scheduler& processScheduler,
@@ -437,22 +506,19 @@ class UcxAmTest : public ::testing::Test {
     co_return recvBundle.get_data();
   }
 
-  task<ucx_am_data> biDiClientStart(
+  task<ucx_am_data> biDiClientSpawnTask(
     ucx_am_context::scheduler& ucxScheduler,
-    static_thread_pool::scheduler& processScheduler, uint16_t port,
-    ucx_am_data& sendData, inplace_stop_source& stopSource) {
-    async_scope scope;
-    auto workerThread = processScheduler;
-    auto clientSocket = create_client_socket(port);
-    auto conn_id = co_await connect_endpoint(
-      ucxScheduler, nullptr, std::move(clientSocket), sizeof(sockaddr_in));
-
+    static_thread_pool::scheduler& workerThread,
+    async_scope& scope,
+    inplace_stop_source& stopSource,
+    std::uint64_t conn_id,
+    ucx_am_data& sendData) {
     auto recvData = co_await let_error(
       spawn_future(
         on(
           workerThread,
           biDiClientSendRecvTask(
-            ucxScheduler, processScheduler, conn_id, sendData)),
+            ucxScheduler, workerThread, conn_id, sendData)),
         scope),
       [&](std::exception_ptr ep) -> task<ucx_am_data> {
         try {
@@ -470,9 +536,35 @@ class UcxAmTest : public ::testing::Test {
     co_return recvData;
   }
 
+  task<ucx_am_data> biDiClientStart(
+    ucx_am_context::scheduler& ucxScheduler,
+    static_thread_pool::scheduler& processScheduler, uint16_t port,
+    ucx_am_data& sendData, inplace_stop_source& stopSource) {
+    async_scope scope;
+    auto workerThread = processScheduler;
+    auto clientSocket = create_client_socket(port);
+    auto conn_id = co_await connect_endpoint(
+      ucxScheduler, nullptr, std::move(clientSocket), sizeof(sockaddr_in));
+    co_return co_await biDiClientSpawnTask(
+      ucxScheduler, workerThread, scope, stopSource, conn_id, sendData);
+  }
+
+  task<ucx_am_data> biDiClientStart(
+    ucx_am_context::scheduler& ucxScheduler,
+    static_thread_pool::scheduler& processScheduler,
+    std::vector<std::byte>& server_ucp_address, ucx_am_data& sendData,
+    inplace_stop_source& stopSource) {
+    async_scope scope;
+    auto workerThread = processScheduler;
+    auto conn_id = co_await connect_endpoint(ucxScheduler, server_ucp_address);
+    co_return co_await biDiClientSpawnTask(
+      ucxScheduler, workerThread, scope, stopSource, conn_id, sendData);
+  }
+
   // Helper function for bidirectional transfer tests
   void runBidirectionalTransferTestLogic(
-    size_t floatDataSize, ucx_memory_type test_memory_type) {
+    size_t floatDataSize, ucx_memory_type test_memory_type,
+    bool use_ucp_address = false) {
 #if !CUDA_ENABLED
     if (test_memory_type == ucx_memory_type::CUDA) {
       GTEST_SKIP()
@@ -493,10 +585,10 @@ class UcxAmTest : public ::testing::Test {
         break;
 #if CUDA_ENABLED
       case ucx_memory_type::CUDA:
-        server_runner_ptr =
-          std::make_unique<UcxContextCUDARunner>("server_cuda");
-        client_runner_ptr =
-          std::make_unique<UcxContextCUDARunner>("client_cuda");
+        server_runner_ptr = std::make_unique<UcxContextCUDARunner>(
+          "server_cuda", use_ucp_address);
+        client_runner_ptr = std::make_unique<UcxContextCUDARunner>(
+          "client_cuda", use_ucp_address);
         break;
 #endif
       case ucx_memory_type::CUDA_MANAGED:
@@ -586,12 +678,36 @@ class UcxAmTest : public ::testing::Test {
 
     inplace_stop_source stopSource;
 
-    auto combined_tasks = when_all(
-      biDiServerStart(
+    std::optional<task<void>> server_task;
+    std::optional<task<ucx_am_data>> client_task;
+    std::vector<std::byte> server_ucp_address;
+    std::vector<std::byte> client_ucp_address;
+
+    if (use_ucp_address) {
+      ASSERT_EQ(
+        server.get_context().get_ucp_address(server_ucp_address).value(), 0);
+      ASSERT_EQ(
+        client.get_context().get_ucp_address(client_ucp_address).value(), 0);
+      auto server_task_impl = biDiServerStart(
+        serverScheduler, processScheduler, client_ucp_address,
+        sendData.data_type, stopSource);
+      auto client_task_impl = biDiClientStart(
+        clientScheduler, processScheduler, server_ucp_address, sendData,
+        stopSource);
+      server_task.emplace(std::move(server_task_impl));
+      client_task.emplace(std::move(client_task_impl));
+    } else {
+      auto server_task_impl = biDiServerStart(
         serverScheduler, processScheduler, port, sendData.data_type,
-        stopSource),
-      biDiClientStart(
-        clientScheduler, processScheduler, port, sendData, stopSource));
+        stopSource);
+      auto client_task_impl = biDiClientStart(
+        clientScheduler, processScheduler, port, sendData, stopSource);
+      server_task.emplace(std::move(server_task_impl));
+      client_task.emplace(std::move(client_task_impl));
+    }
+
+    auto combined_tasks =
+      when_all(std::move(*server_task), std::move(*client_task));
 
     sync_wait(
       std::move(combined_tasks)
@@ -614,9 +730,7 @@ class UcxAmTest : public ::testing::Test {
     std::vector<float> hostRecvVec;
 
 #if CUDA_ENABLED
-    if (
-      sendData.data_type == ucx_memory_type::CUDA
-      && recvData.data_length > kUcxRndvThreshold) {
+    if (sendData.data_type == ucx_memory_type::CUDA) {
       UcxCudaMemoryResourceManager* clientCudaMemoryResource =
         dynamic_cast<UcxCudaMemoryResourceManager*>(base_manager_ptr);
       hostRecvVec = create_float_test_data(floatDataSize);
@@ -863,7 +977,7 @@ TEST_F(UcxAmTest, ErrorHandling) {
 
   sync_wait(let_error(
     connection_send(clientScheduler, conn_id.value(), sendData)
-      | then([&](auto&&) { sendSuccess.store(true); }),
+      | then([&]() { sendSuccess.store(true); }),
     [&](std::variant<std::error_code, std::exception_ptr>&& error_variant) {
       return sequence(
         then(
@@ -916,6 +1030,20 @@ TEST_F(UcxAmTest, BidirectionalLargeMessageCUDATransfer) {
   ASSERT_EQ(cuCtxSetCurrent(context), CUDA_SUCCESS);
   runBidirectionalTransferTestLogic(1024 * 1024, ucx_memory_type::CUDA);
   ASSERT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
+}
+
+// Test bidirectional small message transfer and processing (eager protocol)
+// with CUDA and ucp address
+TEST_F(UcxAmTest, BidirectionalSmallMessageCUDATransferWithUcpAddress) {
+  cudaSetDevice(0);
+  runBidirectionalTransferTestLogic(1024, ucx_memory_type::CUDA, true);
+}
+
+// Test bidirectional  large message transfer and processing (RNDV protocol)
+// with CUDA and ucp address
+TEST_F(UcxAmTest, BidirectionalLargeMessageCUDATransferWithUcpAddress) {
+  cudaSetDevice(0);
+  runBidirectionalTransferTestLogic(1024 * 1024, ucx_memory_type::CUDA, true);
 }
 #endif  // CUDA_ENABLED
 
