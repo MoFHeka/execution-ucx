@@ -292,6 +292,34 @@ class UcxAmTest : public ::testing::Test {
     return true;
   }
 
+  bool verify_float_test_data(const void* data, size_t data_length) {
+    if (data == nullptr || data_length <= 0) {
+      return false;
+    }
+    const float* ptr = static_cast<const float*>(data);
+    size_t size = data_length / sizeof(float);
+    for (size_t i = 0; i < size; i++) {
+      if (ptr[i] != static_cast<float>(i % 256)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool verify_processed_float_test_data(const void* data, size_t data_length) {
+    if (data == nullptr || data_length <= 0) {
+      return false;
+    }
+    const float* ptr = static_cast<const float*>(data);
+    size_t size = data_length / sizeof(float);
+    for (size_t i = 0; i < size; i++) {
+      if (ptr[i] != (static_cast<float>(i % 256) / 2)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   task<void> serverRecvTask(
     ucx_am_context::scheduler& scheduler,
     ucx_am_data& recvData,
@@ -366,20 +394,6 @@ class UcxAmTest : public ::testing::Test {
       data[i] = static_cast<float>(i % 256);
     }
     return data;
-  }
-
-  bool verify_processed_float_test_data(const void* data, size_t data_length) {
-    if (data == nullptr || data_length <= 0) {
-      return false;
-    }
-    const float* ptr = static_cast<const float*>(data);
-    size_t size = data_length / sizeof(float);
-    for (size_t i = 0; i < size; i++) {
-      if (ptr[i] != (static_cast<float>(i % 256) / 2)) {
-        return false;
-      }
-    }
-    return true;
   }
 
   task<void> launchProcessTask(
@@ -945,6 +959,75 @@ TEST_F(UcxAmTest, LargeMessageTransfer) {
   EXPECT_EQ(recvData.data_length, messageSize);
   EXPECT_TRUE(verify_test_data(recvData.header, headerSize));
   EXPECT_TRUE(verify_test_data(recvData.data, messageSize));
+}
+
+// Test large iovec message transfer (RNDV protocol)
+TEST_F(UcxAmTest, LargeIovecMessageTransfer) {
+  UcxContextHostRunner server("server");
+  UcxContextHostRunner client("client");
+
+  uint16_t port =
+    static_cast<uint16_t>(1024 + (rand_r(&seed) % (65535 - 1024)));
+  auto serverScheduler = server.get_context().get_scheduler();
+  auto clientScheduler = client.get_context().get_scheduler();
+  const size_t headerSize = 1024;
+  auto headerData = create_test_data(headerSize);
+
+  // Prepare data with a single flat vector
+  const size_t iovCount = 4;
+  const size_t floatCountPerSegment = kUcxRndvThreshold / sizeof(float);
+  const size_t totalFloatCount = iovCount * floatCountPerSegment;
+  auto testFloatVec = create_float_test_data(totalFloatCount);
+
+  std::vector<ucx_iovec_data_t> iovecData(iovCount);
+  for (size_t i = 0; i < iovCount; ++i) {
+    iovecData[i].data = testFloatVec.data() + i * floatCountPerSegment;
+    iovecData[i].data_length = floatCountPerSegment * sizeof(float);
+  }
+  const size_t totalMessageSize = totalFloatCount * sizeof(float);
+
+  std::atomic<bool> messageReceived = false;
+  std::atomic<bool> sendSuccess = false;
+  ucx_am_iovec sendIovecData{};
+  sendIovecData.header = headerData.data();
+  sendIovecData.header_length = headerData.size();
+  sendIovecData.data_vec = iovecData.data();
+  sendIovecData.data_count = iovecData.size();
+  sendIovecData.data_type = ucx_memory_type::HOST;
+  sendIovecData.mem_h = nullptr;
+
+  ucx_am_data recvData{};
+  recvData.data = server.get_memory_resource()->allocate(
+    ucx_memory_type::HOST, totalMessageSize);
+  recvData.data_length = totalMessageSize;
+  recvData.data_type = ucx_memory_type::HOST;
+
+  std::optional<std::reference_wrapper<const UcxConnection>> conn;
+  inplace_stop_source stopSource;
+
+  auto clientIovecTask = [&](
+                           ucx_am_context::scheduler& scheduler, uint16_t port,
+                           ucx_am_iovec& sendData,
+                           std::atomic<bool>& sendSuccess) -> task<void> {
+    auto clientSocket = create_client_socket(port);
+    auto conn_id = co_await connect_endpoint(
+      scheduler, nullptr, std::move(clientSocket), sizeof(sockaddr_in));
+    co_await connection_send(scheduler, conn_id, sendData);
+    sendSuccess.store(true);
+  };
+
+  sync_wait(when_all(
+    with_query_value(
+      serverListenTask(
+        serverScheduler, port, recvData, conn, messageReceived, stopSource),
+      get_stop_token, stopSource.get_token()),
+    clientIovecTask(clientScheduler, port, sendIovecData, sendSuccess)));
+
+  EXPECT_TRUE(messageReceived.load() && sendSuccess.load());
+  EXPECT_EQ(recvData.header_length, headerSize);
+  EXPECT_EQ(recvData.data_length, totalMessageSize);
+  EXPECT_TRUE(verify_test_data(recvData.header, headerSize));
+  EXPECT_TRUE(verify_float_test_data(recvData.data, totalMessageSize));
 }
 
 // Test error handling

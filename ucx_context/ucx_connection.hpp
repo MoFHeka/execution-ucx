@@ -47,6 +47,9 @@ constexpr const uint64_t CLIENT_ID_UNDEFINED = 0;
 
 constexpr const std::uint32_t DEFAULT_AM_MSG_ID = 0;
 
+// IOVEC_AM_MSG_ID uses same callback as DEFAULT_AM_MSG_ID
+constexpr const std::uint32_t IOVEC_AM_MSG_ID = DEFAULT_AM_MSG_ID;
+
 // description of arrived AM message
 // The desc is the data pointer from callback function not the receiving buffer
 struct UcxAmDesc {
@@ -274,6 +277,42 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
   std::tuple<ucs_status_t, UcxRequest*> recv_am_data(
     void* buffer, size_t length, ucp_mem_h memh, const UcxAmDesc&& data_desc,
     ucs_memory_type_t memory_type,
+    std::unique_ptr<UcxCallback> callback = EmptyCallback::get_unique());
+
+  /**
+   * @brief Sends active message data using scatter-gather I/O
+   *
+   * @param header Data header buffer
+   * @param header_length Length of header
+   * @param iov_base Base pointer to the scatter-gather I/O list
+   * @param iov_count Number of elements in the scatter-gather I/O list
+   * @param memh Memory handle (optional)
+   * @param memory_type The memory type of the send buffer
+   * @param callback Callback to be called when send is complete
+   * @return Tuple containing status and request pointer
+   */
+  std::tuple<ucs_status_t, UcxRequest*> send_am_iov_data(
+    const void* header, size_t header_length, const ucp_dt_iov_t* iov_base,
+    size_t iov_count, ucp_mem_h memh, ucs_memory_type_t memory_type,
+    std::unique_ptr<UcxCallback> callback = EmptyCallback::get_unique());
+
+  /**
+   * @brief Receives active message data using scatter-gather I/O
+   *
+   * For now only support RNDV protocol. Because we need to get each data length
+   * from the header buffer, and header is defined by user.
+   *
+   * @param iov_base Base pointer to the scatter-gather I/O list
+   * @param iov_count Number of elements in the scatter-gather I/O list
+   * @param memh Memory handle (optional)
+   * @param data_desc Active message descriptor
+   * @param memory_type The memory type of the receive buffer
+   * @param callback Callback to be called when receive is complete
+   * @return Tuple containing status and request pointer
+   */
+  std::tuple<ucs_status_t, UcxRequest*> recv_am_iov_data(
+    ucp_dt_iov_t* iov_base, size_t iov_count, ucp_mem_h memh,
+    const UcxAmDesc&& data_desc, ucs_memory_type_t memory_type,
     std::unique_ptr<UcxCallback> callback = EmptyCallback::get_unique());
 
   /**

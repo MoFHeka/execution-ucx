@@ -1255,9 +1255,33 @@ ucx_am_context::send_sender tag_invoke(
 }
 
 ucx_am_context::send_sender tag_invoke(
-  tag_t<connection_send>, ucx_am_context::scheduler scheduler,
-  UcxConnection& conn, ucx_am_data& data) {
+  tag_t<connection_send>,
+  ucx_am_context::scheduler scheduler,
+  UcxConnection& conn,
+  ucx_am_data& data) {
   return ucx_am_context::send_sender{*scheduler.context_, conn, data};
+}
+
+ucx_am_context::send_iovec_sender tag_invoke(
+  tag_t<connection_send>, ucx_am_context::scheduler scheduler,
+  conn_pair_t& conn, ucx_am_iovec& iovec) {
+  return ucx_am_context::send_iovec_sender{*scheduler.context_, conn, iovec};
+}
+
+ucx_am_context::send_iovec_sender tag_invoke(
+  tag_t<connection_send>,
+  ucx_am_context::scheduler scheduler,
+  std::uintptr_t conn_id,
+  ucx_am_iovec& iovec) {
+  return ucx_am_context::send_iovec_sender{*scheduler.context_, conn_id, iovec};
+}
+
+ucx_am_context::send_iovec_sender tag_invoke(
+  tag_t<connection_send>,
+  ucx_am_context::scheduler scheduler,
+  UcxConnection& conn,
+  ucx_am_iovec& iovec) {
+  return ucx_am_context::send_iovec_sender{*scheduler.context_, conn, iovec};
 }
 
 ucx_am_context::recv_sender tag_invoke(

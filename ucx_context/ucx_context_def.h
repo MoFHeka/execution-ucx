@@ -63,22 +63,59 @@ typedef struct ucx_am_data {
 } ucx_am_data_t;
 
 /**
- * @struct ucx_iov_data
- * @brief Structure for scatter-gather I/O.
+ * @struct ucx_iovec_data_t
+ * @brief Structure for a single scatter-gather I/O vector element.
  *
- * This structure is used to specify a list of data structs which can be used
- * within a single data transfer function call. This list should remain valid
- * until the data transfer request is completed.
+ * This structure is used to specify a single buffer and its length for
+ * scatter-gather I/O operations. It is analogous to @ref ucp_dt_iov_t in UCX.
  *
- * @note A @a ucx_data can be used to point to a ucx_am_data struct. @a count
- *       indicates the number of structs in the list.
- *       The @typedef ucx_iov_data list will be converted to ucp_dt_iov_t list
- *       for UCX data transfer.
+ * @note If @a data_length is zero, the memory pointed to by @a data will not be
+ *       accessed. Otherwise, @a data must point to valid memory.
  */
-typedef struct ucx_iov_data {
-  void* ucx_data;  ///< Pointer to a data struct. e.g. ucx_am_data
-  size_t count;    ///< Number of structs in the list
-} ucx_iov_data_t;
+typedef struct ucx_iovec_data {
+  void* data;          ///< Pointer to a data buffer.
+  size_t data_length;  ///< Length of the @a data buffer in bytes.
+} ucx_iovec_data_t;
+
+/**
+ * @struct ucx_am_iovec_t
+ * @brief Structure for Active Message scatter-gather I/O.
+ *
+ * This structure is used to specify a list of buffers (scatter-gather list)
+ * for a single Active Message data transfer operation. The list should remain
+ * valid until the data transfer request is completed.
+ *
+ * @var ucx_am_iovec_t::header
+ *   Pointer to the message header buffer.
+ * @var ucx_am_iovec_t::header_length
+ *   Length of the message header buffer in bytes.
+ * @var ucx_am_iovec_t::data_vec
+ *   Pointer to an array of @ref ucx_iovec_data_t elements, each describing a
+ *   data buffer and its length. This array will be converted to a
+ *   @ref ucp_dt_iov_t list for UCX data transfer.
+ * @var ucx_am_iovec_t::data_count
+ *   Number of elements in the @a data_vec array.
+ * @var ucx_am_iovec_t::data_type
+ *   Memory type of the data buffers (see @ref ucx_memory_type_t).
+ * @var ucx_am_iovec_t::mem_h
+ *   Memory handle for the data buffers. This can be reinterpret_cast to
+ *   @ref ucp_mem_h as required by UCX.
+ *
+ * @note The @a data_vec array and all referenced buffers must remain valid
+ *       until the data transfer operation is complete.
+ *
+ * @note For now, we only support RNDV protocol. Because we need to get each
+ *       data length from the header buffer, and header is defined by user.
+ */
+typedef struct ucx_am_iovec {
+  void* header;                 ///< Pointer to the message header buffer.
+  size_t header_length;         ///< Length of the message header buffer.
+  ucx_iovec_data_t* data_vec;   ///< Pointer to array of data vector elements.
+  size_t data_count;            ///< Number of elements in the data vector.
+  ucx_memory_type_t data_type;  ///< Memory type of the data buffers.
+  void* mem_h;                  ///< Memory handle for the data buffers.
+                                ///< Could be reinterpret_cast to ucp_mem_h.
+} ucx_am_iovec_t;
 
 // /* Set data_allocated flag to true */
 // static inline void ucx_am_data_set_data_allocated(ucx_am_data_t* data) {

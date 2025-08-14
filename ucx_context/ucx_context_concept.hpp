@@ -247,13 +247,13 @@ inline constexpr bool is_connection_type_v =
  * operations.
  *
  * A type T satisfies this trait if it is either `ucx_am_data` or
- * `ucx_iov_data`.
+ * `ucx_am_iovec`.
  * @tparam T The type to check.
  */
 template <typename T>
 inline constexpr bool is_data_type_v =
   std::is_same_v<remove_cvref_t<T>, ucx_am_data>
-  || std::is_same_v<remove_cvref_t<T>, ucx_iov_data>;
+  || std::is_same_v<remove_cvref_t<T>, ucx_am_iovec>;
 
 /**
  * @brief CPO for sending data over a connection.
@@ -271,7 +271,7 @@ inline constexpr struct send_cpo final {
    * @param sched The scheduler for the operation.
    * @param conn A connection identifier (`conn_pair_t&`, `UcxConnection&`, or
    * `std::uintptr_t`).
-   * @param data The data to be sent (`ucx_am_data&` or `ucx_iov_data&`).
+   * @param data The data to be sent (`ucx_am_data&` or `ucx_am_iovec_t&`).
    * @return A sender that completes when the send operation is finished.
    */
   template <typename Scheduler, typename Conn, typename Data>
@@ -292,7 +292,7 @@ inline constexpr struct send_cpo final {
  * @brief Type trait to constrain the parameter type for receive operations.
  *
  * A type T satisfies this trait if it is either `ucx_am_data&` or
- * `ucx_memory_type`.
+ * `ucx_memory_type` or `ucx_am_iovec`.
  * @tparam T The type to check.
  */
 template <typename T>
