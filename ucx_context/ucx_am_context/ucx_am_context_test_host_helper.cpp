@@ -16,9 +16,9 @@ limitations under the License.
 #include "ucx_context/ucx_am_context/ucx_am_context_test_helper.h"
 
 void processRecvDataHost(ucx_am_data_t& recvData) {
-  float* data = static_cast<float*>(recvData.data);
-  size_t size = recvData.data_length / sizeof(float);
+  float* buffer = static_cast<float*>(recvData.buffer.data);
+  size_t size = recvData.buffer.size / sizeof(float);
   for (size_t i = 0; i < size; i++) {
-    data[i] /= 2;
+    buffer[i] /= 2;
   }
 }

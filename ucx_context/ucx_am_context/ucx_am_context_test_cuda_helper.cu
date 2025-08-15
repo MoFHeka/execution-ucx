@@ -45,15 +45,15 @@ __global__ void divide_by_two_kernel_cuh(float* data, size_t n) {
  */
 __attribute__((visibility("default"))) void processRecvDataCuda(
   ucx_am_data_t& recvData) {
-  if (recvData.data == nullptr || recvData.data_length == 0) {
+  if (recvData.buffer.data == nullptr || recvData.buffer.size == 0) {
     fprintf(stderr, "processRecvDataCuda: Received null or empty data.\n");
     return;
   }
 
-  // This function assumes that recvData->data points to CUDA device memory
-  // and recvData->data_type is ucx_memory_type::CUDA.
-  float* d_data = static_cast<float*>(recvData.data);
-  size_t num_elements = recvData.data_length / sizeof(float);
+  // This function assumes that recvData.buffer.data points to CUDA device
+  // memory and recvData.buffer_type is ucx_memory_type::CUDA.
+  float* d_data = static_cast<float*>(recvData.buffer.data);
+  size_t num_elements = recvData.buffer.size / sizeof(float);
 
   if (num_elements == 0) {
     return;  // No elements to process

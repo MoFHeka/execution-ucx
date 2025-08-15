@@ -39,20 +39,49 @@ typedef enum ucx_memory_type {
 } ucx_memory_type_t;
 
 /**
- * @struct ucx_am_data
- * @brief Represents the data payload for a UCX Active Message.
+ * @struct ucx_buffer_t
+ * @brief Represents a single buffer element for continuous or scatter-gather
+ * I/O. Also used for header buffer.
  *
- * This structure holds pointers to the header and data buffers, along with
- * their lengths and the memory type of the data buffer.
+ * This structure describes a buffer and its length, used in continuous or
+ * scatter-gather operations. It is functionally similar to @ref ucp_dt_iov_t in
+ * UCX.
+ *
+ * @note If @a size is zero, the memory pointed to by @a data is not
+ * accessed. Otherwise, @a data must point to valid memory.
+ *
+ * @var ucx_buffer_t::data
+ *   Pointer to the data.
+ * @var ucx_buffer_t::size
+ *   Length of the data in bytes.
+ */
+typedef struct ucx_buffer {
+  void* data;   ///< Pointer to a buffer.
+  size_t size;  ///< Length of the @a data in bytes.
+} ucx_buffer_t;
+
+/**
+ * @struct ucx_am_data_t
+ * @brief Describes the payload for a UCX Active Message.
+ *
+ * This structure contains pointers to the header and data buffers, their
+ * lengths, the memory type of the data buffer, and an optional memory handle.
+ *
+ * @var ucx_am_data_t::header
+ *   Header buffer payload.
+ * @var ucx_am_data_t::buffer
+ *   Data buffer payload.
+ * @var ucx_am_data_t::buffer_type
+ *   Memory type of the data buffer (see @ref ucx_memory_type_t).
+ * @var ucx_am_data_t::mem_h
+ *   Memory handle for the data buffer (can be reinterpret_cast to ucp_mem_h).
  */
 typedef struct ucx_am_data {
-  void* header;                 ///< Pointer to the message header.
-  size_t header_length;         ///< Length of the message header.
-  void* data;                   ///< Pointer to the message data payload.
-  size_t data_length;           ///< Length of the message data payload.
-  ucx_memory_type_t data_type;  ///< Memory type of the data buffer.
-  void* mem_h;                  ///< Memory handle for the data buffer. Could be
-                                ///< reinterpret_cast to ucp_mem_h.
+  ucx_buffer_t header;            ///< Header buffer payload.
+  ucx_buffer_t buffer;            ///< Data buffer payload.
+  ucx_memory_type_t buffer_type;  ///< Memory type of the data buffer.
+  void* mem_h;  ///< Memory handle for the data buffer. Could be
+                ///< reinterpret_cast to ucp_mem_h.
   /* Release function for data, especially for AM Eager DATA */
   // void (*data_release_fn)(void*, size_t);  // NOLINT
   /* Atomic variable maybe useless here. Because even though if the cancel
@@ -63,58 +92,39 @@ typedef struct ucx_am_data {
 } ucx_am_data_t;
 
 /**
- * @struct ucx_iovec_data_t
- * @brief Structure for a single scatter-gather I/O vector element.
- *
- * This structure is used to specify a single buffer and its length for
- * scatter-gather I/O operations. It is analogous to @ref ucp_dt_iov_t in UCX.
- *
- * @note If @a data_length is zero, the memory pointed to by @a data will not be
- *       accessed. Otherwise, @a data must point to valid memory.
- */
-typedef struct ucx_iovec_data {
-  void* data;          ///< Pointer to a data buffer.
-  size_t data_length;  ///< Length of the @a data buffer in bytes.
-} ucx_iovec_data_t;
-
-/**
  * @struct ucx_am_iovec_t
- * @brief Structure for Active Message scatter-gather I/O.
+ * @brief Describes a scatter-gather list for UCX Active Message transfer.
  *
- * This structure is used to specify a list of buffers (scatter-gather list)
- * for a single Active Message data transfer operation. The list should remain
- * valid until the data transfer request is completed.
+ * This structure specifies a list of buffers (scatter-gather array) for a
+ * single Active Message data transfer. The array and all referenced buffers
+ * must remain valid until the transfer is complete.
  *
  * @var ucx_am_iovec_t::header
- *   Pointer to the message header buffer.
- * @var ucx_am_iovec_t::header_length
- *   Length of the message header buffer in bytes.
- * @var ucx_am_iovec_t::data_vec
- *   Pointer to an array of @ref ucx_iovec_data_t elements, each describing a
- *   data buffer and its length. This array will be converted to a
- *   @ref ucp_dt_iov_t list for UCX data transfer.
- * @var ucx_am_iovec_t::data_count
- *   Number of elements in the @a data_vec array.
+ *   Header buffer payload.
+ * @var ucx_am_iovec_t::buffer_vec
+ *   Pointer to an array of @ref ucx_buffer_t elements, each describing a data
+ * buffer. This array will be converted to a @ref ucp_dt_iov_t list for UCX data
+ * transfer.
+ * @var ucx_am_iovec_t::buffer_count
+ *   Number of elements in the @a buffer_vec array.
  * @var ucx_am_iovec_t::data_type
  *   Memory type of the data buffers (see @ref ucx_memory_type_t).
  * @var ucx_am_iovec_t::mem_h
- *   Memory handle for the data buffers. This can be reinterpret_cast to
- *   @ref ucp_mem_h as required by UCX.
+ *   Memory handle for the data buffers (can be reinterpret_cast to @ref
+ * ucp_mem_h).
  *
- * @note The @a data_vec array and all referenced buffers must remain valid
+ * @note The @a buffer_vec array and all referenced buffers must remain valid
  *       until the data transfer operation is complete.
- *
- * @note For now, we only support RNDV protocol. Because we need to get each
- *       data length from the header buffer, and header is defined by user.
+ * @note Currently, only the RNDV protocol is supported, as the data length for
+ *       each segment is determined from the user-defined header.
  */
 typedef struct ucx_am_iovec {
-  void* header;                 ///< Pointer to the message header buffer.
-  size_t header_length;         ///< Length of the message header buffer.
-  ucx_iovec_data_t* data_vec;   ///< Pointer to array of data vector elements.
-  size_t data_count;            ///< Number of elements in the data vector.
-  ucx_memory_type_t data_type;  ///< Memory type of the data buffers.
-  void* mem_h;                  ///< Memory handle for the data buffers.
-                                ///< Could be reinterpret_cast to ucp_mem_h.
+  ucx_buffer_t header;            ///< Header buffer payload.
+  ucx_buffer_t* buffer_vec;       ///< Pointer to array of data vector elements.
+  size_t buffer_count;            ///< Number of elements in the data vector.
+  ucx_memory_type_t buffer_type;  ///< Memory type of the data buffers.
+  void* mem_h;  ///< Memory handle for the data buffers. Could be
+                ///< reinterpret_cast to ucp_mem_h.
 } ucx_am_iovec_t;
 
 // /* Set data_allocated flag to true */

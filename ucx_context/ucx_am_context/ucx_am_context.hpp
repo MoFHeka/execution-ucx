@@ -822,8 +822,8 @@ class ucx_am_context::recv_sender {
         mr_(sender.mr_),
         receiver_(static_cast<Receiver2&&>(r)) {
       UNIFEX_ASSERT(
-          (sender.data_.data ? sender.data_.data_length > 0
-                             : sender.data_.data_length == 0) &&
+          (sender.data_.buffer.data ? sender.data_.buffer.size > 0
+                             : sender.data_.buffer.size == 0) &&
           "The data buffer must be nullptr initialized when data length is 0 "
           "passed to recv_sender constructor");
     }
@@ -900,17 +900,18 @@ class ucx_am_context::recv_sender {
 
           // Header has been copied in the message callback
           // TODO(He Jia): Make it more efficient and safe
-          data_.header = amDesc.header;
-          data_.header_length = amDesc.header_length;
+          data_.header.data = amDesc.header;
+          data_.header.size = amDesc.header_length;
 
           allocatedInnerData_ =
-            !data_.data || data_.data_length < amDesc.data_length;
+            !data_.buffer.data || data_.buffer.size < amDesc.data_length;
           // TODO(He Jia): Be careful, the data_ will be reallocated when its
           // length is not enough. Not sure if it's a good idea.
-          if (allocatedInnerData_ && data_.data) {
-            mr_->deallocate(data_.data_type, data_.data, data_.data_length);
+          if (allocatedInnerData_ && data_.buffer.data) {
+            mr_->deallocate(
+              data_.buffer_type, data_.buffer.data, data_.buffer.size);
           }
-          data_.data_length = amDesc.data_length;
+          data_.buffer.size = amDesc.data_length;
 
           this->execute_ = &operation::on_read_complete;
 
@@ -918,7 +919,8 @@ class ucx_am_context::recv_sender {
             // Handle rendezvous protocol
             // Setup memory and callback
             if (allocatedInnerData_) {
-              data_.data = mr_->allocate(data_.data_type, amDesc.data_length);
+              data_.buffer.data =
+                mr_->allocate(data_.buffer_type, amDesc.data_length);
             }
             auto am_recv_cb =
               std::make_unique<CqeEntryCallback>(op_, [this]() -> ucx_am_cqe& {
@@ -926,23 +928,25 @@ class ucx_am_context::recv_sender {
               });
             auto impl_memh_ = reinterpret_cast<ucp_mem_h>(data_.mem_h);
             std::tie(this->result_, request_) = conn.get().recv_am_data(
-              data_.data, amDesc.data_length, impl_memh_, std::move(amDesc),
-              mem_type_map(data_.data_type), std::move(am_recv_cb));
+              data_.buffer.data, amDesc.data_length, impl_memh_,
+              std::move(amDesc), mem_type_map(data_.buffer_type),
+              std::move(am_recv_cb));
           } else {
             // Handle eager protocol
             if (amDesc.recv_attr & UCP_AM_RECV_ATTR_FLAG_DATA) {
               if (allocatedInnerData_) {
-                data_.data = mr_->allocate(data_.data_type, amDesc.data_length);
+                data_.buffer.data =
+                  mr_->allocate(data_.buffer_type, amDesc.data_length);
               }
               mr_->memcpy(
-                data_.data_type, data_.data, ucx_memory_type::HOST, amDesc.desc,
-                amDesc.data_length);
+                data_.buffer_type, data_.buffer.data, ucx_memory_type::HOST,
+                amDesc.desc, amDesc.data_length);
               ucp_am_data_release(context_.ucpWorker_, amDesc.desc);
             } else {
               // Has been handled in the message callback
               // Eager message is always in host memory
-              data_.data = amDesc.desc;
-              data_.data_type = ucx_memory_type::HOST;
+              data_.buffer.data = amDesc.desc;
+              data_.buffer_type = ucx_memory_type::HOST;
             }
             this->result_ = conn.get().ucx_status();
             auto& entry = this->context_.get_completion_queue_entry();
@@ -1033,17 +1037,20 @@ class ucx_am_context::recv_sender {
       // Ensure the connection is valid and deallocate the data when failed
       auto deallocate_data = [&self]() noexcept {
         // Ensure the buffer is valid
-        if (__builtin_expect(self.data_.data && self.allocatedInnerData_, 1)) {
+        if (__builtin_expect(
+              self.data_.buffer.data && self.allocatedInnerData_, 1)) {
           self.mr_->deallocate(
-            self.data_.data_type, self.data_.data, self.data_.data_length);
-          self.data_.data = nullptr;
-          self.data_.data_length = 0;
+            self.data_.buffer_type, self.data_.buffer.data,
+            self.data_.buffer.size);
+          self.data_.buffer.data = nullptr;
+          self.data_.buffer.size = 0;
         }
-        if (self.data_.header) {
+        if (self.data_.header.data) {
           self.mr_->deallocate(
-            ucx_memory_type::HOST, self.data_.header, self.data_.header_length);
-          self.data_.header = nullptr;
-          self.data_.header_length = 0;
+            ucx_memory_type::HOST, self.data_.header.data,
+            self.data_.header.size);
+          self.data_.header.data = nullptr;
+          self.data_.header.size = 0;
         }
       };
 
@@ -1145,7 +1152,7 @@ class ucx_am_context::recv_sender {
       dataInnerCreatedPtr_(std::make_unique<ucx_am_data>()),
       data_(*(dataInnerCreatedPtr_.value())),
       mr_(context.mr_) {
-    data_.data_type = data_type;
+    data_.buffer_type = data_type;
   }
 
   template <typename Receiver>
@@ -1178,10 +1185,10 @@ class ucx_am_context::send_sender {
         mr_(sender.mr_),
         receiver_(static_cast<Receiver2&&>(r)) {
       UNIFEX_ASSERT(
-          sender.data_.header_length > 0 && sender.data_.header &&
+          sender.data_.header.size > 0 && sender.data_.header.data &&
             "The header must not be nullptr initialized when "
             "passed to send_sender constructor with header_length > 0");
-      UNIFEX_ASSERT(sender.data_.data_length > 0 && sender.data_.data &&
+      UNIFEX_ASSERT(sender.data_.buffer.size > 0 && sender.data_.buffer.data &&
                       "The data buffer must not be nullptr initialized when "
                       "passed to send_sender constructor with data_length > 0");
     }
@@ -1230,8 +1237,9 @@ class ucx_am_context::send_sender {
         auto impl_memh_ = reinterpret_cast<ucp_mem_h>(data_.mem_h);
         // Call the send function
         std::tie(this->result_, this->request_) = conn_ref.send_am_data(
-          data_.header, data_.header_length, data_.data, data_.data_length,
-          impl_memh_, mem_type_map(data_.data_type), std::move(am_send_cb));
+          data_.header.data, data_.header.size, data_.buffer.data,
+          data_.buffer.size, impl_memh_, mem_type_map(data_.buffer_type),
+          std::move(am_send_cb));
       };
 
       if (!context_.try_submit_io(populateSqe)) {
@@ -1423,7 +1431,7 @@ class ucx_am_context::send_iovec_sender {
         mr_(sender.mr_),
         receiver_(static_cast<Receiver2&&>(r)) {
       UNIFEX_ASSERT(
-        sender.iovec_.data_count > 0 && sender.iovec_.data_vec != nullptr &&
+        sender.iovec_.buffer_count > 0 && sender.iovec_.buffer_vec != nullptr &&
         "The iovec must not be nullptr initialized when "
         "passed to send_iovec_sender constructor with data_count > 0");
     }
@@ -1471,11 +1479,12 @@ class ucx_am_context::send_iovec_sender {
         auto& conn_ref = conn_.value().get();
         auto impl_memh_ = reinterpret_cast<ucp_mem_h>(iovec_.mem_h);
         // Call the send function
-        static_assert(sizeof(ucp_dt_iov_t) == sizeof(iovec_.data_vec[0]));
+        static_assert(sizeof(ucp_dt_iov_t) == sizeof(iovec_.buffer_vec[0]));
         std::tie(this->result_, this->request_) = conn_ref.send_am_iov_data(
-          iovec_.header, iovec_.header_length,
-          reinterpret_cast<ucp_dt_iov_t*>(iovec_.data_vec), iovec_.data_count,
-          impl_memh_, mem_type_map(iovec_.data_type), std::move(am_send_cb));
+          iovec_.header.data, iovec_.header.size,
+          reinterpret_cast<ucp_dt_iov_t*>(iovec_.buffer_vec),
+          iovec_.buffer_count, impl_memh_, mem_type_map(iovec_.buffer_type),
+          std::move(am_send_cb));
       };
 
       if (!context_.try_submit_io(populateSqe)) {

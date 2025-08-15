@@ -149,11 +149,11 @@ int main() {
   }
 
   ucx_am_data send_data{};
-  send_data.header = test_data.data();
-  send_data.header_length = test_data.size();
-  send_data.data = test_data.data();
-  send_data.data_length = test_data.size();
-  send_data.data_type = ucx_memory_type::HOST;
+  send_data.header.data = test_data.data();
+  send_data.header.size = test_data.size();
+  send_data.buffer.data = test_data.data();
+  send_data.buffer.size = test_data.size();
+  send_data.buffer_type = ucx_memory_type::HOST;
 
   ucx_am_data
     recv_data{};  // 空描述符，将由接收方填充
@@ -216,10 +216,10 @@ int main() {
   // 5. 验证结果
   assert(message_received.load());
   assert(send_success.load());
-  assert(recv_data.header_length == message_size);
-  assert(memcmp(recv_data.header, test_data.data(), message_size) == 0);
-  assert(recv_data.data_length == message_size);
-  assert(memcmp(recv_data.data, test_data.data(), message_size) == 0);
+  assert(recv_data.header.size == message_size);
+  assert(memcmp(recv_data.header.data, test_data.data(), message_size) == 0);
+  assert(recv_data.buffer.size == message_size);
+  assert(memcmp(recv_data.buffer.data, test_data.data(), message_size) == 0);
   std::cout << "成功传输 " << message_size << " 字节。" << std::endl;
 
   // 6. 关闭

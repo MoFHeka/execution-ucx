@@ -399,7 +399,7 @@ class UcxAmTest : public ::testing::Test {
   task<void> launchProcessTask(
     static_thread_pool::scheduler& scheduler, ucx_am_data_t& recvData) {
     co_await on(scheduler, defer([&]() noexcept {
-                  switch (recvData.data_type) {
+                  switch (recvData.buffer_type) {
                     case ucx_memory_type::HOST:
                       processRecvDataHost(recvData);
                       break;
@@ -516,7 +516,7 @@ class UcxAmTest : public ::testing::Test {
     ucx_am_data& sendData) {
     co_await connection_send(ucxScheduler, conn_id, sendData);
     auto recvBundle =
-      co_await connection_recv(ucxScheduler, sendData.data_type);
+      co_await connection_recv(ucxScheduler, sendData.buffer_type);
     co_return recvBundle.get_data();
   }
 
@@ -638,31 +638,32 @@ class UcxAmTest : public ::testing::Test {
     auto testFloatVec = create_float_test_data(floatDataSize);
 
     ucx_am_data sendData{}, recvData{};
-    sendData.header = headerData.data();
-    sendData.header_length = headerData.size();
-    sendData.data = testFloatVec.data();
-    sendData.data_length = testFloatVec.size() * sizeof(float);
-    sendData.data_type = test_memory_type;
+    sendData.header.data = headerData.data();
+    sendData.header.size = headerData.size();
+    sendData.buffer.data = testFloatVec.data();
+    sendData.buffer.size = testFloatVec.size() * sizeof(float);
+    sendData.buffer_type = test_memory_type;
 
     UcxMemoryResourceManager* base_manager_ptr =
       client.get_memory_resource().get();
 
 #if CUDA_ENABLED
-    if (sendData.data_type == ucx_memory_type::CUDA) {
+    if (sendData.buffer_type == ucx_memory_type::CUDA) {
       UcxCudaMemoryResourceManager* clientCudaMemoryResource =
         dynamic_cast<UcxCudaMemoryResourceManager*>(base_manager_ptr);
       ASSERT_NE(clientCudaMemoryResource, nullptr)
         << "Failed to dynamic_cast UcxMemoryResourceManager to "
            "UcxCudaMemoryResourceManager for CUDA type.";
       auto dev_ptr = clientCudaMemoryResource->allocate(
-        ucx_memory_type::CUDA, sendData.data_length);
+        ucx_memory_type::CUDA, sendData.buffer.size);
       clientCudaMemoryResource->memcpy(
-        ucx_memory_type::CUDA, dev_ptr, ucx_memory_type::HOST, sendData.data,
-        sendData.data_length);
-      sendData.data = dev_ptr;
+        ucx_memory_type::CUDA, dev_ptr, ucx_memory_type::HOST,
+        sendData.buffer.data, sendData.buffer.size);
+      sendData.buffer.data = dev_ptr;
       cudaPointerAttributes attributes;
       ASSERT_EQ(
-        cudaPointerGetAttributes(&attributes, sendData.data), cudaSuccess);
+        cudaPointerGetAttributes(&attributes, sendData.buffer.data),
+        cudaSuccess);
       //
       CUmemorytype cuda_mem_type = CU_MEMORYTYPE_HOST;
       uint32_t is_managed = 0;
@@ -679,7 +680,7 @@ class UcxAmTest : public ::testing::Test {
       attr_type[3] = CU_POINTER_ATTRIBUTE_CONTEXT;
       attr_data[3] = &cuda_mem_ctx;
       CUresult result = cuPointerGetAttributes(
-        4, attr_type, attr_data, (CUdeviceptr)sendData.data);
+        4, attr_type, attr_data, (CUdeviceptr)sendData.buffer.data);
       ASSERT_EQ(result, CUDA_SUCCESS);
       ASSERT_EQ(cuda_mem_type, CU_MEMORYTYPE_DEVICE);
       ASSERT_EQ(is_managed, 0);
@@ -704,7 +705,7 @@ class UcxAmTest : public ::testing::Test {
         client.get_context().get_ucp_address(client_ucp_address).value(), 0);
       auto server_task_impl = biDiServerStart(
         serverScheduler, processScheduler, client_ucp_address,
-        sendData.data_type, stopSource);
+        sendData.buffer_type, stopSource);
       auto client_task_impl = biDiClientStart(
         clientScheduler, processScheduler, server_ucp_address, sendData,
         stopSource);
@@ -712,7 +713,7 @@ class UcxAmTest : public ::testing::Test {
       client_task.emplace(std::move(client_task_impl));
     } else {
       auto server_task_impl = biDiServerStart(
-        serverScheduler, processScheduler, port, sendData.data_type,
+        serverScheduler, processScheduler, port, sendData.buffer_type,
         stopSource);
       auto client_task_impl = biDiClientStart(
         clientScheduler, processScheduler, port, sendData, stopSource);
@@ -738,26 +739,26 @@ class UcxAmTest : public ::testing::Test {
           }
         }));
 
-    EXPECT_TRUE(verify_test_data(recvData.header, headerData.size()));
+    EXPECT_TRUE(verify_test_data(recvData.header.data, headerData.size()));
 
-    auto recv_data_host = recvData.data;
+    auto recv_data_host = recvData.buffer.data;
     std::vector<float> hostRecvVec;
 
 #if CUDA_ENABLED
-    if (sendData.data_type == ucx_memory_type::CUDA) {
+    if (sendData.buffer_type == ucx_memory_type::CUDA) {
       UcxCudaMemoryResourceManager* clientCudaMemoryResource =
         dynamic_cast<UcxCudaMemoryResourceManager*>(base_manager_ptr);
       hostRecvVec = create_float_test_data(floatDataSize);
       recv_data_host = hostRecvVec.data();
-      // recvData.data_type may be ucx_memory_type::HOST when Eager Protocol
+      // recvData.buffer_type may be ucx_memory_type::HOST when Eager Protocol
       clientCudaMemoryResource->memcpy(
-        ucx_memory_type::HOST, recv_data_host, recvData.data_type,
-        recvData.data, recvData.data_length);
+        ucx_memory_type::HOST, recv_data_host, recvData.buffer_type,
+        recvData.buffer.data, recvData.buffer.size);
     }
 #endif
 
     EXPECT_TRUE(
-      verify_processed_float_test_data(recv_data_host, recvData.data_length));
+      verify_processed_float_test_data(recv_data_host, recvData.buffer.size));
 
     switch (test_memory_type) {
       case ucx_memory_type::HOST: {
@@ -768,9 +769,9 @@ class UcxAmTest : public ::testing::Test {
              "DefaultUcxMemoryResourceManager for HOST type.";
         if (clientMemoryResource) {
           clientMemoryResource->deallocate(
-            ucx_memory_type::HOST, recvData.header, recvData.header_length);
+            ucx_memory_type::HOST, recvData.header.data, recvData.header.size);
           clientMemoryResource->deallocate(
-            recvData.data_type, recvData.data, recvData.data_length);
+            recvData.buffer_type, recvData.buffer.data, recvData.buffer.size);
         }
       } break;
 #if CUDA_ENABLED
@@ -780,11 +781,11 @@ class UcxAmTest : public ::testing::Test {
         if (clientCudaMemoryResource) {
           clientCudaMemoryResource->deallocate(
             ucx_memory_type::HOST,
-            recvData.header,  // Header is always host memory
-            recvData.header_length);
+            recvData.header.data,  // Header is always host memory
+            recvData.header.size);
           clientCudaMemoryResource->deallocate(
-            recvData.data_type, recvData.data,  // Data is CUDA memory
-            recvData.data_length);
+            recvData.buffer_type, recvData.buffer.data,  // Data is CUDA memory
+            recvData.buffer.size);
         }
       } break;
 #endif
@@ -805,8 +806,8 @@ class UcxAmTest : public ::testing::Test {
         FAIL() << "Deallocation logic not implemented for memory type: "
                << static_cast<int>(test_memory_type)
                << ". Potential memory leak for header_length="
-               << recvData.header_length
-               << " and data_length=" << recvData.data_length;
+               << recvData.header.size
+               << " and data_length=" << recvData.buffer.size;
         break;
     }
   }
@@ -888,15 +889,15 @@ TEST_F(UcxAmTest, SmallMessageTransfer) {
   std::atomic<bool> messageReceived = false;
   std::atomic<bool> sendSuccess = false;
   ucx_am_data sendData{}, recvData{};
-  sendData.header = testData.data();
-  sendData.header_length = testData.size();
-  sendData.data = testData.data();
-  sendData.data_length = testData.size();
-  sendData.data_type = ucx_memory_type::HOST;
-  recvData.data = server.get_memory_resource()->allocate(
+  sendData.header.data = testData.data();
+  sendData.header.size = testData.size();
+  sendData.buffer.data = testData.data();
+  sendData.buffer.size = testData.size();
+  sendData.buffer_type = ucx_memory_type::HOST;
+  recvData.buffer.data = server.get_memory_resource()->allocate(
     ucx_memory_type::HOST, messageSize * 2);
-  recvData.data_length = messageSize * 2;
-  recvData.data_type = ucx_memory_type::HOST;
+  recvData.buffer.size = messageSize * 2;
+  recvData.buffer_type = ucx_memory_type::HOST;
 
   std::optional<std::reference_wrapper<const UcxConnection>> conn;
 
@@ -911,9 +912,9 @@ TEST_F(UcxAmTest, SmallMessageTransfer) {
     clientConnectTask(clientScheduler, port, sendData, sendSuccess)));
 
   EXPECT_TRUE(messageReceived.load() && sendSuccess.load());
-  EXPECT_EQ(recvData.data_length, messageSize);
-  EXPECT_TRUE(verify_test_data(recvData.header, messageSize));
-  EXPECT_TRUE(verify_test_data(recvData.data, messageSize));
+  EXPECT_EQ(recvData.buffer.size, messageSize);
+  EXPECT_TRUE(verify_test_data(recvData.header.data, messageSize));
+  EXPECT_TRUE(verify_test_data(recvData.buffer.data, messageSize));
 }
 
 // Test large message transfer (RNDV protocol)
@@ -933,15 +934,15 @@ TEST_F(UcxAmTest, LargeMessageTransfer) {
   std::atomic<bool> messageReceived = false;
   std::atomic<bool> sendSuccess = false;
   ucx_am_data sendData{}, recvData{};
-  sendData.header = headerData.data();
-  sendData.header_length = headerData.size();
-  sendData.data = testData.data();
-  sendData.data_length = testData.size();
-  sendData.data_type = ucx_memory_type::HOST;
-  recvData.data = server.get_memory_resource()->allocate(
+  sendData.header.data = headerData.data();
+  sendData.header.size = headerData.size();
+  sendData.buffer.data = testData.data();
+  sendData.buffer.size = testData.size();
+  sendData.buffer_type = ucx_memory_type::HOST;
+  recvData.buffer.data = server.get_memory_resource()->allocate(
     ucx_memory_type::HOST, messageSize / 2);
-  recvData.data_length = messageSize / 2;
-  recvData.data_type = ucx_memory_type::HOST;
+  recvData.buffer.size = messageSize / 2;
+  recvData.buffer_type = ucx_memory_type::HOST;
 
   std::optional<std::reference_wrapper<const UcxConnection>> conn;
 
@@ -956,9 +957,9 @@ TEST_F(UcxAmTest, LargeMessageTransfer) {
     clientConnectTask(clientScheduler, port, sendData, sendSuccess)));
 
   EXPECT_TRUE(messageReceived.load() && sendSuccess.load());
-  EXPECT_EQ(recvData.data_length, messageSize);
-  EXPECT_TRUE(verify_test_data(recvData.header, headerSize));
-  EXPECT_TRUE(verify_test_data(recvData.data, messageSize));
+  EXPECT_EQ(recvData.buffer.size, messageSize);
+  EXPECT_TRUE(verify_test_data(recvData.header.data, headerSize));
+  EXPECT_TRUE(verify_test_data(recvData.buffer.data, messageSize));
 }
 
 // Test large iovec message transfer (RNDV protocol)
@@ -979,28 +980,28 @@ TEST_F(UcxAmTest, LargeIovecMessageTransfer) {
   const size_t totalFloatCount = iovCount * floatCountPerSegment;
   auto testFloatVec = create_float_test_data(totalFloatCount);
 
-  std::vector<ucx_iovec_data_t> iovecData(iovCount);
+  std::vector<ucx_buffer_t> iovecData(iovCount);
   for (size_t i = 0; i < iovCount; ++i) {
     iovecData[i].data = testFloatVec.data() + i * floatCountPerSegment;
-    iovecData[i].data_length = floatCountPerSegment * sizeof(float);
+    iovecData[i].size = floatCountPerSegment * sizeof(float);
   }
   const size_t totalMessageSize = totalFloatCount * sizeof(float);
 
   std::atomic<bool> messageReceived = false;
   std::atomic<bool> sendSuccess = false;
   ucx_am_iovec sendIovecData{};
-  sendIovecData.header = headerData.data();
-  sendIovecData.header_length = headerData.size();
-  sendIovecData.data_vec = iovecData.data();
-  sendIovecData.data_count = iovecData.size();
-  sendIovecData.data_type = ucx_memory_type::HOST;
+  sendIovecData.header.data = headerData.data();
+  sendIovecData.header.size = headerData.size();
+  sendIovecData.buffer_vec = iovecData.data();
+  sendIovecData.buffer_count = iovecData.size();
+  sendIovecData.buffer_type = ucx_memory_type::HOST;
   sendIovecData.mem_h = nullptr;
 
   ucx_am_data recvData{};
-  recvData.data = server.get_memory_resource()->allocate(
+  recvData.buffer.data = server.get_memory_resource()->allocate(
     ucx_memory_type::HOST, totalMessageSize);
-  recvData.data_length = totalMessageSize;
-  recvData.data_type = ucx_memory_type::HOST;
+  recvData.buffer.size = totalMessageSize;
+  recvData.buffer_type = ucx_memory_type::HOST;
 
   std::optional<std::reference_wrapper<const UcxConnection>> conn;
   inplace_stop_source stopSource;
@@ -1024,10 +1025,10 @@ TEST_F(UcxAmTest, LargeIovecMessageTransfer) {
     clientIovecTask(clientScheduler, port, sendIovecData, sendSuccess)));
 
   EXPECT_TRUE(messageReceived.load() && sendSuccess.load());
-  EXPECT_EQ(recvData.header_length, headerSize);
-  EXPECT_EQ(recvData.data_length, totalMessageSize);
-  EXPECT_TRUE(verify_test_data(recvData.header, headerSize));
-  EXPECT_TRUE(verify_float_test_data(recvData.data, totalMessageSize));
+  EXPECT_EQ(recvData.header.size, headerSize);
+  EXPECT_EQ(recvData.buffer.size, totalMessageSize);
+  EXPECT_TRUE(verify_test_data(recvData.header.data, headerSize));
+  EXPECT_TRUE(verify_float_test_data(recvData.buffer.data, totalMessageSize));
 }
 
 // Test error handling
@@ -1046,11 +1047,11 @@ TEST_F(UcxAmTest, ErrorHandling) {
     std::unique_ptr<sockaddr>(reinterpret_cast<sockaddr*>(addr));
   auto testData = create_test_data(1024);
   ucx_am_data sendData{};
-  sendData.header = testData.data();
-  sendData.header_length = testData.size();
-  sendData.data = testData.data();
-  sendData.data_length = testData.size();
-  sendData.data_type = ucx_memory_type::HOST;
+  sendData.header.data = testData.data();
+  sendData.header.size = testData.size();
+  sendData.buffer.data = testData.data();
+  sendData.buffer.size = testData.size();
+  sendData.buffer_type = ucx_memory_type::HOST;
 
   std::atomic<bool> errorHandled = false;
   std::atomic<bool> sendSuccess = false;
