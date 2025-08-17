@@ -37,6 +37,7 @@ limitations under the License.
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -62,6 +63,7 @@ limitations under the License.
 #include "ucx_context/ucx_connection.hpp"
 #include "ucx_context/ucx_connection_manager.hpp"
 #include "ucx_context/ucx_context_concept.hpp"
+#include "ucx_context/ucx_context_data.hpp"
 #include "ucx_context/ucx_context_def.h"
 #include "ucx_context/ucx_context_logger.hpp"
 #include "ucx_context/ucx_device_context.hpp"
@@ -105,19 +107,30 @@ class active_message_bundle {
    * @param data The UCX active message data.
    * @param conn The UCX connection associated with the message.
    */
-  active_message_bundle(ucx_am_data data, const UcxConnection& conn)
-    : data_(data), conn_(conn) {}
+  active_message_bundle(UcxAmData&& data, const UcxConnection& conn)
+    : data_(std::move(data)), conn_(conn) {}
+
+  active_message_bundle(const active_message_bundle&) = delete;
+  active_message_bundle& operator=(const active_message_bundle&) = delete;
+  active_message_bundle(active_message_bundle&&) = default;
+  active_message_bundle& operator=(active_message_bundle&&) = default;
 
   /**
    * @brief Get a constant reference to the data bundle.
-   * @return const ucx_am_data& A constant reference to the UCX AM data.
+   * @return const UcxAmData& A constant reference to the UCX AM data.
    */
-  const ucx_am_data& data() const { return data_; }
+  const UcxAmData& data() const { return data_; }
   /**
-   * @brief Get a copy of the data bundle.
-   * @return ucx_am_data A copy of the UCX AM data.
+   * @brief Get a rvalue reference of the data bundle.
+   * @return UcxAmData&& A rvalue reference of the UCX AM data.
    */
-  ucx_am_data get_data() { return data_; }
+  UcxAmData&& move_data() { return std::move(data_); }
+
+  /**
+   * @brief Get a constant reference to the data bundle.
+   * @return const UcxAmData& A constant reference to the UCX AM data.
+   */
+  const ucx_am_data& get_raw_data() const { return *data_.get(); }
 
   /**
    * @brief Get a constant reference to the connection info.
@@ -126,7 +139,7 @@ class active_message_bundle {
   const UcxConnection& connection() const { return conn_; }
 
  private:
-  const ucx_am_data data_;     // Reference to the data bundle
+  UcxAmData data_;             // Reference to the data bundle
   const UcxConnection& conn_;  // Connection info
 };
 
@@ -137,19 +150,26 @@ class active_message_iovec_bundle {
    * @param data The UCX active message data.
    * @param conn The UCX connection associated with the message.
    */
-  active_message_iovec_bundle(ucx_am_iovec iovec, const UcxConnection& conn)
-    : iovec_(iovec), conn_(conn) {}
+  active_message_iovec_bundle(UcxAmIovec&& iovec, const UcxConnection& conn)
+    : iovec_(std::move(iovec)), conn_(conn) {}
+
+  active_message_iovec_bundle(const active_message_iovec_bundle&) = delete;
+  active_message_iovec_bundle& operator=(const active_message_iovec_bundle&) =
+    delete;
+  active_message_iovec_bundle(active_message_iovec_bundle&&) = default;
+  active_message_iovec_bundle& operator=(active_message_iovec_bundle&&) =
+    default;
 
   /**
    * @brief Get a constant reference to the data bundle.
-   * @return const ucx_am_iovec& A constant reference to the UCX AM data.
+   * @return const UcxAmIovec& A constant reference to the UCX AM data.
    */
-  const ucx_am_iovec& data() const { return iovec_; }
+  const UcxAmIovec& data() const { return iovec_; }
   /**
-   * @brief Get a copy of the data bundle.
-   * @return ucx_am_iovec A copy of the UCX AM data.
+   * @brief Get a rvalue reference of the data bundle.
+   * @return UcxAmIovec&& A rvalue reference of the UCX AM data.
    */
-  ucx_am_iovec get_data() { return iovec_; }
+  UcxAmIovec&& move_data() { return std::move(iovec_); }
 
   /**
    * @brief Get a constant reference to the connection info.
@@ -158,27 +178,34 @@ class active_message_iovec_bundle {
   const UcxConnection& connection() const { return conn_; }
 
  private:
-  const ucx_am_iovec iovec_;   // Reference to the data bundle
+  UcxAmIovec iovec_;           // Reference to the data bundle
   const UcxConnection& conn_;  // Connection info
 };
 
 class active_message_buffer_bundle {
  public:
   active_message_buffer_bundle(
-    const std::vector<ucx_buffer_t>&& buffer_vec, const UcxConnection& conn)
+    std::vector<UcxBuffer>&& buffer_vec, const UcxConnection& conn)
     : buffer_vec_(std::move(buffer_vec)), conn_(conn) {}
+
+  active_message_buffer_bundle(const active_message_buffer_bundle&) = delete;
+  active_message_buffer_bundle& operator=(const active_message_buffer_bundle&) =
+    delete;
+  active_message_buffer_bundle(active_message_buffer_bundle&&) = default;
+  active_message_buffer_bundle& operator=(active_message_buffer_bundle&&) =
+    default;
 
   /**
    * @brief Get a constant reference to the data bundle.
-   * @return const std::vector<ucx_buffer_t>& A constant reference to the UCX AM
+   * @return const std::vector<UcxBuffer>& A constant reference to the UCX AM
    * data.
    */
-  const std::vector<ucx_buffer_t>& data() const { return buffer_vec_; }
+  const std::vector<UcxBuffer>& data() const { return buffer_vec_; }
   /**
-   * @brief Get a copy of the data bundle.
-   * @return std::vector<ucx_buffer_t> A copy of the UCX AM data.
+   * @brief Get a rvalue reference of the data bundle.
+   * @return std::vector<UcxBuffer>&& A rvalue reference of the UCX AM data.
    */
-  std::vector<ucx_buffer_t> get_data() { return buffer_vec_; }
+  std::vector<UcxBuffer>&& move_data() { return std::move(buffer_vec_); }
 
   /**
    * @brief Get a constant reference to the connection info.
@@ -187,8 +214,8 @@ class active_message_buffer_bundle {
   const UcxConnection& connection() const { return conn_; }
 
  private:
-  const std::vector<ucx_buffer_t> buffer_vec_;  // Reference to the data bundle
-  const UcxConnection& conn_;                   // Connection info
+  std::vector<UcxBuffer> buffer_vec_;  // Reference to the data bundle
+  const UcxConnection& conn_;          // Connection info
 };
 
 /**
@@ -219,7 +246,9 @@ class ucx_am_context {
   template <typename Payload>
   class send_sender_t;
   using send_sender = send_sender_t<ucx_am_data>;
+  using send_sender_move = send_sender_t<UcxAmData>;
   using send_iovec_sender = send_sender_t<ucx_am_iovec>;
+  using send_iovec_sender_move = send_sender_t<UcxAmIovec>;
   class recv_sender;
   class connect_sender;
   class accept_sender;
@@ -251,7 +280,7 @@ class ucx_am_context {
    * TCP.
    */
   ucx_am_context(
-    const std::unique_ptr<ucx_memory_resource>& memoryResource,
+    ucx_memory_resource& memoryResource,
     const std::string_view ucxContextName = "default",
     const time_duration connectionTimeout = std::chrono::seconds(30),
     const bool connectionHandleError = false,
@@ -272,7 +301,7 @@ class ucx_am_context {
    * TCP.
    */
   ucx_am_context(
-    const std::unique_ptr<ucx_memory_resource>& memoryResource,
+    ucx_memory_resource& memoryResource,
     const ucp_context_h ucpContext,
     const time_duration connectionTimeout = std::chrono::seconds(30),
     const bool connectionHandleError = false,
@@ -641,7 +670,7 @@ class ucx_am_context {
   // UCX related data.
 
   // Memory resource
-  const std::unique_ptr<ucx_memory_resource>& mr_;
+  ucx_memory_resource& mr_;
 
   // UCX context init parameters
   const std::string ucxAmContextName_ = "default";
@@ -847,16 +876,20 @@ class ucx_am_context::recv_sender {
     template <typename Receiver2>
     explicit operation(const recv_sender& sender, Receiver2&& r)
       : context_(sender.context_),
-        dataInnerCreatedPtr_(
-          std::move(const_cast<recv_sender&>(sender).dataInnerCreatedPtr_)),
-        data_(
-          dataInnerCreatedPtr_.has_value() ? *(dataInnerCreatedPtr_.value())
-                                           : sender.data_),
+        data_own_(
+          sender.data_own_.has_value()
+            ? std::move(const_cast<recv_sender&>(sender).data_own_)
+            : std::nullopt),
+        data_(data_own_.has_value() ? *data_own_.value().get() : sender.data_),
         mr_(sender.mr_),
         receiver_(static_cast<Receiver2&&>(r)) {
+      UNIFEX_ASSERT(data_.header.data == nullptr &&
+                    data_.header.size == 0 &&
+                    "The passed-in ucx_am_data object's header "
+                    "must be nullptr and size 0 (no allocation performed)");
       UNIFEX_ASSERT(
-          (sender.data_.buffer.data ? sender.data_.buffer.size > 0
-                             : sender.data_.buffer.size == 0) &&
+          (data_.buffer.data ? data_.buffer.size > 0
+                             : data_.buffer.size == 0) &&
           "The data buffer must be nullptr initialized when data length is 0 "
           "passed to recv_sender constructor");
     }
@@ -936,12 +969,12 @@ class ucx_am_context::recv_sender {
           data_.header.data = amDesc.header;
           data_.header.size = amDesc.header_length;
 
-          allocatedInnerData_ =
+          bool allocatedInnerData =
             !data_.buffer.data || data_.buffer.size < amDesc.data_length;
           // TODO(He Jia): Be careful, the data_ will be reallocated when its
           // length is not enough. Not sure if it's a good idea.
-          if (allocatedInnerData_ && data_.buffer.data) {
-            mr_->deallocate(
+          if (allocatedInnerData && data_.buffer.data) {
+            mr_.deallocate(
               data_.buffer_type, data_.buffer.data, data_.buffer.size);
           }
           data_.buffer.size = amDesc.data_length;
@@ -951,9 +984,9 @@ class ucx_am_context::recv_sender {
           if (UcxConnection::ucx_am_is_rndv(amDesc)) {
             // Handle rendezvous protocol
             // Setup memory and callback
-            if (allocatedInnerData_) {
+            if (allocatedInnerData) {
               data_.buffer.data =
-                mr_->allocate(data_.buffer_type, amDesc.data_length);
+                mr_.allocate(data_.buffer_type, amDesc.data_length);
             }
             auto am_recv_cb =
               std::make_unique<CqeEntryCallback>(op_, [this]() -> ucx_am_cqe& {
@@ -967,11 +1000,11 @@ class ucx_am_context::recv_sender {
           } else {
             // Handle eager protocol
             if (amDesc.recv_attr & UCP_AM_RECV_ATTR_FLAG_DATA) {
-              if (allocatedInnerData_) {
+              if (allocatedInnerData) {
                 data_.buffer.data =
-                  mr_->allocate(data_.buffer_type, amDesc.data_length);
+                  mr_.allocate(data_.buffer_type, amDesc.data_length);
               }
-              mr_->memcpy(
+              mr_.memcpy(
                 data_.buffer_type, data_.buffer.data, ucx_memory_type::HOST,
                 amDesc.desc, amDesc.data_length);
               ucp_am_data_release(context_.ucpWorker_, amDesc.desc);
@@ -1067,31 +1100,20 @@ class ucx_am_context::recv_sender {
         return;
       }
 
-      // Ensure the connection is valid and deallocate the data when failed
-      auto deallocate_data = [&self]() noexcept {
-        // Ensure the buffer is valid
-        if (__builtin_expect(
-              self.data_.buffer.data && self.allocatedInnerData_, 1)) {
-          self.mr_->deallocate(
-            self.data_.buffer_type, self.data_.buffer.data,
-            self.data_.buffer.size);
-          self.data_.buffer.data = nullptr;
-          self.data_.buffer.size = 0;
-        }
-        if (self.data_.header.data) {
-          self.mr_->deallocate(
-            ucx_memory_type::HOST, self.data_.header.data,
-            self.data_.header.size);
-          self.data_.header.data = nullptr;
-          self.data_.header.size = 0;
-        }
-      };
-
       self.stopCallback_.destruct();
+
+      // If data is owned, move it; otherwise, copy from the external buffer.
+      UcxAmData am_data_wrapper =
+        self.data_own_.has_value() ? std::move(self.data_own_.value())
+                                   : UcxAmData(
+                                     self.mr_, self.data_, /*own_header=*/false,
+                                     /*own_buffer=*/false);
+
       if (get_stop_token(self.receiver_).stop_requested()) {
         unifex::set_done(std::move(self.receiver_));
       } else if (self.result_ >= 0) {
-        active_message_bundle bundle{self.data_, self.conn_.value()};
+        active_message_bundle bundle{
+          std::move(am_data_wrapper), self.conn_.value()};
         if constexpr (noexcept(unifex::set_value(
                         std::move(self.receiver_), std::move(bundle)))) {
           unifex::set_value(std::move(self.receiver_), std::move(bundle));
@@ -1105,14 +1127,14 @@ class ucx_am_context::recv_sender {
           }
         }
       } else if (self.result_ == UCS_ERR_CANCELED) {
-        UNIFEX_TRY { deallocate_data(); }
+        UNIFEX_TRY { am_data_wrapper.~UcxAmData(); }
         UNIFEX_CATCH(...) {
           UCX_CTX_ERROR
             << "Failed to deallocate data in recv_sender on_read_complete";
         }
         unifex::set_done(std::move(self.receiver_));
       } else {
-        UNIFEX_TRY { deallocate_data(); }
+        UNIFEX_TRY { am_data_wrapper.~UcxAmData(); }
         UNIFEX_CATCH(...) {
           UCX_CTX_ERROR
             << "Failed to deallocate data in recv_sender on_read_complete";
@@ -1147,11 +1169,10 @@ class ucx_am_context::recv_sender {
 
     ucx_am_context& context_;
     conn_opt_t conn_;
-    std::optional<std::unique_ptr<ucx_am_data>> dataInnerCreatedPtr_;
+    std::optional<UcxAmData> data_own_;
     ucx_am_data& data_;
     ucx_request* request_ = nullptr;
-    bool allocatedInnerData_ = false;
-    const std::unique_ptr<ucx_memory_resource>& mr_;
+    ucx_memory_resource& mr_;
     std::atomic_bool cancel_flag_{false};
     std::atomic_bool onPending_{false};
     Receiver receiver_;
@@ -1177,16 +1198,24 @@ class ucx_am_context::recv_sender {
   static constexpr bool sends_done = true;
 
   explicit recv_sender(ucx_am_context& context, ucx_am_data& data) noexcept
-    : context_(context), data_(data), mr_(context.mr_) {}
+    : context_(context),
+      data_own_(std::nullopt),
+      data_(data),
+      mr_(context.mr_) {
+    UNIFEX_ASSERT(data_.header.data == nullptr &&
+                  data_.header.size == 0 &&
+                  "The passed-in ucx_am_data object's header "
+                  "must be nullptr and size 0 (no allocation performed)");
+  }
 
   explicit recv_sender(
     ucx_am_context& context, ucx_memory_type data_type) noexcept
     : context_(context),
-      dataInnerCreatedPtr_(std::make_unique<ucx_am_data>()),
-      data_(*(dataInnerCreatedPtr_.value())),
-      mr_(context.mr_) {
-    data_.buffer_type = data_type;
-  }
+      data_own_(
+        std::in_place, context.mr_, 0, 0, data_type, /*own_header=*/true,
+        /*own_buffer=*/true),
+      data_(*data_own_.value().get()),
+      mr_(context.mr_) {}
 
   template <typename Receiver>
   operation<remove_cvref_t<Receiver>> connect(Receiver&& r) && {
@@ -1198,10 +1227,9 @@ class ucx_am_context::recv_sender {
   friend scheduler;
 
   ucx_am_context& context_;
-  std::optional<std::unique_ptr<ucx_am_data>> dataInnerCreatedPtr_;
-  ucx_am_data& data_;  // The real data bundle
-  const std::unique_ptr<ucx_memory_resource>&
-    mr_;  // Use pmr for receiving buffer allocation
+  std::optional<UcxAmData> data_own_;
+  ucx_am_data& data_;
+  ucx_memory_resource& mr_;  // Use pmr for receiving buffer allocation
 };
 
 template <typename Payload>
@@ -1215,22 +1243,23 @@ class ucx_am_context::send_sender_t {
     explicit operation(const send_sender_t& sender, Receiver2&& r)
       : context_(sender.context_),
         conn_(sender.conn_),
-        data_(sender.data_),
+        data_owned_(std::move(const_cast<send_sender_t&>(sender).data_owned_)),
+        data_(data_owned_ ? *data_owned_ : sender.data_),
         mr_(sender.mr_),
         receiver_(static_cast<Receiver2&&>(r)) {
       UNIFEX_ASSERT(
-          sender.data_.header.size > 0 && sender.data_.header.data &&
+          data_.header.size > 0 && data_.header.data &&
             "The header must not be nullptr initialized when "
             "passed to send_sender constructor with header_length > 0");
 
       if constexpr (std::is_same_v<Payload, ucx_am_data>) {
         UNIFEX_ASSERT(
-          sender.data_.buffer.size > 0 && sender.data_.buffer.data &&
+          data_.buffer.size > 0 && data_.buffer.data &&
           "The data buffer must not be nullptr initialized when "
           "passed to send_sender constructor with data size > 0");
       } else if constexpr (std::is_same_v<Payload, ucx_am_iovec>) {
         UNIFEX_ASSERT(
-          sender.data_.buffer_count > 0 && sender.data_.buffer_vec &&
+          data_.buffer_count > 0 && data_.buffer_vec &&
           "The buffer vector must not be nullptr initialized when "
           "passed to send_sender constructor with buffer_count > 0");
 
@@ -1405,9 +1434,10 @@ class ucx_am_context::send_sender_t {
 
     ucx_am_context& context_;
     conn_opt_t conn_;
+    std::optional<Payload> data_owned_;
     Payload& data_;
     ucx_request* request_ = nullptr;
-    const std::unique_ptr<ucx_memory_resource>& mr_;
+    ucx_memory_resource& mr_;
     std::atomic_bool cancel_flag_{false};
     Receiver receiver_;
     manual_lifetime<typename stop_token_type_t<
@@ -1431,9 +1461,20 @@ class ucx_am_context::send_sender_t {
 
   static constexpr bool sends_done = true;
 
+  template <typename P = Payload>
+  inline static constexpr bool is_ucx_data_v =
+    std::is_same_v<std::decay_t<P>, ucx_am_data>
+    || std::is_same_v<std::decay_t<P>, ucx_am_iovec>;
+
+  template <typename P = Payload>
   explicit send_sender_t(
-    ucx_am_context& context, conn_pair_t& conn, Payload& data) noexcept
-    : context_(context), conn_(conn.second), data_(data), mr_(context.mr_) {
+    ucx_am_context& context, conn_pair_t& conn, P& data,
+    std::enable_if_t<is_ucx_data_v<P>>* = nullptr) noexcept
+    : context_(context),
+      conn_(conn.second),
+      data_owned_(std::nullopt),
+      data_(data),
+      mr_(context.mr_) {
     auto conn_opt = context_.conn_manager_.get_connection(conn.first);
     UNIFEX_ASSERT(
       conn_opt.has_value() && "The connection must exist in context");
@@ -1442,18 +1483,79 @@ class ucx_am_context::send_sender_t {
       && "The connection must be the same");
   }
 
+  template <typename P = Payload>
   explicit send_sender_t(
-    ucx_am_context& context, std::uintptr_t conn_id, Payload& data) noexcept
-    : context_(context), data_(data), mr_(context.mr_) {
+    ucx_am_context& context, std::uintptr_t conn_id, P& data,
+    std::enable_if_t<is_ucx_data_v<P>>* = nullptr) noexcept
+    : context_(context),
+      data_owned_(std::nullopt),
+      data_(data),
+      mr_(context.mr_) {
     auto conn_opt = context_.conn_manager_.get_connection(conn_id);
     UNIFEX_ASSERT(
       conn_opt.has_value() && "The connection must exist in context");
     conn_ = conn_opt.value();
   }
 
+  template <typename P>
   explicit send_sender_t(
-    ucx_am_context& context, UcxConnection& conn, Payload& data) noexcept
-    : context_(context), conn_(conn), data_(data), mr_(context.mr_) {
+    ucx_am_context& context, UcxConnection& conn, P& data,
+    std::enable_if_t<is_ucx_data_v<P>>* = nullptr) noexcept
+    : context_(context),
+      conn_(conn),
+      data_owned_(std::nullopt),
+      data_(data),
+      mr_(context.mr_) {
+    auto conn_opt = context_.conn_manager_.get_connection(conn.id());
+    UNIFEX_ASSERT(
+      conn_opt.has_value() && "The connection must exist in context");
+  }
+
+  template <typename P>
+  inline static constexpr bool is_ucx_data_wrapper_v =
+    std::is_same_v<std::decay_t<P>, UcxAmData>
+    || std::is_same_v<std::decay_t<P>, UcxAmIovec>;
+
+  template <typename P = Payload>
+  explicit send_sender_t(
+    ucx_am_context& context, conn_pair_t& conn, P&& data,
+    std::enable_if_t<is_ucx_data_wrapper_v<P>>* = nullptr) noexcept
+    : context_(context),
+      conn_(conn.second),
+      data_owned_(std::forward<P>(data)),
+      data_(*data_owned_),
+      mr_(context.mr_) {
+    auto conn_opt = context_.conn_manager_.get_connection(conn.first);
+    UNIFEX_ASSERT(
+      conn_opt.has_value() && "The connection must exist in context");
+    UNIFEX_ASSERT(
+      &(conn_opt.value().get()) == &(conn.second.get())
+      && "The connection must be the same");
+  }
+
+  template <typename P = Payload>
+  explicit send_sender_t(
+    ucx_am_context& context, std::uintptr_t conn_id, P&& data,
+    std::enable_if_t<is_ucx_data_wrapper_v<P>>* = nullptr) noexcept
+    : context_(context),
+      data_owned_(std::forward<P>(data)),
+      data_(*data_owned_),
+      mr_(context.mr_) {
+    auto conn_opt = context_.conn_manager_.get_connection(conn_id);
+    UNIFEX_ASSERT(
+      conn_opt.has_value() && "The connection must exist in context");
+    conn_ = conn_opt.value();
+  }
+
+  template <typename P = Payload>
+  explicit send_sender_t(
+    ucx_am_context& context, UcxConnection& conn, P&& data,
+    std::enable_if_t<is_ucx_data_wrapper_v<P>>* = nullptr) noexcept
+    : context_(context),
+      conn_(conn),
+      data_owned_(std::forward<P>(data)),
+      data_(*data_owned_),
+      mr_(context.mr_) {
     auto conn_opt = context_.conn_manager_.get_connection(conn.id());
     UNIFEX_ASSERT(
       conn_opt.has_value() && "The connection must exist in context");
@@ -1470,8 +1572,9 @@ class ucx_am_context::send_sender_t {
 
   ucx_am_context& context_;
   conn_opt_t conn_;
+  std::optional<Payload> data_owned_;
   Payload& data_;
-  const std::unique_ptr<ucx_memory_resource>& mr_;
+  ucx_memory_resource& mr_;
 };
 
 class ucx_am_context::schedule_at_sender {
@@ -1744,6 +1847,15 @@ class ucx_am_context::scheduler {
   friend send_sender tag_invoke(
     tag_t<connection_send>, scheduler scheduler, UcxConnection& conn,
     ucx_am_data& data);
+  friend send_sender_move tag_invoke(
+    tag_t<connection_send>, scheduler scheduler, conn_pair_t& conn,
+    UcxAmData&& data);
+  friend send_sender_move tag_invoke(
+    tag_t<connection_send>, scheduler scheduler, std::uintptr_t conn_id,
+    UcxAmData&& data);
+  friend send_sender_move tag_invoke(
+    tag_t<connection_send>, scheduler scheduler, UcxConnection& conn,
+    UcxAmData&& data);
   friend send_iovec_sender tag_invoke(
     tag_t<connection_send>, scheduler scheduler, conn_pair_t& conn,
     ucx_am_iovec& iovec);
@@ -1753,6 +1865,15 @@ class ucx_am_context::scheduler {
   friend send_iovec_sender tag_invoke(
     tag_t<connection_send>, scheduler scheduler, UcxConnection& conn,
     ucx_am_iovec& iovec);
+  friend send_iovec_sender_move tag_invoke(
+    tag_t<connection_send>, scheduler scheduler, conn_pair_t& conn,
+    UcxAmIovec&& iovec);
+  friend send_iovec_sender_move tag_invoke(
+    tag_t<connection_send>, scheduler scheduler, std::uintptr_t conn_id,
+    UcxAmIovec&& iovec);
+  friend send_iovec_sender_move tag_invoke(
+    tag_t<connection_send>, scheduler scheduler, UcxConnection& conn,
+    UcxAmIovec&& iovec);
   friend recv_sender tag_invoke(
     tag_t<connection_recv>, scheduler scheduler, ucx_am_data& data);
   friend recv_sender tag_invoke(

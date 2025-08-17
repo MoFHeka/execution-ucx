@@ -68,7 +68,7 @@ static constexpr uint64_t remote_queue_event_user_data = 0;
 //
 
 ucx_am_context::ucx_am_context(
-  const std::unique_ptr<ucx_memory_resource>& memoryResource,
+  ucx_memory_resource& memoryResource,
   const std::string_view ucxContextName,
   const time_duration connectionTimeout,
   const bool connectionHandleError,
@@ -106,7 +106,7 @@ std::string context_name_from_ucp_context_(ucp_context_h ucpContext) {
 }
 
 ucx_am_context::ucx_am_context(
-  const std::unique_ptr<ucx_memory_resource>& memoryResource,
+  ucx_memory_resource& memoryResource,
   const ucp_context_h ucpContext,
   const time_duration connectionTimeout,
   const bool connectionHandleError,
@@ -759,16 +759,16 @@ ucs_status_t ucx_am_context::am_recv_callback(
 
   // Allocate and copy header in host memory before it is freed
   // TODO(He Jia): Make it more efficient and safe
-  void* new_header = self->mr_->allocate(ucx_memory_type::HOST, header_length);
-  self->mr_->memcpy(
+  void* new_header = self->mr_.allocate(ucx_memory_type::HOST, header_length);
+  self->mr_.memcpy(
     ucx_memory_type::HOST, new_header, ucx_memory_type::HOST, header,
     header_length);
 
   if (
     !(param->recv_attr & UCP_AM_RECV_ATTR_FLAG_DATA)
     && !(param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV)) {
-    void* new_data = self->mr_->allocate(ucx_memory_type::HOST, data_length);
-    self->mr_->memcpy(
+    void* new_data = self->mr_.allocate(ucx_memory_type::HOST, data_length);
+    self->mr_.memcpy(
       ucx_memory_type::HOST, new_data, ucx_memory_type::HOST, data,
       data_length);
     data = new_data;
@@ -1262,6 +1262,31 @@ ucx_am_context::send_sender tag_invoke(
   return ucx_am_context::send_sender{*scheduler.context_, conn, data};
 }
 
+ucx_am_context::send_sender_move tag_invoke(
+  tag_t<connection_send>, ucx_am_context::scheduler scheduler,
+  conn_pair_t& conn, UcxAmData&& data) {
+  return ucx_am_context::send_sender_move{
+    *scheduler.context_, conn, std::move(data)};
+}
+
+ucx_am_context::send_sender_move tag_invoke(
+  tag_t<connection_send>,
+  ucx_am_context::scheduler scheduler,
+  std::uintptr_t conn_id,
+  UcxAmData&& data) {
+  return ucx_am_context::send_sender_move{
+    *scheduler.context_, conn_id, std::move(data)};
+}
+
+ucx_am_context::send_sender_move tag_invoke(
+  tag_t<connection_send>,
+  ucx_am_context::scheduler scheduler,
+  UcxConnection& conn,
+  UcxAmData&& data) {
+  return ucx_am_context::send_sender_move{
+    *scheduler.context_, conn, std::move(data)};
+}
+
 ucx_am_context::send_iovec_sender tag_invoke(
   tag_t<connection_send>, ucx_am_context::scheduler scheduler,
   conn_pair_t& conn, ucx_am_iovec& iovec) {
@@ -1282,6 +1307,33 @@ ucx_am_context::send_iovec_sender tag_invoke(
   UcxConnection& conn,
   ucx_am_iovec& iovec) {
   return ucx_am_context::send_iovec_sender{*scheduler.context_, conn, iovec};
+}
+
+ucx_am_context::send_iovec_sender_move tag_invoke(
+  tag_t<connection_send>,
+  ucx_am_context::scheduler scheduler,
+  conn_pair_t& conn,
+  UcxAmIovec&& iovec) {
+  return ucx_am_context::send_iovec_sender_move{
+    *scheduler.context_, conn, std::move(iovec)};
+}
+
+ucx_am_context::send_iovec_sender_move tag_invoke(
+  tag_t<connection_send>,
+  ucx_am_context::scheduler scheduler,
+  std::uintptr_t conn_id,
+  UcxAmIovec&& iovec) {
+  return ucx_am_context::send_iovec_sender_move{
+    *scheduler.context_, conn_id, std::move(iovec)};
+}
+
+ucx_am_context::send_iovec_sender_move tag_invoke(
+  tag_t<connection_send>,
+  ucx_am_context::scheduler scheduler,
+  UcxConnection& conn,
+  UcxAmIovec&& iovec) {
+  return ucx_am_context::send_iovec_sender_move{
+    *scheduler.context_, conn, std::move(iovec)};
 }
 
 ucx_am_context::recv_sender tag_invoke(

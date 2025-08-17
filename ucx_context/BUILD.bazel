@@ -43,6 +43,7 @@ cc_library(
     hdrs = [
         "ucx_am_context/ucx_am_context.hpp",
         "ucx_context_concept.hpp",
+        "ucx_context_data.hpp",
         "ucx_context_def.h",
         "ucx_context_logger.hpp",
         "ucx_device_context.hpp",

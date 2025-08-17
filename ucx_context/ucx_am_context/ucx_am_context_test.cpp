@@ -84,6 +84,7 @@ using stdexe_ucx_runtime::UcxCudaMemoryResourceManager;
 using stdexe_ucx_runtime::active_message_bundle;
 using stdexe_ucx_runtime::handle_error_connection;
 using stdexe_ucx_runtime::ucx_am_context;
+using stdexe_ucx_runtime::UcxAmData;
 using stdexe_ucx_runtime::UcxAmDesc;
 using stdexe_ucx_runtime::UcxConnection;
 using stdexe_ucx_runtime::UcxMemoryResourceManager;
@@ -169,7 +170,7 @@ class UcxContextHostRunner : public UcxContextRunner {
   void init() override {
     memoryResource_.reset(new DefaultUcxMemoryResourceManager());
     context_.reset(new ucx_am_context(
-      memoryResource_, name_, timeout_, /*connectionHandleError=*/true));
+      *memoryResource_, name_, timeout_, /*connectionHandleError=*/true));
     thread_ = std::thread([this] { context_->run(stopSource_.get_token()); });
     // Wait for context to initialize
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -212,7 +213,7 @@ class UcxContextCUDARunner : public UcxContextRunner {
     }
     memoryResource_.reset(new UcxCudaMemoryResourceManager());
     context_.reset(new ucx_am_context(
-      memoryResource_, ucp_context_, timeout_,
+      *memoryResource_, ucp_context_, timeout_,
       /*connectionHandleError=*/!use_ucp_address_,
       /*clientId=*/stdexe_ucx_runtime::CLIENT_ID_UNDEFINED,
       std::move(auto_cuda_context_)));
@@ -238,6 +239,8 @@ class UcxContextCUDARunner : public UcxContextRunner {
 class UcxAmTest : public ::testing::Test {
  protected:
   unsigned int seed = static_cast<unsigned int>(time(nullptr));
+  std::unique_ptr<UcxMemoryResourceManager> default_mr_ =
+    std::make_unique<DefaultUcxMemoryResourceManager>();
 
   void SetUp() override {
     // Set UCX environment variables
@@ -421,7 +424,7 @@ class UcxAmTest : public ::testing::Test {
     static_thread_pool::scheduler& processScheduler,
     active_message_bundle& data) {
     auto conn_id = data.connection().id();
-    auto recvData = data.get_data();
+    auto recvData = data.get_raw_data();
     co_await launchProcessTask(processScheduler, recvData);
     co_await connection_send(ucxScheduler, conn_id, recvData);
     co_return;
@@ -483,10 +486,7 @@ class UcxAmTest : public ::testing::Test {
         }),
         get_stop_token,
         stopSource.get_token()),
-      [&]() {
-        assert(stopSource.stop_requested() == false);
-        return stopSource.stop_requested();
-      });
+      [&]() { return stopSource.stop_requested(); });
     co_return;
   }
 
@@ -509,7 +509,7 @@ class UcxAmTest : public ::testing::Test {
     co_return;
   }
 
-  task<ucx_am_data> biDiClientSendRecvTask(
+  task<UcxAmData> biDiClientSendRecvTask(
     ucx_am_context::scheduler& ucxScheduler,
     static_thread_pool::scheduler& processScheduler,
     std::uint64_t conn_id,
@@ -517,10 +517,10 @@ class UcxAmTest : public ::testing::Test {
     co_await connection_send(ucxScheduler, conn_id, sendData);
     auto recvBundle =
       co_await connection_recv(ucxScheduler, sendData.buffer_type);
-    co_return recvBundle.get_data();
+    co_return recvBundle.move_data();
   }
 
-  task<ucx_am_data> biDiClientSpawnTask(
+  task<UcxAmData> biDiClientSpawnTask(
     ucx_am_context::scheduler& ucxScheduler,
     static_thread_pool::scheduler& workerThread,
     async_scope& scope,
@@ -534,14 +534,14 @@ class UcxAmTest : public ::testing::Test {
           biDiClientSendRecvTask(
             ucxScheduler, workerThread, conn_id, sendData)),
         scope),
-      [&](std::exception_ptr ep) -> task<ucx_am_data> {
+      [&](std::exception_ptr ep) -> task<UcxAmData> {
         try {
           std::rethrow_exception(ep);
         } catch (const std::exception& e) {
           std::cerr << "Error in biDiClientSendRecvTask: " << e.what()
                     << std::endl;
         }
-        co_return ucx_am_data{};
+        co_return UcxAmData(*default_mr_, 0, 0, sendData.buffer_type);
       });
 
     co_await scope.join();
@@ -550,7 +550,7 @@ class UcxAmTest : public ::testing::Test {
     co_return recvData;
   }
 
-  task<ucx_am_data> biDiClientStart(
+  task<UcxAmData> biDiClientStart(
     ucx_am_context::scheduler& ucxScheduler,
     static_thread_pool::scheduler& processScheduler, uint16_t port,
     ucx_am_data& sendData, inplace_stop_source& stopSource) {
@@ -563,7 +563,7 @@ class UcxAmTest : public ::testing::Test {
       ucxScheduler, workerThread, scope, stopSource, conn_id, sendData);
   }
 
-  task<ucx_am_data> biDiClientStart(
+  task<UcxAmData> biDiClientStart(
     ucx_am_context::scheduler& ucxScheduler,
     static_thread_pool::scheduler& processScheduler,
     std::vector<std::byte>& server_ucp_address, ucx_am_data& sendData,
@@ -637,7 +637,8 @@ class UcxAmTest : public ::testing::Test {
     auto headerData = create_test_data(headerFixedSize);
     auto testFloatVec = create_float_test_data(floatDataSize);
 
-    ucx_am_data sendData{}, recvData{};
+    ucx_am_data sendData{};
+    UcxAmData recvDataWrapper(*default_mr_, 0, 0, test_memory_type);
     sendData.header.data = headerData.data();
     sendData.header.size = headerData.size();
     sendData.buffer.data = testFloatVec.data();
@@ -694,7 +695,7 @@ class UcxAmTest : public ::testing::Test {
     inplace_stop_source stopSource;
 
     std::optional<task<void>> server_task;
-    std::optional<task<ucx_am_data>> client_task;
+    std::optional<task<UcxAmData>> client_task;
     std::vector<std::byte> server_ucp_address;
     std::vector<std::byte> client_ucp_address;
 
@@ -728,17 +729,18 @@ class UcxAmTest : public ::testing::Test {
       std::move(combined_tasks)
       | then([&](
                [[maybe_unused]] std::variant<std::tuple<>> server_result,
-               std::variant<std::tuple<ucx_am_data>>
+               std::variant<std::tuple<UcxAmData>>
                  client_result_variant) {
-          if (std::holds_alternative<std::tuple<ucx_am_data>>(
+          if (std::holds_alternative<std::tuple<UcxAmData>>(
                 client_result_variant)) {
-            recvData = std::get<0>(
-              std::get<std::tuple<ucx_am_data>>(client_result_variant));
+            recvDataWrapper = std::move(std::get<0>(
+              std::get<std::tuple<UcxAmData>>(client_result_variant)));
           } else {
             FAIL() << "Client task did not return ucx_am_data as expected.";
           }
         }));
 
+    auto& recvData = *recvDataWrapper.get();
     EXPECT_TRUE(verify_test_data(recvData.header.data, headerData.size()));
 
     auto recv_data_host = recvData.buffer.data;
@@ -767,26 +769,10 @@ class UcxAmTest : public ::testing::Test {
         ASSERT_NE(clientMemoryResource, nullptr)
           << "Failed to dynamic_cast UcxMemoryResourceManager to "
              "DefaultUcxMemoryResourceManager for HOST type.";
-        if (clientMemoryResource) {
-          clientMemoryResource->deallocate(
-            ucx_memory_type::HOST, recvData.header.data, recvData.header.size);
-          clientMemoryResource->deallocate(
-            recvData.buffer_type, recvData.buffer.data, recvData.buffer.size);
-        }
       } break;
 #if CUDA_ENABLED
       case ucx_memory_type::CUDA: {
-        UcxCudaMemoryResourceManager* clientCudaMemoryResource =
-          dynamic_cast<UcxCudaMemoryResourceManager*>(base_manager_ptr);
-        if (clientCudaMemoryResource) {
-          clientCudaMemoryResource->deallocate(
-            ucx_memory_type::HOST,
-            recvData.header.data,  // Header is always host memory
-            recvData.header.size);
-          clientCudaMemoryResource->deallocate(
-            recvData.buffer_type, recvData.buffer.data,  // Data is CUDA memory
-            recvData.buffer.size);
-        }
+        // UcxAmData owns the buffer, so no need to deallocate
       } break;
 #endif
       // Explicitly list other known enumeration values.
