@@ -59,7 +59,8 @@ class UcxCudaMemoryResourceManager : public UcxMemoryResourceManager {
       return [kind](void* dest, const void* src, size_t count) -> void* {
         auto ret = cudaMemcpy(dest, src, count, kind);
         if (ret != cudaSuccess) {
-          throw std::runtime_error("CUDA memcpy failed");
+          throw std::runtime_error(
+            std::string("CUDA memcpy failed: ") + cudaGetErrorString(ret));
         }
         return dest;
       };

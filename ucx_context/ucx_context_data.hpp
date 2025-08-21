@@ -35,6 +35,8 @@ namespace stdexe_ucx_runtime {
  * pointer using a provided UcxMemoryResourceManager.
  */
 class UcxBuffer {
+  friend class UcxBufferVec;
+
  public:
   /**
    * @brief Constructs a UcxBuffer.
@@ -45,31 +47,47 @@ class UcxBuffer {
    */
   UcxBuffer(
     UcxMemoryResourceManager& mr, ucx_memory_type_t type, size_t size,
-    bool own_buffer = true)
+    void* mem_h = nullptr, bool own_buffer = true)
     : mr_(mr), type_(type), buffer_{nullptr, 0}, own_buffer_(own_buffer) {
     if (size > 0) {
       buffer_.data = mr_.get().allocate(type_, size);
       buffer_.size = size;
+      mem_h_ = mem_h;
     }
   }
 
   UcxBuffer(
     UcxMemoryResourceManager& mr, ucx_memory_type_t type, ucx_buffer_t&& buffer,
-    bool own_buffer = true)
+    void* mem_h = nullptr, bool own_buffer = true)
     : mr_(mr),
       type_(type),
       buffer_(std::move(buffer)),
+      mem_h_(mem_h),
       own_buffer_(own_buffer) {}
 
   UcxBuffer(
     UcxMemoryResourceManager& mr, ucx_memory_type_t type,
-    const ucx_buffer_t& buffer, bool own_buffer = false)
-    : mr_(mr), type_(type), buffer_(buffer), own_buffer_(own_buffer) {}
+    const ucx_buffer_t& buffer, void* mem_h = nullptr, bool own_buffer = false)
+    : mr_(mr),
+      type_(type),
+      buffer_(buffer),
+      mem_h_(mem_h),
+      own_buffer_(own_buffer) {}
+
+  UcxBuffer(
+    UcxMemoryResourceManager& mr, ucx_memory_type_t type, const void* buffer,
+    size_t size, void* mem_h = nullptr, bool own_buffer = false)
+    : mr_(mr),
+      type_(type),
+      buffer_({const_cast<void*>(buffer), size}),
+      mem_h_(mem_h),
+      own_buffer_(own_buffer) {}
 
   UcxBuffer(UcxBuffer&& other, bool own_buffer)
     : mr_(other.mr_),
       type_(other.type_),
       buffer_(other.buffer_),
+      mem_h_(other.mem_h_),
       own_buffer_(own_buffer) {
     other.buffer_ = {nullptr, 0};
     other.own_buffer_.store(false, std::memory_order_relaxed);
@@ -91,6 +109,7 @@ class UcxBuffer {
     : mr_(other.mr_),
       type_(other.type_),
       buffer_(other.buffer_),
+      mem_h_(other.mem_h_),
       own_buffer_(other.own_buffer_.load(std::memory_order_relaxed)) {
     other.buffer_ = {nullptr, 0};
     other.own_buffer_.store(false, std::memory_order_relaxed);
@@ -104,6 +123,7 @@ class UcxBuffer {
       mr_ = other.mr_;
       type_ = other.type_;
       buffer_ = other.buffer_;
+      mem_h_ = other.mem_h_;
       own_buffer_ = other.own_buffer_.load(std::memory_order_relaxed);
       other.buffer_ = {nullptr, 0};
       other.own_buffer_.store(false, std::memory_order_relaxed);
@@ -138,11 +158,237 @@ class UcxBuffer {
    * @brief Gets the memory type of the buffer.
    */
   ucx_memory_type_t type() const { return type_; }
+  /**
+   * @brief Gets the memory handle of the buffer.
+   */
+  void* mem_h() const { return mem_h_; }
+  /**
+   * @brief Gets whether the buffer is owned by the UcxBuffer.
+   */
+  bool own_buffer() const { return own_buffer_; }
 
  private:
   std::reference_wrapper<UcxMemoryResourceManager> mr_;
   ucx_memory_type_t type_;
   ucx_buffer_t buffer_;
+  void* mem_h_;
+  std::atomic<bool> own_buffer_;
+};
+
+using UcxHeader = UcxBuffer;
+
+/**
+ * @class UcxBufferVec
+ * @brief RAII wrapper for a vector of ucx_buffer_t that manages its memory.
+ *
+ * This class allocates and deallocates memory for the buffers of a
+ * ucx_buffer_t using a provided UcxMemoryResourceManager.
+ */
+class UcxBufferVec {
+  friend class UcxBuffer;
+
+ public:
+  /**
+   * @brief Constructs a UcxBufferVec.
+   * @param mr The memory resource manager.
+   * @param type The memory type of the buffers.
+   * @param sizes The sizes of the buffers.
+   * @param mem_h The memory handle of the buffers.
+   * @param own_buffer Whether to own the buffers.
+   */
+  UcxBufferVec(
+    UcxMemoryResourceManager& mr, ucx_memory_type_t type,
+    const std::vector<size_t>& sizes, void* mem_h = nullptr,
+    bool own_buffer = true)
+    : mr_(mr),
+      type_(type),
+      buffers_(std::vector<ucx_buffer_t>(sizes.size())),
+      mem_h_(mem_h),
+      own_buffer_(own_buffer) {
+    if (sizes.size() > 0) {
+      for (size_t i = 0; i < sizes.size(); ++i) {
+        buffers_[i].data = mr_.get().allocate(type, sizes[i]);
+        buffers_[i].size = sizes[i];
+      }
+    }
+  }
+
+  UcxBufferVec(UcxBufferVec&& other, bool own_buffer)
+    : mr_(other.mr_),
+      type_(other.type_),
+      buffers_(std::move(other.buffers_)),
+      mem_h_(other.mem_h_),
+      own_buffer_(own_buffer) {
+    other.buffers_ = {};
+    other.own_buffer_.store(false, std::memory_order_relaxed);
+  }
+
+  ~UcxBufferVec() {
+    if (own_buffer_) {
+      for (auto& buf : buffers_) {
+        mr_.get().deallocate(type_, buf.data, buf.size);
+      }
+    }
+  }
+
+  UcxBufferVec(const UcxBufferVec&) = delete;
+
+  UcxBufferVec(UcxBufferVec&& other) noexcept
+    : mr_(other.mr_),
+      type_(other.type_),
+      buffers_(std::move(other.buffers_)),
+      mem_h_(other.mem_h_),
+      own_buffer_(other.own_buffer_.load(std::memory_order_relaxed)) {
+    other.buffers_ = {};
+    other.own_buffer_.store(false, std::memory_order_relaxed);
+  }
+
+  UcxBufferVec& operator=(UcxBufferVec&& other) noexcept {
+    if (this != &other) {
+      if (own_buffer_) {
+        for (auto& buf : buffers_) {
+          mr_.get().deallocate(type_, buf.data, buf.size);
+        }
+      }
+      mr_ = other.mr_;
+      type_ = other.type_;
+      buffers_ = std::move(other.buffers_);
+      mem_h_ = other.mem_h_;
+      own_buffer_ = other.own_buffer_.load(std::memory_order_relaxed);
+      other.buffers_ = {};
+      other.own_buffer_.store(false, std::memory_order_relaxed);
+    }
+    return *this;
+  }
+
+  UcxBufferVec& operator=(const UcxBufferVec&) = delete;
+
+  UcxBufferVec(
+    UcxMemoryResourceManager& mr, ucx_memory_type_t type,
+    std::vector<ucx_buffer_t>&& buffers, void* mem_h = nullptr,
+    bool own_buffer = false)
+    : mr_(mr),
+      type_(type),
+      buffers_(std::move(buffers)),
+      mem_h_(mem_h),
+      own_buffer_(own_buffer) {}
+
+  UcxBufferVec(
+    UcxMemoryResourceManager& mr, ucx_memory_type_t type,
+    const std::vector<ucx_buffer_t>& buffers, void* mem_h = nullptr,
+    bool own_buffer = false)
+    : mr_(mr),
+      type_(type),
+      buffers_(buffers),
+      mem_h_(mem_h),
+      own_buffer_(own_buffer) {}
+
+  explicit UcxBufferVec(std::vector<UcxBuffer>&& buffers, void* mem_h = nullptr)
+    : mr_(buffers[0].mr_),
+      type_(buffers[0].type()),
+      mem_h_(buffers[0].mem_h()),
+      own_buffer_(buffers[0].own_buffer()) {
+    for (auto& buf : buffers) {
+      buffers_.push_back(*buf.get());
+    }
+    buffers[0].own_buffer_.store(false, std::memory_order_relaxed);
+  }
+
+  /**
+   * @brief Gets the data pointers.
+   */
+  std::vector<void*> data_ptrs() {
+    std::vector<void*> ptrs;
+    ptrs.reserve(buffers_.size());
+    for (auto& buf : buffers_) {
+      ptrs.push_back(buf.data);
+    }
+    return ptrs;
+  }
+  /**
+   * @brief Gets the const data pointers.
+   */
+  const std::vector<const void*> data_ptrs() const { return data_ptrs(); }
+  /**
+   * @brief Gets the sizes of the buffer.
+   */
+  std::vector<size_t> data_sizes() const {
+    std::vector<size_t> sizes;
+    sizes.reserve(buffers_.size());
+    for (auto& buf : buffers_) {
+      sizes.push_back(buf.size);
+    }
+    return sizes;
+  }
+
+  void* data() { return buffers_.data(); }
+  const void* data() const { return buffers_.data(); }
+
+  size_t size() const { return buffers_.size(); }
+
+  /**
+   * @brief Returns an iterator to the beginning of the buffer vector.
+   */
+  std::vector<ucx_buffer_t>::iterator begin() { return buffers_.begin(); }
+  /**
+   * @brief Returns a const iterator to the beginning of the buffer vector.
+   */
+  std::vector<ucx_buffer_t>::const_iterator begin() const {
+    return buffers_.begin();
+  }
+  /**
+   * @brief Returns an iterator to the end of the buffer vector.
+   */
+  std::vector<ucx_buffer_t>::iterator end() { return buffers_.end(); }
+  /**
+   * @brief Returns a const iterator to the end of the buffer vector.
+   */
+  std::vector<ucx_buffer_t>::const_iterator end() const {
+    return buffers_.end();
+  }
+
+  /**
+   * @brief Accesses the buffer at the given index.
+   * @param idx The index of the buffer.
+   * @return Reference to the ucx_buffer_t at the given index.
+   */
+  ucx_buffer_t& operator[](size_t idx) { return buffers_[idx]; }
+  /**
+   * @brief Accesses the buffer at the given index (const).
+   * @param idx The index of the buffer.
+   * @return Const reference to the ucx_buffer_t at the given index.
+   */
+  const ucx_buffer_t& operator[](size_t idx) const { return buffers_[idx]; }
+
+  /**
+   * @brief Returns the underlying buffer vector.
+   * @return Reference to the std::vector<ucx_buffer_t>.
+   */
+  std::vector<ucx_buffer_t>& buffers() { return buffers_; }
+  /**
+   * @brief Returns the underlying buffer vector (const).
+   * @return Const reference to the std::vector<ucx_buffer_t>.
+   */
+  const std::vector<ucx_buffer_t>& buffers() const { return buffers_; }
+
+  /**
+   * @brief Gets the memory type of the buffer.
+   */
+  ucx_memory_type_t type() const { return type_; }
+  /**
+   * @brief Gets the memory handle of the buffer.
+   */
+  void* mem_h() const { return mem_h_; }
+  /**
+   * @brief Gets whether the buffer is owned by the UcxBufferVec.
+   */
+  bool own_buffer() const { return own_buffer_; }
+
+ private:
+  std::reference_wrapper<UcxMemoryResourceManager> mr_;
+  ucx_memory_type_t type_;
+  std::vector<ucx_buffer_t> buffers_;
+  void* mem_h_;
   std::atomic<bool> own_buffer_;
 };
 
@@ -167,8 +413,12 @@ class UcxAmData {
   UcxAmData(
     UcxMemoryResourceManager& mr, size_t header_size, size_t buffer_size,
     ucx_memory_type_t buffer_type, bool own_header = true,
-    bool own_buffer = true)
-    : mr_(mr), data_{}, own_header_(own_header), own_buffer_(own_buffer) {
+    bool own_buffer = true, std::function<void(void*)> ucp_release_fn = nullptr)
+    : mr_(mr),
+      data_{},
+      own_header_(own_header),
+      own_buffer_(own_buffer),
+      ucp_release_fn_(ucp_release_fn) {
     data_.buffer_type = buffer_type;
 
     if (header_size > 0 && own_header) {
@@ -185,11 +435,12 @@ class UcxAmData {
 
   UcxAmData(
     UcxMemoryResourceManager& mr, ucx_am_data_t&& data, bool own_header = true,
-    bool own_buffer = true)
+    bool own_buffer = true, std::function<void(void*)> ucp_release_fn = nullptr)
     : mr_(mr),
       data_(std::move(data)),
       own_header_(own_header),
-      own_buffer_(own_buffer) {}
+      own_buffer_(own_buffer),
+      ucp_release_fn_(std::move(ucp_release_fn)) {}
 
   UcxAmData(
     UcxMemoryResourceManager& mr, const ucx_am_data_t& data,
@@ -200,10 +451,53 @@ class UcxAmData {
     : mr_(other.mr_),
       data_(std::move(other.data_)),
       own_header_(own_header),
-      own_buffer_(own_buffer) {
+      own_buffer_(own_buffer),
+      ucp_release_fn_(std::move(other.ucp_release_fn_)) {
     other.data_ = {};
     other.own_header_.store(false, std::memory_order_relaxed);
     other.own_buffer_.store(false, std::memory_order_relaxed);
+    other.ucp_release_fn_ = nullptr;
+  }
+
+  UcxAmData(const UcxAmData&) = delete;
+  UcxAmData& operator=(const UcxAmData&) = delete;
+
+  UcxAmData(UcxAmData&& other) noexcept
+    : mr_(other.mr_),
+      data_(other.data_),
+      own_header_(other.own_header_.load(std::memory_order_relaxed)),
+      own_buffer_(other.own_buffer_.load(std::memory_order_relaxed)),
+      ucp_release_fn_(std::move(other.ucp_release_fn_)) {
+    other.data_ = {};
+    other.own_header_.store(false, std::memory_order_relaxed);
+    other.own_buffer_.store(false, std::memory_order_relaxed);
+    other.ucp_release_fn_ = nullptr;
+  }
+
+  UcxAmData& operator=(UcxAmData&& other) noexcept {
+    if (this != &other) {
+      if (data_.header.data && own_header_) {
+        mr_.get().deallocate(
+          ucx_memory_type::HOST, data_.header.data, data_.header.size);
+      }
+      if (data_.buffer.data && own_buffer_) {
+        if (ucp_release_fn_) {
+          ucp_release_fn_(data_.buffer.data);
+        } else {
+          mr_.get().deallocate(
+            data_.buffer_type, data_.buffer.data, data_.buffer.size);
+        }
+      }
+      mr_ = other.mr_;
+      data_ = other.data_;
+      own_header_ = other.own_header_.load(std::memory_order_relaxed);
+      own_buffer_ = other.own_buffer_.load(std::memory_order_relaxed);
+      other.data_ = {};
+      other.own_header_.store(false, std::memory_order_relaxed);
+      other.own_buffer_.store(false, std::memory_order_relaxed);
+      ucp_release_fn_ = std::move(other.ucp_release_fn_);
+    }
+    return *this;
   }
 
   /**
@@ -215,43 +509,13 @@ class UcxAmData {
         ucx_memory_type::HOST, data_.header.data, data_.header.size);
     }
     if (data_.buffer.data && own_buffer_) {
-      mr_.get().deallocate(
-        data_.buffer_type, data_.buffer.data, data_.buffer.size);
-    }
-  }
-
-  UcxAmData(const UcxAmData&) = delete;
-  UcxAmData& operator=(const UcxAmData&) = delete;
-
-  UcxAmData(UcxAmData&& other) noexcept
-    : mr_(other.mr_),
-      data_(other.data_),
-      own_header_(other.own_header_.load(std::memory_order_relaxed)),
-      own_buffer_(other.own_buffer_.load(std::memory_order_relaxed)) {
-    other.data_ = {};
-    other.own_header_.store(false, std::memory_order_relaxed);
-    other.own_buffer_.store(false, std::memory_order_relaxed);
-  }
-
-  UcxAmData& operator=(UcxAmData&& other) noexcept {
-    if (this != &other) {
-      if (data_.header.data && own_header_) {
-        mr_.get().deallocate(
-          ucx_memory_type::HOST, data_.header.data, data_.header.size);
-      }
-      if (data_.buffer.data && own_buffer_) {
+      if (ucp_release_fn_) {
+        ucp_release_fn_(data_.buffer.data);
+      } else {
         mr_.get().deallocate(
           data_.buffer_type, data_.buffer.data, data_.buffer.size);
       }
-      mr_ = other.mr_;
-      data_ = other.data_;
-      own_header_ = other.own_header_.load(std::memory_order_relaxed);
-      own_buffer_ = other.own_buffer_.load(std::memory_order_relaxed);
-      other.data_ = {};
-      other.own_header_.store(false, std::memory_order_relaxed);
-      other.own_buffer_.store(false, std::memory_order_relaxed);
     }
-    return *this;
   }
 
   /**
@@ -274,8 +538,16 @@ class UcxAmData {
   /**
    * @brief Gets whether this object owns the buffer.
    */
-  bool owns_buffer() const {
+  bool own_buffer() const {
     return own_buffer_.load(std::memory_order_relaxed);
+  }
+
+  bool set_ucp_release_fn(std::function<void(void*)>&& ucp_release_fn) {
+    if (ucp_release_fn_) {
+      return false;
+    }
+    ucp_release_fn_ = std::move(ucp_release_fn);
+    return true;
   }
 
  private:
@@ -283,6 +555,7 @@ class UcxAmData {
   ucx_am_data_t data_;
   std::atomic<bool> own_header_;
   std::atomic<bool> own_buffer_;
+  std::function<void(void*)> ucp_release_fn_;
 };
 
 /**
@@ -445,7 +718,7 @@ class UcxAmIovec {
   /**
    * @brief Gets whether this object owns the buffer.
    */
-  bool owns_buffer() const {
+  bool own_buffer() const {
     return own_buffer_.load(std::memory_order_relaxed);
   }
 

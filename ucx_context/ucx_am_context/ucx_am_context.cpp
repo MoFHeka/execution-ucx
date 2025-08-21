@@ -1350,4 +1350,30 @@ ucx_am_context::recv_sender tag_invoke(
   return ucx_am_context::recv_sender{*scheduler.context_, data_type};
 }
 
+ucx_am_context::recv_header_sender tag_invoke(
+  tag_t<connection_recv_header>, ucx_am_context::scheduler scheduler) {
+  return ucx_am_context::recv_header_sender{*scheduler.context_};
+}
+
+ucx_am_context::recv_buffer_sender tag_invoke(
+  tag_t<connection_recv_buffer>, ucx_am_context::scheduler scheduler,
+  size_t am_desc_key, ucx_memory_type memory_type) {
+  return ucx_am_context::recv_buffer_sender{
+    *scheduler.context_, am_desc_key, memory_type};
+}
+
+ucx_am_context::recv_buffer_sender tag_invoke(
+  tag_t<connection_recv_buffer>, ucx_am_context::scheduler scheduler,
+  size_t am_desc_key, UcxBuffer&& buffer) {
+  return ucx_am_context::recv_buffer_sender{
+    *scheduler.context_, am_desc_key, std::move(buffer)};
+}
+
+ucx_am_context::recv_iovec_buffer_sender tag_invoke(
+  tag_t<connection_recv_buffer>, ucx_am_context::scheduler scheduler,
+  size_t am_desc_key, UcxBufferVec&& buffers) {
+  return ucx_am_context::recv_iovec_buffer_sender{
+    *scheduler.context_, am_desc_key, std::move(buffers)};
+}
+
 }  // namespace stdexe_ucx_runtime

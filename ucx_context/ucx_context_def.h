@@ -59,6 +59,7 @@ typedef struct ucx_buffer {
   void* data;   ///< Pointer to a buffer.
   size_t size;  ///< Length of the @a data in bytes.
 } ucx_buffer_t;
+typedef ucx_buffer_t ucx_header_t;
 
 /**
  * @struct ucx_am_data_t

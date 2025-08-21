@@ -76,6 +76,8 @@ limitations under the License.
 using stdexe_ucx_runtime::accept_endpoint;
 using stdexe_ucx_runtime::connect_endpoint;
 using stdexe_ucx_runtime::connection_recv;
+using stdexe_ucx_runtime::connection_recv_buffer;
+using stdexe_ucx_runtime::connection_recv_header;
 using stdexe_ucx_runtime::connection_send;
 using stdexe_ucx_runtime::DefaultUcxMemoryResourceManager;
 #if CUDA_ENABLED
@@ -86,7 +88,11 @@ using stdexe_ucx_runtime::handle_error_connection;
 using stdexe_ucx_runtime::ucx_am_context;
 using stdexe_ucx_runtime::UcxAmData;
 using stdexe_ucx_runtime::UcxAmDesc;
+using stdexe_ucx_runtime::UcxAmIovec;
+using stdexe_ucx_runtime::UcxBuffer;
+using stdexe_ucx_runtime::UcxBufferVec;
 using stdexe_ucx_runtime::UcxConnection;
+using stdexe_ucx_runtime::UcxHeader;
 using stdexe_ucx_runtime::UcxMemoryResourceManager;
 
 using unifex::current_scheduler;
@@ -490,6 +496,294 @@ class UcxAmTest : public ::testing::Test {
     co_return;
   }
 
+  // Header+Buffer variant: server receives header first, then buffer by key
+  task<void> biDiServerHeaderBufferRecvSendTask(
+    ucx_am_context::scheduler& ucxScheduler,
+    static_thread_pool::scheduler& processScheduler,
+    ucx_memory_type recvDataType) {
+    auto header_or_bundle = co_await connection_recv_header(ucxScheduler);
+    if (std::holds_alternative<std::pair<size_t, UcxHeader>>(
+          header_or_bundle)) {
+      auto [key, header] =
+        std::get<std::pair<size_t, UcxHeader>>(std::move(header_or_bundle));
+      // Receive buffer by key with auto allocation per memory type
+      auto buffer_bundle =
+        co_await connection_recv_buffer(ucxScheduler, key, recvDataType);
+      const auto& buffer = buffer_bundle.data();
+
+      ucx_am_data reply{};
+      reply.header.data = const_cast<void*>(header.data());
+      reply.header.size = header.size();
+      reply.buffer.data = const_cast<void*>(buffer.data());
+      reply.buffer.size = buffer.size();
+      reply.buffer_type = recvDataType;
+
+      co_await launchProcessTask(processScheduler, reply);
+      auto conn_id = buffer_bundle.connection().id();
+      co_await connection_send(ucxScheduler, conn_id, reply);
+      co_return;
+    } else {
+      auto bundle =
+        std::get<active_message_bundle>(std::move(header_or_bundle));
+      // Fallback to existing AM bundle path (likely eager)
+      co_await biDiServerRecvSendTaskImpl(
+        ucxScheduler, processScheduler, bundle);
+      co_return;
+    }
+  }
+
+  task<void> biDiServerHeaderBufferRepeatRecvSendTask(
+    ucx_am_context::scheduler& ucxScheduler,
+    static_thread_pool::scheduler& processScheduler,
+    ucx_memory_type recvDataType, inplace_stop_source& stopSource) {
+    co_await repeat_effect_until(
+      with_query_value(
+        defer([&]() {
+          return biDiServerHeaderBufferRecvSendTask(
+            ucxScheduler, processScheduler, recvDataType);
+        }),
+        get_stop_token,
+        stopSource.get_token()),
+      [&]() { return stopSource.stop_requested(); });
+    co_return;
+  }
+
+  task<void> biDiServerHeaderBufferStart(
+    ucx_am_context::scheduler& scheduler,
+    static_thread_pool::scheduler& processScheduler, uint16_t port,
+    ucx_memory_type recvDataType, inplace_stop_source& stopSource) {
+    async_scope scope;
+    auto workerThread = processScheduler;
+    auto serverSocket = create_server_socket(port);
+    co_await for_each(
+      take_until(
+        accept_endpoint(
+          scheduler, std::move(serverSocket), sizeof(sockaddr_in)),
+        single(stop_on_request(stopSource.get_token()))),
+      [&](std::vector<std::pair<std::uint64_t, std::error_code>>&&
+            conn_id_status_vector) {
+        if (conn_id_status_vector.size() > 0) {
+          for (auto [conn_id, status] : conn_id_status_vector) {
+            EXPECT_NE(conn_id, std::uintptr_t(nullptr));
+            EXPECT_TRUE(!status);
+          }
+        }
+        spawn_detached(
+          with_query_value(
+            on(
+              workerThread,
+              biDiServerHeaderBufferRepeatRecvSendTask(
+                scheduler, processScheduler, recvDataType, stopSource)),
+            get_stop_token,
+            stopSource.get_token()),
+          scope);
+      });
+    co_await scope.join();
+    co_return;
+  }
+
+  task<void> biDiServerHeaderBufferStart(
+    ucx_am_context::scheduler& scheduler,
+    static_thread_pool::scheduler& processScheduler,
+    std::vector<std::byte>& client_ucp_address, ucx_memory_type recvDataType,
+    inplace_stop_source& stopSource) {
+    async_scope scope;
+    auto workerThread = processScheduler;
+    [[maybe_unused]] auto conn_id =
+      co_await connect_endpoint(scheduler, client_ucp_address);
+    spawn_detached(
+      on(
+        workerThread,
+        biDiServerHeaderBufferRepeatRecvSendTask(
+          scheduler, processScheduler, recvDataType, stopSource)),
+      scope);
+    co_await scope.join();
+    co_return;
+  }
+
+  // Bidirectional test logic using recv_header_sender + recv_buffer_sender
+  void runBidirectionalHeaderBufferTransferTestLogic(
+    size_t floatDataSize, ucx_memory_type test_memory_type,
+    bool use_ucp_address = false) {
+#if !CUDA_ENABLED
+    if (test_memory_type == ucx_memory_type::CUDA) {
+      GTEST_SKIP()
+        << "CUDA not enabled, skipping CUDA memory type test variant.";
+      return;
+    }
+#endif
+
+    std::unique_ptr<UcxContextRunner> server_runner_ptr;
+    std::unique_ptr<UcxContextRunner> client_runner_ptr;
+
+    switch (test_memory_type) {
+      case ucx_memory_type::HOST:
+        server_runner_ptr =
+          std::make_unique<UcxContextHostRunner>("server_host");
+        client_runner_ptr =
+          std::make_unique<UcxContextHostRunner>("client_host");
+        break;
+#if CUDA_ENABLED
+      case ucx_memory_type::CUDA:
+        server_runner_ptr = std::make_unique<UcxContextCUDARunner>(
+          "server_cuda", use_ucp_address);
+        client_runner_ptr = std::make_unique<UcxContextCUDARunner>(
+          "client_cuda", use_ucp_address);
+        break;
+#endif
+      case ucx_memory_type::CUDA_MANAGED:
+      case ucx_memory_type::ROCM:
+      case ucx_memory_type::ROCM_MANAGED:
+      case ucx_memory_type::RDMA:
+      case ucx_memory_type::ZE_HOST:
+      case ucx_memory_type::ZE_DEVICE:
+      case ucx_memory_type::ZE_MANAGED:
+      case ucx_memory_type::UNKNOWN:
+      default:
+        FAIL() << "Unsupported memory type ("
+               << static_cast<int>(test_memory_type)
+               << ") for UcxContextRunner setup, or CUDA features not enabled "
+                  "for this type.";
+        return;
+    }
+
+    UcxContextRunner& server = *server_runner_ptr;
+    UcxContextRunner& client = *client_runner_ptr;
+
+    uint16_t port =
+      static_cast<uint16_t>(1024 + (rand_r(&seed) % (65535 - 1024)));
+
+    auto serverScheduler = server.get_context().get_scheduler();
+    auto clientScheduler = client.get_context().get_scheduler();
+
+    static_thread_pool tpContext{2};
+    auto processScheduler = tpContext.get_scheduler();
+
+    const size_t headerFixedSize = 1024;
+    auto headerData = create_test_data(headerFixedSize);
+    auto testFloatVec = create_float_test_data(floatDataSize);
+
+    ucx_am_data sendData{};
+    UcxAmData recvDataWrapper(*default_mr_, 0, 0, test_memory_type);
+    sendData.header.data = headerData.data();
+    sendData.header.size = headerData.size();
+    sendData.buffer.data = testFloatVec.data();
+    sendData.buffer.size = testFloatVec.size() * sizeof(float);
+    sendData.buffer_type = test_memory_type;
+
+    UcxMemoryResourceManager* base_manager_ptr =
+      client.get_memory_resource().get();
+
+#if CUDA_ENABLED
+    if (sendData.buffer_type == ucx_memory_type::CUDA) {
+      UcxCudaMemoryResourceManager* clientCudaMemoryResource =
+        dynamic_cast<UcxCudaMemoryResourceManager*>(base_manager_ptr);
+      ASSERT_NE(clientCudaMemoryResource, nullptr)
+        << "Failed to dynamic_cast UcxMemoryResourceManager to "
+           "UcxCudaMemoryResourceManager for CUDA type.";
+      auto dev_ptr = clientCudaMemoryResource->allocate(
+        ucx_memory_type::CUDA, sendData.buffer.size);
+      clientCudaMemoryResource->memcpy(
+        ucx_memory_type::CUDA, dev_ptr, ucx_memory_type::HOST,
+        sendData.buffer.data, sendData.buffer.size);
+      sendData.buffer.data = dev_ptr;
+      cudaPointerAttributes attributes;
+      ASSERT_EQ(
+        cudaPointerGetAttributes(&attributes, sendData.buffer.data),
+        cudaSuccess);
+      ASSERT_EQ(attributes.type, cudaMemoryTypeDevice);
+    }
+#endif
+
+    inplace_stop_source stopSource;
+
+    std::optional<task<void>> server_task;
+    std::optional<task<UcxAmData>> client_task;
+    std::vector<std::byte> server_ucp_address;
+    std::vector<std::byte> client_ucp_address;
+
+    if (use_ucp_address) {
+      ASSERT_EQ(
+        server.get_context().get_ucp_address(server_ucp_address).value(), 0);
+      ASSERT_EQ(
+        client.get_context().get_ucp_address(client_ucp_address).value(), 0);
+      auto server_task_impl = biDiServerHeaderBufferStart(
+        serverScheduler, processScheduler, client_ucp_address,
+        sendData.buffer_type, stopSource);
+      auto client_task_impl = biDiClientStart(
+        clientScheduler, processScheduler, server_ucp_address, sendData,
+        stopSource);
+      server_task.emplace(std::move(server_task_impl));
+      client_task.emplace(std::move(client_task_impl));
+    } else {
+      auto server_task_impl = biDiServerHeaderBufferStart(
+        serverScheduler, processScheduler, port, sendData.buffer_type,
+        stopSource);
+      auto client_task_impl = biDiClientStart(
+        clientScheduler, processScheduler, port, sendData, stopSource);
+      server_task.emplace(std::move(server_task_impl));
+      client_task.emplace(std::move(client_task_impl));
+    }
+
+    auto combined_tasks =
+      when_all(std::move(*server_task), std::move(*client_task));
+
+    sync_wait(
+      std::move(combined_tasks)
+      | then([&](
+               [[maybe_unused]] std::variant<std::tuple<>> server_result,
+               std::variant<std::tuple<UcxAmData>>
+                 client_result_variant) {
+          if (std::holds_alternative<std::tuple<UcxAmData>>(
+                client_result_variant)) {
+            recvDataWrapper = std::move(std::get<0>(
+              std::get<std::tuple<UcxAmData>>(client_result_variant)));
+          } else {
+            FAIL() << "Client task did not return ucx_am_data as expected.";
+          }
+        }));
+
+    auto& recvData = *recvDataWrapper.get();
+    EXPECT_TRUE(verify_test_data(recvData.header.data, headerData.size()));
+
+    auto recv_data_host = recvData.buffer.data;
+    std::vector<float> hostRecvVec;
+
+#if CUDA_ENABLED
+    if (sendData.buffer_type == ucx_memory_type::CUDA) {
+      UcxCudaMemoryResourceManager* clientCudaMemoryResource =
+        dynamic_cast<UcxCudaMemoryResourceManager*>(base_manager_ptr);
+      hostRecvVec = create_float_test_data(floatDataSize);
+      recv_data_host = hostRecvVec.data();
+      clientCudaMemoryResource->memcpy(
+        ucx_memory_type::HOST, recv_data_host, recvData.buffer_type,
+        recvData.buffer.data, recvData.buffer.size);
+    }
+#endif
+
+    EXPECT_TRUE(
+      verify_processed_float_test_data(recv_data_host, recvData.buffer.size));
+
+    switch (test_memory_type) {
+      case ucx_memory_type::HOST: {
+        DefaultUcxMemoryResourceManager* clientMemoryResource =
+          dynamic_cast<DefaultUcxMemoryResourceManager*>(base_manager_ptr);
+        ASSERT_NE(clientMemoryResource, nullptr)
+          << "Failed to dynamic_cast UcxMemoryResourceManager to "
+             "DefaultUcxMemoryResourceManager for HOST type.";
+      } break;
+#if CUDA_ENABLED
+      case ucx_memory_type::CUDA: {
+        // UcxAmData owns the buffer, so no need to deallocate
+      } break;
+#endif
+      default:
+        FAIL() << "Deallocation logic not implemented for memory type: "
+               << static_cast<int>(test_memory_type);
+        break;
+    }
+  }
+
   task<void> biDiServerStart(
     ucx_am_context::scheduler& scheduler,
     static_thread_pool::scheduler& processScheduler,
@@ -797,6 +1091,12 @@ class UcxAmTest : public ::testing::Test {
         break;
     }
   }
+
+  void runUcpAddressHeaderBufferTestLogic(
+    size_t floatDataSize,
+    ucx_memory_type test_memory_type,
+    bool use_iovec = false,
+    bool iovec_recv_as_contiguous = false);
 };
 
 template <typename T>
@@ -1114,6 +1414,534 @@ TEST_F(UcxAmTest, BidirectionalSmallMessageCUDATransferWithUcpAddress) {
 TEST_F(UcxAmTest, BidirectionalLargeMessageCUDATransferWithUcpAddress) {
   cudaSetDevice(0);
   runBidirectionalTransferTestLogic(1024 * 1024, ucx_memory_type::CUDA, true);
+}
+#endif  // CUDA_ENABLED
+
+// ===================== Bidirectional tests using header+buffer
+// =====================
+
+TEST_F(UcxAmTest, BidirectionalSmallHeaderBufferTransfer) {
+  runBidirectionalHeaderBufferTransferTestLogic(1024, ucx_memory_type::HOST);
+}
+
+TEST_F(UcxAmTest, BidirectionalLargeHeaderBufferTransfer) {
+  runBidirectionalHeaderBufferTransferTestLogic(
+    1024 * 1024, ucx_memory_type::HOST);
+}
+
+#if CUDA_ENABLED
+TEST_F(UcxAmTest, BidirectionalSmallHeaderBufferCUDATransfer) {
+  CUdevice device;
+  CUcontext context;
+  ASSERT_EQ(cuInit(0), CUDA_SUCCESS);
+  ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
+  ASSERT_EQ(cuCtxCreate(&context, 0, device), CUDA_SUCCESS);
+  ASSERT_EQ(cuCtxSetCurrent(context), CUDA_SUCCESS);
+  runBidirectionalHeaderBufferTransferTestLogic(1024, ucx_memory_type::CUDA);
+  ASSERT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
+}
+
+TEST_F(UcxAmTest, BidirectionalLargeHeaderBufferCUDATransfer) {
+  CUdevice device;
+  CUcontext context;
+  ASSERT_EQ(cuInit(0), CUDA_SUCCESS);
+  ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
+  ASSERT_EQ(cuCtxCreate(&context, 0, device), CUDA_SUCCESS);
+  ASSERT_EQ(cuCtxSetCurrent(context), CUDA_SUCCESS);
+  runBidirectionalHeaderBufferTransferTestLogic(
+    1024 * 1024, ucx_memory_type::CUDA);
+  ASSERT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
+}
+
+TEST_F(UcxAmTest, BidirectionalSmallHeaderBufferCUDATransferWithUcpAddress) {
+  cudaSetDevice(0);
+  runBidirectionalHeaderBufferTransferTestLogic(
+    1024, ucx_memory_type::CUDA, true);
+}
+
+TEST_F(UcxAmTest, BidirectionalLargeHeaderBufferCUDATransferWithUcpAddress) {
+  cudaSetDevice(0);
+  runBidirectionalHeaderBufferTransferTestLogic(
+    1024 * 1024, ucx_memory_type::CUDA, true);
+}
+#endif  // CUDA_ENABLED
+
+// ===================== UCP Address Header+Buffer tests =====================
+
+// Structure to hold iovec information in header
+struct iovec_info {
+  size_t total_size{0};
+  std::vector<size_t> buffer_sizes;
+
+  std::vector<std::byte> serialize() const {
+    // Layout: [total_size][count][sizes...]
+    const size_t count = buffer_sizes.size();
+    const size_t bytes = sizeof(size_t) /*total*/ + sizeof(size_t) /*count*/
+                         + sizeof(size_t) * count;
+    std::vector<std::byte> out(bytes);
+    std::byte* p = out.data();
+    // total_size
+    std::memcpy(p, &total_size, sizeof(size_t));
+    p += sizeof(size_t);
+    // count
+    std::memcpy(p, &count, sizeof(size_t));
+    p += sizeof(size_t);
+    // sizes
+    if (count > 0) {
+      std::memcpy(p, buffer_sizes.data(), sizeof(size_t) * count);
+    }
+    return out;
+  }
+
+  static iovec_info deserialize(const void* data, size_t len) {
+    iovec_info info{};
+    if (data == nullptr || len < sizeof(size_t) * 2) {
+      return info;
+    }
+    const std::byte* p = static_cast<const std::byte*>(data);
+    size_t total = 0;
+    size_t count = 0;
+    std::memcpy(&total, p, sizeof(size_t));
+    p += sizeof(size_t);
+    std::memcpy(&count, p, sizeof(size_t));
+    p += sizeof(size_t);
+    const size_t expected = sizeof(size_t) * 2 + sizeof(size_t) * count;
+    if (len < expected) {
+      return info;
+    }
+    info.total_size = total;
+    info.buffer_sizes.resize(count);
+    if (count > 0) {
+      std::memcpy(info.buffer_sizes.data(), p, sizeof(size_t) * count);
+    }
+    return info;
+  }
+};
+
+// Unified test function for UCP address header+buffer transfer
+void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
+  size_t floatDataSize,
+  ucx_memory_type test_memory_type,
+  bool use_iovec,
+  bool iovec_recv_as_contiguous) {
+#if !CUDA_ENABLED
+  if (test_memory_type == ucx_memory_type::CUDA) {
+    GTEST_SKIP() << "CUDA not enabled, skipping CUDA memory type test variant.";
+    return;
+  }
+#endif
+
+  std::unique_ptr<UcxContextRunner> server_runner_ptr;
+  std::unique_ptr<UcxContextRunner> client_runner_ptr;
+
+  switch (test_memory_type) {
+    case ucx_memory_type::HOST:
+      server_runner_ptr = std::make_unique<UcxContextHostRunner>("server_host");
+      client_runner_ptr = std::make_unique<UcxContextHostRunner>("client_host");
+      break;
+#if CUDA_ENABLED
+    case ucx_memory_type::CUDA:
+      server_runner_ptr =
+        std::make_unique<UcxContextCUDARunner>("server_cuda", true);
+      client_runner_ptr =
+        std::make_unique<UcxContextCUDARunner>("client_cuda", true);
+      break;
+#endif
+    default:
+      FAIL() << "Unsupported memory type ("
+             << static_cast<int>(test_memory_type) << ")";
+      return;
+  }
+
+  UcxContextRunner& server = *server_runner_ptr;
+  UcxContextRunner& client = *client_runner_ptr;
+
+  auto serverScheduler = server.get_context().get_scheduler();
+  auto clientScheduler = client.get_context().get_scheduler();
+  static_thread_pool tpContext{2};
+  auto processScheduler = tpContext.get_scheduler();
+
+  UcxMemoryResourceManager* server_mr_ptr = server.get_memory_resource().get();
+  UcxMemoryResourceManager* client_mr_ptr = client.get_memory_resource().get();
+
+  UcxAmData recvDataWrapper(*server_mr_ptr, 0, 0, test_memory_type);
+
+  // Prepare data based on use_iovec flag
+  std::variant<std::monostate, UcxAmData, UcxAmIovec> sendData;
+  size_t totalFloatCount = floatDataSize;
+
+  // Prepare iovec data
+  const size_t iovCount = 4;
+  totalFloatCount = iovCount * floatDataSize;
+  auto testFloatVec = create_float_test_data(totalFloatCount);
+
+  std::vector<size_t> buffer_sizes(iovCount, floatDataSize * sizeof(float));
+
+  // Create iovec_info structure for header
+  iovec_info info;
+  info.total_size = totalFloatCount * sizeof(float);
+  info.buffer_sizes = buffer_sizes;
+
+  auto headerBytes = info.serialize();
+
+  // No-copy wrapper using move-ctor
+  auto headerStorage =
+    std::make_shared<std::vector<std::byte>>(std::move(headerBytes));
+  auto payloadStorage =
+    std::make_shared<std::vector<float>>(std::move(testFloatVec));
+  auto bufferMeta =
+    std::make_shared<std::vector<ucx_buffer_t>>(buffer_sizes.size());
+
+  for (size_t i = 0; i < buffer_sizes.size(); ++i) {
+    (*bufferMeta)[i].data =
+      static_cast<void*>(payloadStorage->data() + i * floatDataSize);
+    (*bufferMeta)[i].size = buffer_sizes[i];
+  }
+
+  // Keep storages alive until send completes by capturing in lambda
+  // through sendData variant's lifetime using a small RAII holder.
+  struct Holder {
+    std::shared_ptr<std::vector<std::byte>> header;
+    std::shared_ptr<std::vector<float>> payload;
+    std::shared_ptr<std::vector<ucx_buffer_t>> buffer;
+    Holder(
+      std::shared_ptr<std::vector<std::byte>> h,
+      std::shared_ptr<std::vector<float>>
+        p,
+      std::shared_ptr<std::vector<ucx_buffer_t>>
+        m)
+      : header(std::move(h)), payload(std::move(p)), buffer(std::move(m)) {}
+  };
+
+  // Store holder dynamically and pass wrapper reference via variant by
+  // moving
+  auto holderPtr = std::make_shared<Holder>(
+    std::move(headerStorage), std::move(payloadStorage), std::move(bufferMeta));
+
+  // Keep holderPtr alive by attaching it to a static list within this scope
+  static std::vector<std::shared_ptr<Holder>> g_holders;
+  g_holders.emplace_back(std::move(holderPtr));
+
+  if (test_memory_type == ucx_memory_type::HOST) {
+    auto& holderPtr = g_holders.back();
+
+    if (use_iovec) {
+      ucx_am_iovec_t raw{};
+      raw.header.data = holderPtr->header->data();
+      raw.header.size = holderPtr->header->size();
+      raw.buffer_vec = holderPtr->buffer->data();
+      raw.buffer_count = holderPtr->buffer->size();
+      raw.buffer_type = test_memory_type;
+      raw.mem_h = nullptr;
+
+      // Emplace the wrapper into variant by moving from holder
+      sendData = UcxAmIovec(
+        *client_mr_ptr, std::move(raw), /*own_header=*/false,
+        /*own_buffer=*/false);
+    } else {
+      ucx_am_data_t raw{};
+      raw.header.data = holderPtr->header->data();
+      raw.header.size = holderPtr->header->size();
+      raw.buffer.data = holderPtr->payload->data();
+      raw.buffer.size = holderPtr->payload->size();
+      raw.buffer_type = test_memory_type;
+      raw.mem_h = nullptr;
+
+      sendData = UcxAmData(
+        *client_mr_ptr, std::move(raw), /*own_header=*/false,
+        /*own_buffer=*/false);
+    }
+  } else {
+    // CUDA path: allocate device buffers and copy once, then reference
+    // without extra copies in wrapper-managed iovec
+    auto& holderPtr = g_holders.back();
+    if (use_iovec) {
+      UcxAmIovec allocWrapper(
+        *client_mr_ptr, /*header_size=*/0, buffer_sizes, test_memory_type,
+        /*own_header=*/false, /*own_buffer=*/true);
+      // header copy free
+      allocWrapper.get()->header.data = holderPtr->header->data();
+      allocWrapper.get()->header.size = holderPtr->header->size();
+      // payload copy segment by segment (host->device)
+      for (size_t i = 0; i < buffer_sizes.size(); ++i) {
+        const void* src =
+          static_cast<const void*>((*holderPtr->buffer)[i].data);
+        void* dst = allocWrapper.get()->buffer_vec[i].data;
+        client_mr_ptr->memcpy(
+          test_memory_type, dst, ucx_memory_type::HOST, src, buffer_sizes[i]);
+      }
+      sendData = std::move(allocWrapper);
+    } else {
+      UcxAmData allocWrapper(
+        *client_mr_ptr, /*header_size=*/0,
+        /*buffer_size=*/totalFloatCount * sizeof(float), test_memory_type,
+        /*own_header=*/false, /*own_buffer=*/true);
+      // header copy free
+      allocWrapper.get()->header.data = holderPtr->header->data();
+      allocWrapper.get()->header.size = holderPtr->header->size();
+      client_mr_ptr->memcpy(
+        test_memory_type, allocWrapper.get()->buffer.data,
+        ucx_memory_type::HOST, holderPtr->payload->data(),
+        totalFloatCount * sizeof(float));
+      sendData = std::move(allocWrapper);
+    }
+  }
+
+  inplace_stop_source stopSource;
+  std::vector<std::byte> server_ucp_address, client_ucp_address;
+
+  ASSERT_EQ(
+    server.get_context().get_ucp_address(server_ucp_address).value(), 0);
+  ASSERT_EQ(
+    client.get_context().get_ucp_address(client_ucp_address).value(), 0);
+
+  // Server task: receive header, then buffer if needed
+  auto server_task = [&]() -> task<void> {
+    async_scope scope;
+    auto workerThread = processScheduler;
+    [[maybe_unused]] auto conn_id =
+      co_await connect_endpoint(serverScheduler, client_ucp_address);
+
+    spawn_detached(
+      with_query_value(
+        on(workerThread, defer([&]() -> task<void> {
+             auto header_or_bundle =
+               co_await connection_recv_header(serverScheduler);
+
+             if (std::holds_alternative<std::pair<size_t, UcxHeader>>(
+                   header_or_bundle)) {
+               // RNDV protocol: receive header first, then buffer
+               auto [key, header] = std::get<std::pair<size_t, UcxHeader>>(
+                 std::move(header_or_bundle));
+
+               if (use_iovec) {
+                 // Extract iovec_info from header
+                 iovec_info recv_info =
+                   iovec_info::deserialize(header.data(), header.size());
+
+                 if (iovec_recv_as_contiguous) {
+                   // Receive as a single contiguous buffer by memory type
+                   auto buffer_bundle = co_await connection_recv_buffer(
+                     serverScheduler, key, test_memory_type);
+                   const auto& buffer = buffer_bundle.data();
+
+                   ucx_am_data reply{};
+                   reply.header.data = const_cast<void*>(header.data());
+                   reply.header.size = header.size();
+                   reply.buffer.data = const_cast<void*>(buffer.data());
+                   reply.buffer.size = buffer.size();
+                   reply.buffer_type = test_memory_type;
+
+                   co_await launchProcessTask(processScheduler, reply);
+                   co_await connection_send(
+                     serverScheduler, buffer_bundle.connection().id(), reply);
+                 } else {
+                   // Receive by key using vector of UcxBuffer
+                   UcxBufferVec buffers(
+                     *server.get_memory_resource(), test_memory_type,
+                     recv_info.buffer_sizes);
+
+                   auto buffer_bundle = co_await connection_recv_buffer(
+                     serverScheduler, key, std::move(buffers));
+                   const auto& buffer_vec = buffer_bundle.data();
+
+                   // Combine into a single buffer for processing
+                   auto combined_buffer = server_mr_ptr->allocate(
+                     test_memory_type, recv_info.total_size);
+                   size_t offset = 0;
+                   for (size_t i = 0; i < buffer_vec.size(); ++i) {
+                     server_mr_ptr->memcpy(
+                       test_memory_type,
+                       static_cast<char*>(combined_buffer) + offset,
+                       test_memory_type,
+                       buffer_vec[i].data,
+                       buffer_vec[i].size);
+                     offset += buffer_vec[i].size;
+                   }
+
+                   ucx_am_data reply{};
+                   reply.header.data = header.data();
+                   reply.header.size = header.size();
+                   reply.buffer.data = combined_buffer;
+                   reply.buffer.size = recv_info.total_size;
+                   reply.buffer_type = test_memory_type;
+
+                   co_await launchProcessTask(processScheduler, reply);
+                   co_await connection_send(
+                     serverScheduler, buffer_bundle.connection().id(), reply);
+                 }
+               } else {
+                 // Verify header data
+                 auto& header_ptr = g_holders.back()->header;
+                 EXPECT_EQ(header_ptr->size(), header.size());
+                 const std::byte* actual_ptr =
+                   static_cast<const std::byte*>(header.data());
+                 for (size_t i = 0; i < header.size(); ++i) {
+                   EXPECT_EQ(actual_ptr[i], header_ptr->data()[i])
+                     << "Header byte mismatch at index " << i;
+                 }
+
+                 // Receive buffer by key
+                 auto buffer_bundle = co_await connection_recv_buffer(
+                   serverScheduler, key, test_memory_type);
+                 const auto& buffer = buffer_bundle.data();
+
+                 ucx_am_data reply{};
+                 reply.header.data = const_cast<void*>(header.data());
+                 reply.header.size = header.size();
+                 reply.buffer.data = const_cast<void*>(buffer.data());
+                 reply.buffer.size = buffer.size();
+                 reply.buffer_type = test_memory_type;
+
+                 co_await launchProcessTask(processScheduler, reply);
+                 co_await connection_send(
+                   serverScheduler, buffer_bundle.connection().id(), reply);
+               }
+             } else {
+               // Eager protocol: receive complete bundle
+               auto bundle =
+                 std::get<active_message_bundle>(std::move(header_or_bundle));
+               auto recvData = bundle.get_raw_data();
+               co_await launchProcessTask(processScheduler, recvData);
+               co_await connection_send(
+                 serverScheduler, bundle.connection().id(), recvData);
+             }
+           })),
+        get_stop_token, stopSource.get_token()),
+      scope);
+
+    co_await scope.join();
+  };
+
+  // Client task: send data and receive processed data
+  auto client_task = [&]() -> task<UcxAmData> {
+    async_scope scope;
+    auto workerThread = processScheduler;
+    auto conn_id =
+      co_await connect_endpoint(clientScheduler, server_ucp_address);
+
+    auto recvData = co_await let_error(
+      spawn_future(
+        on(workerThread, defer([&]() -> task<UcxAmData> {
+             if (use_iovec) {
+               co_await connection_send(
+                 clientScheduler, conn_id,
+                 std::move(std::get<UcxAmIovec>(sendData)));
+             } else {
+               co_await connection_send(
+                 clientScheduler, conn_id,
+                 std::move(std::get<UcxAmData>(sendData)));
+             }
+             auto recvBundle =
+               co_await connection_recv(clientScheduler, test_memory_type);
+             co_return recvBundle.move_data();
+           })),
+        scope),
+      [&](std::exception_ptr ep) -> task<UcxAmData> {
+        try {
+          std::rethrow_exception(ep);
+        } catch (const std::exception& e) {
+          std::cerr << "Error in client task: " << e.what() << std::endl;
+        }
+        co_return UcxAmData(
+          *client.get_memory_resource(), 0, 0, test_memory_type);
+      });
+
+    co_await scope.join();
+    stopSource.request_stop();
+    co_await stop_if_requested();
+    co_return recvData;
+  };
+
+  auto combined_tasks = when_all(server_task(), client_task());
+
+  sync_wait(
+    std::move(combined_tasks)
+    | then([&](
+             [[maybe_unused]] std::variant<std::tuple<>> server_result,
+             std::variant<std::tuple<UcxAmData>>
+               client_result_variant) {
+        if (std::holds_alternative<std::tuple<UcxAmData>>(
+              client_result_variant)) {
+          recvDataWrapper = std::move(std::get<0>(
+            std::get<std::tuple<UcxAmData>>(client_result_variant)));
+        } else {
+          FAIL() << "Client task did not return ucx_am_data as expected.";
+        }
+      }));
+
+  auto& recvData = *recvDataWrapper.get();
+  auto recv_data_host = recvData.buffer.data;
+  std::vector<float> hostRecvVec;
+
+#if CUDA_ENABLED
+  if (test_memory_type == ucx_memory_type::CUDA) {
+    UcxCudaMemoryResourceManager* clientCudaMemoryResource =
+      dynamic_cast<UcxCudaMemoryResourceManager*>(client_mr_ptr);
+    hostRecvVec = std::vector<float>(totalFloatCount);
+    recv_data_host = hostRecvVec.data();
+    clientCudaMemoryResource->memcpy(
+      ucx_memory_type::HOST, recv_data_host, recvData.buffer_type,
+      recvData.buffer.data, recvData.buffer.size);
+  }
+#endif
+
+  EXPECT_TRUE(
+    verify_processed_float_test_data(recv_data_host, recvData.buffer.size));
+}
+
+// Test UCP address header+buffer transfer with small message (eager protocol)
+TEST_F(UcxAmTest, UcpAddressHeaderBufferSmallTransfer) {
+  runUcpAddressHeaderBufferTestLogic(32, ucx_memory_type::HOST, false);
+}
+
+// Test UCP address header+buffer transfer with large message (RNDV protocol)
+TEST_F(UcxAmTest, UcpAddressHeaderBufferLargeTransfer) {
+  runUcpAddressHeaderBufferTestLogic(1024 * 1024, ucx_memory_type::HOST, false);
+}
+
+// Test UCP address header+buffer iovec transfer with large message
+TEST_F(UcxAmTest, UcpAddressHeaderBufferIovecLargeTransfer) {
+  runUcpAddressHeaderBufferTestLogic(1024 * 1024, ucx_memory_type::HOST, true);
+}
+
+// Test UCP address header+buffer iovec transfer with large message, receiving
+// as contiguous buffer
+TEST_F(UcxAmTest, UcpAddressHeaderBufferIovecLargeReceiveAsContiguousTransfer) {
+  runUcpAddressHeaderBufferTestLogic(
+    1024 * 1024, ucx_memory_type::HOST, /*use_iovec=*/true,
+    /*iovec_recv_as_contiguous=*/true);
+}
+
+#if CUDA_ENABLED
+// Test UCP address header+buffer transfer with small message (eager protocol)
+// on CUDA
+TEST_F(UcxAmTest, UcpAddressHeaderBufferSmallCUDATransfer) {
+  cudaSetDevice(0);
+  runUcpAddressHeaderBufferTestLogic(32, ucx_memory_type::CUDA, false);
+}
+
+// Test UCP address header+buffer transfer with large message (RNDV protocol) on
+// CUDA
+TEST_F(UcxAmTest, UcpAddressHeaderBufferLargeCUDATransfer) {
+  cudaSetDevice(0);
+  runUcpAddressHeaderBufferTestLogic(1024 * 1024, ucx_memory_type::CUDA, false);
+}
+
+// Test UCP address header+buffer iovec transfer with large message on CUDA
+TEST_F(UcxAmTest, UcpAddressHeaderBufferIovecLargeCUDATransfer) {
+  cudaSetDevice(0);
+  runUcpAddressHeaderBufferTestLogic(1024 * 1024, ucx_memory_type::CUDA, true);
+}
+
+// Test UCP address header+buffer iovec transfer large on CUDA, receiving as
+// contiguous buffer
+TEST_F(
+  UcxAmTest, UcpAddressHeaderBufferIovecLargeReceiveAsContiguousCUDATransfer) {
+  cudaSetDevice(0);
+  runUcpAddressHeaderBufferTestLogic(
+    1024 * 1024, ucx_memory_type::CUDA, /*use_iovec=*/true,
+    /*iovec_recv_as_contiguous=*/true);
 }
 #endif  // CUDA_ENABLED
 

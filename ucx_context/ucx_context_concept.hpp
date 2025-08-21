@@ -31,6 +31,7 @@ limitations under the License.
 #include <unifex/detail/prologue.hpp>
 #include <unifex/tag_invoke.hpp>
 
+#include "ucx_context/ucx_context_data.hpp"
 #include "ucx_context/ucx_memory_resource.hpp"
 
 namespace stdexe_ucx_runtime {
@@ -252,8 +253,12 @@ inline constexpr bool is_connection_type_v =
  */
 template <typename T>
 inline constexpr bool is_data_type_v =
+  // raw payload types
   std::is_same_v<remove_cvref_t<T>, ucx_am_data>
-  || std::is_same_v<remove_cvref_t<T>, ucx_am_iovec>;
+  || std::is_same_v<remove_cvref_t<T>, ucx_am_iovec>
+  // wrapper payload types
+  || std::is_same_v<remove_cvref_t<T>, UcxAmData>
+  || std::is_same_v<remove_cvref_t<T>, UcxAmIovec>;
 
 /**
  * @brief CPO for sending data over a connection.
@@ -285,6 +290,22 @@ inline constexpr struct send_cpo final {
         tag_invoke_result_t<send_cpo, Scheduler, Conn, Data&>> {
     return tag_invoke(
       *this, static_cast<Scheduler&&>(sched), static_cast<Conn&&>(conn), data);
+  }
+
+  template <typename Scheduler, typename Conn, typename Data>
+  constexpr auto operator()(Scheduler&& sched, Conn&& conn, Data&& data) const
+    noexcept(is_nothrow_tag_invocable_v<send_cpo, Scheduler, Conn, Data&&>)
+      -> std::enable_if_t<
+        (is_connection_type_v<Conn>
+         || std::is_same_v<
+           remove_cvref_t<Conn>,
+           std::uintptr_t>)&&(is_data_type_v<Data>),
+        tag_invoke_result_t<send_cpo, Scheduler, Conn, Data&&>> {
+    return tag_invoke(
+      *this,
+      static_cast<Scheduler&&>(sched),
+      static_cast<Conn&&>(conn),
+      static_cast<Data&&>(data));
   }
 } connection_send{};
 
@@ -329,6 +350,155 @@ inline constexpr struct recv_cpo final {
       *this, static_cast<Scheduler&&>(sched), static_cast<RecvParam&&>(param));
   }
 } connection_recv{};
+
+/**
+ * @brief Type trait to constrain the parameter type for receive header
+ * operations.
+ *
+ * A type T satisfies this trait if it is `ucx_buffer`.
+ * @tparam T The type to check.
+ */
+template <typename T>
+inline constexpr bool is_receive_header_parameter_v =
+  std::is_same_v<std::decay_t<T>, ucx_buffer>;
+
+/**
+ * @brief CPO for receiving header data from a connection.
+ *
+ * Creates a sender that, when started, receives header data from a connection.
+ */
+inline constexpr struct recv_header_cpo final {
+  /**
+   * @brief Creates a sender to receive header data.
+   * @tparam Scheduler The type of the scheduler.
+   * @param sched The scheduler for the operation.
+   * @return A sender that completes with the received header data.
+   */
+  template <typename Scheduler>
+  constexpr auto operator()(Scheduler&& sched) const
+    noexcept(is_nothrow_tag_invocable_v<recv_header_cpo, Scheduler>)
+      -> tag_invoke_result_t<recv_header_cpo, Scheduler> {
+    return tag_invoke(*this, static_cast<Scheduler&&>(sched));
+  }
+
+  /**
+   * @brief Creates a sender to receive header data into a user-provided buffer.
+   * @tparam Scheduler The type of the scheduler.
+   * @tparam Header The type of the header buffer, constrained by
+   * `is_receive_header_parameter_v`.
+   * @param sched The scheduler for the operation.
+   * @param header The header buffer to receive data into.
+   * @return A sender that completes with the received header data.
+   */
+  template <
+    typename Scheduler,
+    typename Header,
+    std::enable_if_t<is_receive_header_parameter_v<Header>, int> = 0>
+  constexpr auto operator()(Scheduler&& sched, Header&& header) const
+    noexcept(is_nothrow_tag_invocable_v<recv_header_cpo, Scheduler, Header>)
+      -> tag_invoke_result_t<recv_header_cpo, Scheduler, Header> {
+    return tag_invoke(*this, static_cast<Scheduler&&>(sched), header);
+  }
+} connection_recv_header{};
+
+/**
+ * @brief Type trait to constrain the parameter type for receive buffer flag
+ * operations.
+ *
+ * A type T satisfies this trait if it is `ucx_memory_type`.
+ * @tparam T The type to check.
+ */
+template <typename T>
+inline constexpr bool is_receive_buffer_flag_parameter_v =
+  std::is_same_v<std::decay_t<T>, ucx_memory_type>;
+
+/**
+ * @brief Type trait to check if a type is an indexed container.
+ *
+ * A type T is considered an indexed container if it has a size() method
+ * returning a value convertible to std::size_t, and supports operator[].
+ * @tparam T The type to check.
+ */
+template <typename T, typename = std::void_t<>>
+struct is_indexed_buffer_container : std::false_type {};
+
+template <typename T>
+struct is_indexed_buffer_container<
+  T,
+  std::void_t<
+    // Check 1: Existence of t.size() expression, convertible to std::size_t
+    std::enable_if_t<
+      std::is_convertible_v<decltype(std::declval<T&>().size()), std::size_t>>,
+    // Check 2: Existence of t[0] index access expression
+    decltype(std::declval<T&>()[0]),
+    // Check 3: The value_type is UcxBuffer
+    std::enable_if_t<std::is_same_v<
+      std::decay_t<decltype(std::declval<T&>()[0])>,
+      UcxBuffer>>>> : std::true_type {};
+
+/**
+ * @brief Type trait to constrain the parameter type for receive buffer
+ * operations.
+ *
+ * A type T satisfies this trait if it is `UcxBuffer` or an indexed Buffer
+ * container.
+ * @tparam T The type to check.
+ */
+template <typename T>
+inline constexpr bool is_receive_buffer_parameter_v =
+  std::is_same_v<std::decay_t<T>, UcxBuffer>
+  || std::is_same_v<std::decay_t<T>, UcxBufferVec>;
+
+/**
+ * @brief CPO for receiving buffer data from a connection.
+ *
+ * Creates a sender that, when started, receives buffer data from a connection.
+ */
+inline constexpr struct recv_buffer_cpo final {
+  /**
+   * @brief Creates a sender to receive buffer data into a user-provided buffer.
+   * @tparam Scheduler The type of the scheduler.
+   * @tparam Key The type of the key, constrained by `std::size_t`.
+   * @tparam Data The type of the buffer, constrained by
+   * `is_receive_buffer_parameter_v`.
+   * @param sched The scheduler for the operation.
+   * @param key The key of the receive buffer.
+   * @param data The buffer to receive data into.
+   * @return A sender that completes with the received buffer data.
+   */
+  template <
+    typename Scheduler,
+    typename Data,
+    std::enable_if_t<is_receive_buffer_parameter_v<Data>, int> = 0>
+  constexpr auto operator()(Scheduler&& sched, size_t key, Data&& data) const
+    noexcept(
+      is_nothrow_tag_invocable_v<recv_buffer_cpo, Scheduler, size_t, Data>)
+      -> tag_invoke_result_t<recv_buffer_cpo, Scheduler, size_t, Data> {
+    return tag_invoke(
+      *this, static_cast<Scheduler&&>(sched), key, static_cast<Data&&>(data));
+  }
+
+  /**
+   * @brief Creates a sender to receive buffer data with a key.
+   * @tparam Scheduler The type of the scheduler.
+   * @tparam Flag The type of the memory type flag, constrained by
+   * `is_receive_buffer_flag_parameter_v`.
+   * @param sched The scheduler for the operation.
+   * @param key The key of the receive buffer.
+   * @param flag The memory type flag.
+   * @return A sender that completes with the received buffer data.
+   */
+  template <
+    typename Scheduler,
+    typename Flag,
+    std::enable_if_t<is_receive_buffer_flag_parameter_v<Flag>, int> = 0>
+  constexpr auto operator()(Scheduler&& sched, size_t key, Flag&& flag) const
+    noexcept(
+      is_nothrow_tag_invocable_v<recv_buffer_cpo, Scheduler, size_t, Flag>)
+      -> tag_invoke_result_t<recv_buffer_cpo, Scheduler, size_t, Flag> {
+    return tag_invoke(*this, static_cast<Scheduler&&>(sched), key, flag);
+  }
+} connection_recv_buffer{};
 
 /**
  * @brief CPO for handling connection errors.
