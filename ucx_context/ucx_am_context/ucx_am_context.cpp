@@ -1152,6 +1152,15 @@ void ucx_am_context::ucx_handle_err_callback::handle_connection_error(
   context_.handle_connection_error(conn_id);
 }
 
+/**
+ * @brief Creates a sender that establishes a connection to a remote peer.
+ * @param scheduler The scheduler of the UCX context.
+ * @param src_saddr The source socket address. Can be null.
+ * @param dst_saddr The destination socket address.
+ * @param addrlen The length of the socket address structure.
+ * @return A sender that, on success, returns the connection ID
+ * (`std::uint64_t`).
+ */
 ucx_am_context::connect_sender tag_invoke(
   tag_t<connect_endpoint>,
   ucx_am_context::scheduler scheduler,
@@ -1164,6 +1173,15 @@ ucx_am_context::connect_sender tag_invoke(
     *scheduler.context_, std::move(src_saddr), std::move(dst_saddr), addrlen};
 }
 
+/**
+ * @brief Creates a sender that establishes a connection to a remote peer.
+ * @param scheduler The scheduler of the UCX context.
+ * @param src_saddr nullptr, indicating no specific source address.
+ * @param dst_saddr The destination socket address.
+ * @param addrlen The length of the socket address structure.
+ * @return A sender that, on success, returns the connection ID
+ * (`std::uint64_t`).
+ */
 ucx_am_context::connect_sender tag_invoke(
   tag_t<connect_endpoint>,
   ucx_am_context::scheduler scheduler,
@@ -1175,6 +1193,15 @@ ucx_am_context::connect_sender tag_invoke(
     *scheduler.context_, nullptr, std::move(dst_saddr), addrlen};
 }
 
+/**
+ * @brief Creates a sender that establishes a connection to a remote peer.
+ * @param scheduler The scheduler of the UCX context.
+ * @param src_saddr The source socket address.
+ * @param dst_saddr The destination socket address.
+ * @param addrlen The length of the socket address structure.
+ * @return A sender that, on success, returns the connection ID
+ * (`std::uint64_t`).
+ */
 ucx_am_context::connect_sender tag_invoke(
   tag_t<connect_endpoint>,
   ucx_am_context::scheduler scheduler,
@@ -1188,6 +1215,15 @@ ucx_am_context::connect_sender tag_invoke(
     static_cast<socklen_t>(addrlen)};
 }
 
+/**
+ * @brief Creates a sender that establishes a connection to a remote peer.
+ * @param scheduler The scheduler of the UCX context.
+ * @param src_saddr nullptr, indicating no specific source address.
+ * @param dst_saddr The destination socket address.
+ * @param addrlen The length of the socket address structure.
+ * @return A sender that, on success, returns the connection ID
+ * (`std::uint64_t`).
+ */
 ucx_am_context::connect_sender tag_invoke(
   tag_t<connect_endpoint>,
   ucx_am_context::scheduler scheduler,
@@ -1200,6 +1236,13 @@ ucx_am_context::connect_sender tag_invoke(
     static_cast<socklen_t>(addrlen)};
 }
 
+/**
+ * @brief Creates a sender that establishes a connection using a UCX address.
+ * @param scheduler The scheduler of the UCX context.
+ * @param address_buffer The UCX worker address.
+ * @return A sender that, on success, returns the connection ID
+ * (`std::uint64_t`).
+ */
 ucx_am_context::connect_sender tag_invoke(
   tag_t<connect_endpoint>,
   ucx_am_context::scheduler scheduler,
@@ -1211,6 +1254,13 @@ ucx_am_context::connect_sender tag_invoke(
     *scheduler.context_, std::move(ucp_address_buffer)};
 }
 
+/**
+ * @brief Creates a sender that establishes a connection using a UCX address.
+ * @param scheduler The scheduler of the UCX context.
+ * @param address_buffer The UCX worker address.
+ * @return A sender that, on success, returns the connection ID
+ * (`std::uint64_t`).
+ */
 ucx_am_context::connect_sender tag_invoke(
   tag_t<connect_endpoint>,
   ucx_am_context::scheduler scheduler,
@@ -1219,6 +1269,15 @@ ucx_am_context::connect_sender tag_invoke(
     *scheduler.context_, std::move(address_buffer)};
 }
 
+/**
+ * @brief Creates a sender that accepts incoming connections on a socket.
+ * @param scheduler The scheduler of the UCX context.
+ * @param socket The socket address to listen on.
+ * @param addrlen The length of the socket address structure.
+ * @return A sender that, on success, returns a vector of pairs, each
+ * containing a connection ID (`std::uint64_t`) and a status
+ * (`std::error_code`).
+ */
 ucx_am_context::accept_connection tag_invoke(
   tag_t<accept_endpoint>, ucx_am_context::scheduler scheduler,
   std::unique_ptr<sockaddr> socket, size_t addrlen) {
@@ -1227,12 +1286,26 @@ ucx_am_context::accept_connection tag_invoke(
     *scheduler.context_, std::move(socket), addrlen};
 }
 
+/**
+ * @brief Creates a sender that accepts incoming connections on a port.
+ * @param scheduler The scheduler of the UCX context.
+ * @param port The port number to listen on.
+ * @return A sender that, on success, returns a vector of pairs, each
+ * containing a connection ID (`std::uint64_t`) and a status
+ * (`std::error_code`).
+ */
 ucx_am_context::accept_connection tag_invoke(
   tag_t<accept_endpoint>, ucx_am_context::scheduler scheduler, port_t port) {
   UNIFEX_ASSERT(scheduler.context_->is_connection_handle_error());
   return ucx_am_context::accept_connection{*scheduler.context_, port};
 }
 
+/**
+ * @brief Creates a sender for handling connection errors.
+ * @param scheduler The scheduler of the UCX context.
+ * @param handler A function to call for each connection error.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::dispatch_connection_error_sender tag_invoke(
   tag_t<handle_error_connection>, ucx_am_context::scheduler scheduler,
   std::function<bool(std::uint64_t conn_id, ucs_status_t status)> handler) {
@@ -1240,12 +1313,26 @@ ucx_am_context::dispatch_connection_error_sender tag_invoke(
     *scheduler.context_, handler};
 }
 
+/**
+ * @brief Creates a sender to send an active message over a connection.
+ * @param scheduler The scheduler of the UCX context.
+ * @param conn The connection pair (ID and reference).
+ * @param data The active message data to send.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::send_sender tag_invoke(
   tag_t<connection_send>, ucx_am_context::scheduler scheduler,
   conn_pair_t& conn, ucx_am_data& data) {
   return ucx_am_context::send_sender{*scheduler.context_, conn, data};
 }
 
+/**
+ * @brief Creates a sender to send an active message over a connection.
+ * @param scheduler The scheduler of the UCX context.
+ * @param conn_id The ID of the connection.
+ * @param data The active message data to send.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::send_sender tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
@@ -1254,6 +1341,13 @@ ucx_am_context::send_sender tag_invoke(
   return ucx_am_context::send_sender{*scheduler.context_, conn_id, data};
 }
 
+/**
+ * @brief Creates a sender to send an active message over a connection.
+ * @param scheduler The scheduler of the UCX context.
+ * @param conn The connection object.
+ * @param data The active message data to send.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::send_sender tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
@@ -1262,6 +1356,14 @@ ucx_am_context::send_sender tag_invoke(
   return ucx_am_context::send_sender{*scheduler.context_, conn, data};
 }
 
+/**
+ * @brief Creates a sender to send an active message over a connection, taking
+ * ownership of the data.
+ * @param scheduler The scheduler of the UCX context.
+ * @param conn The connection pair (ID and reference).
+ * @param data The active message data to send.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::send_sender_move tag_invoke(
   tag_t<connection_send>, ucx_am_context::scheduler scheduler,
   conn_pair_t& conn, UcxAmData&& data) {
@@ -1269,6 +1371,14 @@ ucx_am_context::send_sender_move tag_invoke(
     *scheduler.context_, conn, std::move(data)};
 }
 
+/**
+ * @brief Creates a sender to send an active message over a connection, taking
+ * ownership of the data.
+ * @param scheduler The scheduler of the UCX context.
+ * @param conn_id The ID of the connection.
+ * @param data The active message data to send.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::send_sender_move tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
@@ -1278,6 +1388,14 @@ ucx_am_context::send_sender_move tag_invoke(
     *scheduler.context_, conn_id, std::move(data)};
 }
 
+/**
+ * @brief Creates a sender to send an active message over a connection, taking
+ * ownership of the data.
+ * @param scheduler The scheduler of the UCX context.
+ * @param conn The connection object.
+ * @param data The active message data to send.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::send_sender_move tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
@@ -1287,12 +1405,28 @@ ucx_am_context::send_sender_move tag_invoke(
     *scheduler.context_, conn, std::move(data)};
 }
 
+/**
+ * @brief Creates a sender to send an active message with iovec over a
+ * connection.
+ * @param scheduler The scheduler of the UCX context.
+ * @param conn The connection pair (ID and reference).
+ * @param iovec The iovec data to send.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::send_iovec_sender tag_invoke(
   tag_t<connection_send>, ucx_am_context::scheduler scheduler,
   conn_pair_t& conn, ucx_am_iovec& iovec) {
   return ucx_am_context::send_iovec_sender{*scheduler.context_, conn, iovec};
 }
 
+/**
+ * @brief Creates a sender to send an active message with iovec over a
+ * connection.
+ * @param scheduler The scheduler of the UCX context.
+ * @param conn_id The ID of the connection.
+ * @param iovec The iovec data to send.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::send_iovec_sender tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
@@ -1301,6 +1435,14 @@ ucx_am_context::send_iovec_sender tag_invoke(
   return ucx_am_context::send_iovec_sender{*scheduler.context_, conn_id, iovec};
 }
 
+/**
+ * @brief Creates a sender to send an active message with iovec over a
+ * connection.
+ * @param scheduler The scheduler of the UCX context.
+ * @param conn The connection object.
+ * @param iovec The iovec data to send.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::send_iovec_sender tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
@@ -1309,6 +1451,14 @@ ucx_am_context::send_iovec_sender tag_invoke(
   return ucx_am_context::send_iovec_sender{*scheduler.context_, conn, iovec};
 }
 
+/**
+ * @brief Creates a sender to send an active message with iovec over a
+ * connection, taking ownership of the data.
+ * @param scheduler The scheduler of the UCX context.
+ * @param conn The connection pair (ID and reference).
+ * @param iovec The iovec data to send.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::send_iovec_sender_move tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
@@ -1318,6 +1468,14 @@ ucx_am_context::send_iovec_sender_move tag_invoke(
     *scheduler.context_, conn, std::move(iovec)};
 }
 
+/**
+ * @brief Creates a sender to send an active message with iovec over a
+ * connection, taking ownership of the data.
+ * @param scheduler The scheduler of the UCX context.
+ * @param conn_id The ID of the connection.
+ * @param iovec The iovec data to send.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::send_iovec_sender_move tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
@@ -1327,6 +1485,14 @@ ucx_am_context::send_iovec_sender_move tag_invoke(
     *scheduler.context_, conn_id, std::move(iovec)};
 }
 
+/**
+ * @brief Creates a sender to send an active message with iovec over a
+ * connection, taking ownership of the data.
+ * @param scheduler The scheduler of the UCX context.
+ * @param conn The connection object.
+ * @param iovec The iovec data to send.
+ * @return A sender that completes with no value on success.
+ */
 ucx_am_context::send_iovec_sender_move tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
@@ -1336,6 +1502,12 @@ ucx_am_context::send_iovec_sender_move tag_invoke(
     *scheduler.context_, conn, std::move(iovec)};
 }
 
+/**
+ * @brief Creates a sender to receive an active message.
+ * @param scheduler The scheduler of the UCX context.
+ * @param data A reference to a `ucx_am_data` struct to be filled.
+ * @return A sender that, on success, returns an `active_message_bundle`.
+ */
 ucx_am_context::recv_sender tag_invoke(
   tag_t<connection_recv>,
   ucx_am_context::scheduler scheduler,
@@ -1343,6 +1515,12 @@ ucx_am_context::recv_sender tag_invoke(
   return ucx_am_context::recv_sender{*scheduler.context_, data};
 }
 
+/**
+ * @brief Creates a sender to receive an active message.
+ * @param scheduler The scheduler of the UCX context.
+ * @param data_type The memory type for the receive buffer.
+ * @return A sender that, on success, returns an `active_message_bundle`.
+ */
 ucx_am_context::recv_sender tag_invoke(
   tag_t<connection_recv>,
   ucx_am_context::scheduler scheduler,
@@ -1350,11 +1528,26 @@ ucx_am_context::recv_sender tag_invoke(
   return ucx_am_context::recv_sender{*scheduler.context_, data_type};
 }
 
+/**
+ * @brief Creates a sender to receive only the header of an active message.
+ * @param scheduler The scheduler of the UCX context.
+ * @return A sender that, on success, returns a `std::variant<std::pair<size_t,
+ * UcxHeader>, active_message_bundle>`. The variant will contain the header
+ * info for rendezvous messages, or the full data for eager messages.
+ */
 ucx_am_context::recv_header_sender tag_invoke(
   tag_t<connection_recv_header>, ucx_am_context::scheduler scheduler) {
   return ucx_am_context::recv_header_sender{*scheduler.context_};
 }
 
+/**
+ * @brief Creates a sender to receive the data portion of a rendezvous active
+ * message.
+ * @param scheduler The scheduler of the UCX context.
+ * @param am_desc_key The key to identify the pending rendezvous message.
+ * @param memory_type The memory type for the receive buffer.
+ * @return A sender that, on success, returns an `active_message_buffer_bundle`.
+ */
 ucx_am_context::recv_buffer_sender tag_invoke(
   tag_t<connection_recv_buffer>, ucx_am_context::scheduler scheduler,
   size_t am_desc_key, ucx_memory_type memory_type) {
@@ -1362,6 +1555,14 @@ ucx_am_context::recv_buffer_sender tag_invoke(
     *scheduler.context_, am_desc_key, memory_type};
 }
 
+/**
+ * @brief Creates a sender to receive the data portion of a rendezvous active
+ * message into a provided buffer.
+ * @param scheduler The scheduler of the UCX context.
+ * @param am_desc_key The key to identify the pending rendezvous message.
+ * @param buffer The buffer to receive the data into.
+ * @return A sender that, on success, returns an `active_message_buffer_bundle`.
+ */
 ucx_am_context::recv_buffer_sender tag_invoke(
   tag_t<connection_recv_buffer>, ucx_am_context::scheduler scheduler,
   size_t am_desc_key, UcxBuffer&& buffer) {
@@ -1369,6 +1570,15 @@ ucx_am_context::recv_buffer_sender tag_invoke(
     *scheduler.context_, am_desc_key, std::move(buffer)};
 }
 
+/**
+ * @brief Creates a sender to receive the data portion of a rendezvous active
+ * message into a vector of buffers.
+ * @param scheduler The scheduler of the UCX context.
+ * @param am_desc_key The key to identify the pending rendezvous message.
+ * @param buffers The vector of buffers to receive the data into.
+ * @return A sender that, on success, returns an
+ * `active_message_iovec_buffer_bundle`.
+ */
 ucx_am_context::recv_iovec_buffer_sender tag_invoke(
   tag_t<connection_recv_buffer>, ucx_am_context::scheduler scheduler,
   size_t am_desc_key, UcxBufferVec&& buffers) {

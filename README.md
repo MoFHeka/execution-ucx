@@ -249,6 +249,74 @@ cc_binary(
 )
 ```
 
+## API Reference
+
+This section details the primary APIs provided by `ucx_am_context` for network communication, based on the `std::execution` model. These functions return senders that can be used within coroutines or with `unifex::sync_wait`.
+
+#### Connection Management
+
+*   **`connect_endpoint(scheduler, dst_saddr, addrlen)`**
+    *   **Description**: Establishes a connection to a remote peer specified by a socket address.
+    *   **Parameters**:
+        *   `scheduler`: The `ucx_am_context` scheduler.
+        *   `dst_saddr`: A `std::unique_ptr<sockaddr>` for the destination address.
+        *   `addrlen`: The length of the socket address.
+        *   An optional `src_saddr` can be provided.
+    *   **Returns**: A sender that produces a connection ID (`std::uint64_t`) on success.
+
+*   **`connect_endpoint(scheduler, address_buffer)`**
+    *   **Description**: Establishes a connection using a remote worker's UCX address.
+    *   **Parameters**:
+        *   `scheduler`: The `ucx_am_context` scheduler.
+        *   `address_buffer`: A `std::vector<std::byte>` containing the remote UCX worker address.
+    *   **Returns**: A sender that produces a connection ID (`std::uint64_t`) on success.
+
+*   **`accept_endpoint(scheduler, socket, addrlen)`**
+    *   **Description**: Listens for and accepts incoming connections on a given socket address.
+    *   **Parameters**:
+        *   `scheduler`: The `ucx_am_context` scheduler.
+        *   `socket`: A `std::unique_ptr<sockaddr>` for the listening address.
+        *   `addrlen`: The length of the socket address.
+    *   **Returns**: A sender that produces a `std::vector<std::pair<std::uint64_t, std::error_code>>`, where each pair represents a newly accepted connection's ID and status.
+
+*   **`handle_error_connection(scheduler, handler)`**
+    *   **Description**: Registers a handler for connection errors. The handler decides whether to attempt reconnection.
+    *   **Parameters**:
+        *   `scheduler`: The `ucx_am_context` scheduler.
+        *   `handler`: A callable `std::function<bool(std::uint64_t, ucs_status_t)>`. It receives the connection ID and status. Return `true` to reconnect, `false` to close.
+    *   **Returns**: A sender that completes with no value.
+
+#### Data Transfer
+
+*   **`connection_send(scheduler, conn_id, data)`**
+    *   **Description**: Sends an Active Message. Overloads exist for different connection identifiers (`conn_pair_t&`, `std::uintptr_t`, `UcxConnection&`) and data types (`ucx_am_data&`, `UcxAmData&&`, `ucx_am_iovec&`, `UcxAmIovec&&`).
+    *   **Parameters**:
+        *   `scheduler`: The `ucx_am_context` scheduler.
+        *   `conn_id`: The identifier for the connection.
+        *   `data`: The data payload to send. Rvalue versions (`&&`) take ownership.
+    *   **Returns**: A sender that completes with no value on success.
+
+*   **`connection_recv(scheduler, data)`**
+    *   **Description**: Receives an Active Message.
+    *   **Parameters**:
+        *   `scheduler`: The `ucx_am_context` scheduler.
+        *   `data`: A `ucx_am_data&` to be filled with the received message. An overload takes a `ucx_memory_type` to allocate the buffer internally.
+    *   **Returns**: A sender that produces an `active_message_bundle` on success.
+
+*   **`connection_recv_header(scheduler)`**
+    *   **Description**: Receives only the header of an incoming message. This is useful for two-phase receive (rendezvous protocol), where the data payload is received in a separate step.
+    *   **Parameters**:
+        *   `scheduler`: The `ucx_am_context` scheduler.
+    *   **Returns**: A sender producing a `std::variant<std::pair<size_t, UcxHeader>, active_message_bundle>`. For rendezvous messages, it contains a key (`size_t`) and the `UcxHeader`. For eager messages, it contains the full `active_message_bundle`.
+
+*   **`connection_recv_buffer(scheduler, am_desc_key, buffer)`**
+    *   **Description**: Receives the data payload for a rendezvous message identified by a key.
+    *   **Parameters**:
+        *   `scheduler`: The `ucx_am_context` scheduler.
+        *   `am_desc_key`: The key obtained from `connection_recv_header`.
+        *   `buffer`: A `UcxBuffer&&` or `UcxBufferVec&&` to receive the data. An overload takes a `ucx_memory_type` to allocate the buffer internally.
+    *   **Returns**: A sender producing an `active_message_buffer_bundle` (for `UcxBuffer`) or `active_message_iovec_buffer_bundle` (for `UcxBufferVec`) on success.
+
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE) license.

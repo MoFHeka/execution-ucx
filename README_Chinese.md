@@ -248,6 +248,74 @@ cc_binary(
 )
 ```
 
+## API 参考
+
+本节详细介绍 `ucx_am_context` 提供的用于网络通信的主要 API，这些 API 基于 `std::execution` 模型。这些函数返回可以在协程或与 `unifex::sync_wait` 一起使用的 sender。
+
+#### 连接管理
+
+*   **`connect_endpoint(scheduler, dst_saddr, addrlen)`**
+    *   **描述**: 建立到由套接字地址指定的远程对等点的连接。
+    *   **参数**:
+        *   `scheduler`: `ucx_am_context` 调度器。
+        *   `dst_saddr`: 目标地址的 `std::unique_ptr<sockaddr>`。
+        *   `addrlen`: 套接字地址的长度。
+        *   可以提供一个可选的 `src_saddr`。
+    *   **返回值**: 成功时返回一个生成连接 ID (`std::uint64_t`) 的 sender。
+
+*   **`connect_endpoint(scheduler, address_buffer)`**
+    *   **描述**: 使用远程工作进程的 UCX 地址建立连接。
+    *   **参数**:
+        *   `scheduler`: `ucx_am_context` 调度器。
+        *   `address_buffer`: 包含远程 UCX 工作进程地址的 `std::vector<std::byte>`。
+    *   **返回值**: 成功时返回一个生成连接 ID (`std::uint64_t`) 的 sender。
+
+*   **`accept_endpoint(scheduler, socket, addrlen)`**
+    *   **描述**: 在给定的套接字地址上侦听并接受传入的连接。
+    *   **参数**:
+        *   `scheduler`: `ucx_am_context` 调度器。
+        *   `socket`: 用于侦听地址的 `std::unique_ptr<sockaddr>`。
+        *   `addrlen`: 套接字地址的长度。
+    *   **返回值**: 成功时返回一个生成 `std::vector<std::pair<std::uint64_t, std::error_code>>` 的 sender，其中每个 pair 代表一个新接受的连接的 ID 和状态。
+
+*   **`handle_error_connection(scheduler, handler)`**
+    *   **描述**: 注册一个用于处理连接错误的处理器。该处理器决定是否尝试重新连接。
+    *   **参数**:
+        *   `scheduler`: `ucx_am_context` 调度器。
+        *   `handler`: 一个可调用的 `std::function<bool(std::uint64_t, ucs_status_t)>`。它接收连接 ID 和状态。返回 `true` 以重新连接，`false` 以关闭。
+    *   **返回值**: 一个不带值完成的 sender。
+
+#### 数据传输
+
+*   **`connection_send(scheduler, conn_id, data)`**
+    *   **描述**: 发送一个 Active Message。存在用于不同连接标识符 (`conn_pair_t&`, `std::uintptr_t`, `UcxConnection&`) 和数据类型 (`ucx_am_data&`, `UcxAmData&&`, `ucx_am_iovec&`, `UcxAmIovec&&`) 的重载。
+    *   **参数**:
+        *   `scheduler`: `ucx_am_context` 调度器。
+        *   `conn_id`: 连接的标识符。
+        *   `data`: 要发送的数据负载。右值版本 (`&&`) 会获得所有权。
+    *   **返回值**: 成功时返回一个不带值完成的 sender。
+
+*   **`connection_recv(scheduler, data)`**
+    *   **描述**: 接收一个 Active Message。
+    *   **参数**:
+        *   `scheduler`: `ucx_am_context` 调度器。
+        *   `data`: 一个 `ucx_am_data&`，用于填充接收到的消息。一个重载版本接受 `ucx_memory_type` 以在内部自分配缓冲区。
+    *   **返回值**: 成功时返回一个生成 `active_message_bundle` 的 sender。
+
+*   **`connection_recv_header(scheduler)`**
+    *   **描述**: 只接收传入消息的头部。这对于两阶段接收（Rendezvous协议）很有用，其中数据负载在单独的步骤中接收。
+    *   **参数**:
+        *   `scheduler`: `ucx_am_context` 调度器。
+    *   **返回值**: 返回一个生成 `std::variant<std::pair<size_t, UcxHeader>, active_message_bundle>` 的 sender。对于 Rendezvous 消息，它包含一个键 (`size_t`) 和 `UcxHeader`。对于 Eager 消息，它包含完整的 `active_message_bundle`。
+
+*   **`connection_recv_buffer(scheduler, am_desc_key, buffer)`**
+    *   **描述**: 接收由键标识的 Rendezvous 消息的数据负载。
+    *   **参数**:
+        *   `scheduler`: `ucx_am_context` 调度器。
+        *   `am_desc_key`: 从 `connection_recv_header` 获取的键。
+        *   `buffer`: 用于接收数据的 `UcxBuffer&&` 或 `UcxBufferVec&&`。一个重载版本接受 `ucx_memory_type` 以在内部自分配缓冲区。
+    *   **返回值**: 成功时返回一个生成 `active_message_buffer_bundle`（对于 `UcxBuffer`）或 `active_message_iovec_buffer_bundle`（对于 `UcxBufferVec`）的 sender。
+
 ## 许可证
 
 本项目采用 [Apache License 2.0](LICENSE) 许可证。 
