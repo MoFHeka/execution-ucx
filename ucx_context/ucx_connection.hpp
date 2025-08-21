@@ -138,6 +138,18 @@ class CqeEntryCallback : public UcxCallback {
   std::function<ucx_am_cqe&()> get_entry_fn_;
 };
 
+// DirectEntryCallback for direct operation in completion
+class DirectEntryCallback : public UcxCallback {
+ public:
+  explicit DirectEntryCallback(std::function<void(ucs_status_t)> op_fn)
+    : op_fn_(op_fn) {}
+
+  virtual void operator()(ucs_status_t status);
+
+ private:
+  std::function<void(ucs_status_t)> op_fn_;
+};
+
 bool is_rdma_transport_available(ucp_ep_h ep);
 
 bool is_zcopy_available(ucp_context_h context, size_t msg_len);

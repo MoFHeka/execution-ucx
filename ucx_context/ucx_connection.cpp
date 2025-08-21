@@ -70,6 +70,9 @@ void CqeEntryCallback::operator()(ucs_status_t status) {
   entry.res = status;
 }
 
+// DirectEntryCallback implementation
+void DirectEntryCallback::operator()(ucs_status_t status) { op_fn_(status); }
+
 // Determine whether memory registration should be used based on UCP EP and
 // transport capabilities. Returns true if memory registration is recommended
 // for zero-copy or RDMA operations.

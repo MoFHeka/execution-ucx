@@ -1074,9 +1074,11 @@ class ucx_am_context::recv_sender {
               data_.buffer_type = ucx_memory_type::HOST;
             }
             this->result_ = conn.get().ucx_status();
-            auto& entry = this->context_.get_completion_queue_entry();
-            entry.user_data = op_;
-            entry.res = this->result_;
+            // Schedule the completion to the pending IO queue front
+            --this->context_.sqUnflushedCount_;
+            // TODO(He Jia): This is may cause segment fault issue.
+            this->context_.reschedule_pending_io(
+              static_cast<completion_base*>(this));
           }
         }
         UNIFEX_CATCH(...) { set_completion_entry(UCS_ERR_NO_MESSAGE); }
@@ -1738,9 +1740,11 @@ class ucx_am_context::recv_header_sender {
 
           this->execute_ = &operation::on_read_complete;
           this->result_ = conn.get().ucx_status();
-          auto& entry = this->context_.get_completion_queue_entry();
-          entry.user_data = op_;
-          entry.res = this->result_;
+          // Schedule the completion to the pending IO queue front
+          --this->context_.sqUnflushedCount_;
+          // TODO(He Jia): This is may cause segment fault issue.
+          this->context_.reschedule_pending_io(
+            static_cast<completion_base*>(this));
         }
         UNIFEX_CATCH(...) { set_completion_entry(UCS_ERR_NO_MESSAGE); }
       };
@@ -1866,8 +1870,8 @@ class ucx_am_context::recv_header_sender {
           }
         }
         UNIFEX_CATCH(...) {
-          UCX_CTX_ERROR
-            << "Failed to deallocate data in recv_sender on_read_complete";
+          UCX_CTX_ERROR << "Failed to deallocate data in recv_header_sender "
+                           "on_read_complete";
         }
         unifex::set_done(std::move(self.receiver_));
       } else {
@@ -1879,8 +1883,8 @@ class ucx_am_context::recv_header_sender {
           }
         }
         UNIFEX_CATCH(...) {
-          UCX_CTX_ERROR
-            << "Failed to deallocate data in recv_sender on_read_complete";
+          UCX_CTX_ERROR << "Failed to deallocate data in recv_header_sender "
+                           "on_read_complete";
         }
         unifex::set_error(
           std::move(self.receiver_),
@@ -2049,13 +2053,32 @@ class ucx_am_context::send_sender_t {
           this->result_ = UCS_ERR_CANCELED;
           return;
         }
-        // Prepare callback function
-        auto am_send_cb =
-          std::make_unique<CqeEntryCallback>(op_, [this]() -> ucx_am_cqe& {
-            return this->context_.get_completion_queue_entry();
-          });
-        // Prepare buffer
         auto& conn_ref = conn_.value().get();
+        // Prepare callback function
+        std::unique_ptr<UcxCallback> am_send_cb = nullptr;
+        bool use_cqe = true;
+        if constexpr (std::is_same_v<payload_view_t, ucx_am_data>) {
+          use_cqe = conn_ref.should_use_zcopy(data_.buffer.size);
+        }
+        if (use_cqe) {
+          // Use context completion queue entry when large data is sent
+          am_send_cb = std::move(
+            std::make_unique<CqeEntryCallback>(op_, [this]() -> ucx_am_cqe& {
+              return this->context_.get_completion_queue_entry();
+            }));
+        } else {
+          // Call completion callback directly
+          am_send_cb = std::move(
+            std::make_unique<DirectEntryCallback>([this](ucs_status_t status) {
+              this->result_ = status;
+              // Schedule the completion to the pending IO queue front
+              --this->context_.sqUnflushedCount_;
+              // TODO(He Jia): This is may cause segment fault issue.
+              this->context_.reschedule_pending_io(
+                static_cast<completion_base*>(this));
+            }));
+        }
+        // Prepare buffer
         auto impl_memh_ = reinterpret_cast<ucp_mem_h>(data_.mem_h);
         // Call the send function
         if constexpr (std::is_same_v<payload_view_t, ucx_am_data>) {
