@@ -1973,6 +1973,8 @@ class ucx_am_context::send_sender_t {
       std::decay_t<T>>>;
 
   using payload_view_t = payload_view_t_<Payload>;
+  // For static_assert in payload_view_t
+  struct payload_always_false : std::false_type {};
 
   // Get reference to underlying C struct (wrapper -> underlying, raw -> self)
   template <typename T>
@@ -2015,7 +2017,13 @@ class ucx_am_context::send_sender_t {
           "The buffer vector must not be nullptr initialized when "
           "passed to send_sender constructor with buffer_count > 0");
       } else {
-        static_assert(false, "Invalid send_sender payload type");
+        static_assert(
+          payload_always_false::value,
+          "Invalid send_sender payload type. Please check "
+          "ucx_context/ucx_context_def.h "
+          "and ucx_context/ucx_context_data.hpp for "
+          "definition of ucx_am_data and ucx_am_iovec and "
+          "other available types.");
       }
     }
 
@@ -2094,7 +2102,13 @@ class ucx_am_context::send_sender_t {
             data_.buffer_count, impl_memh_, mem_type_map(data_.buffer_type),
             std::move(am_send_cb));
         } else {
-          static_assert(false, "Invalid send_sender payload type");
+          static_assert(
+            payload_always_false::value,
+            "Invalid send_sender payload type. Please check "
+            "ucx_context/ucx_context_def.h "
+            "and ucx_context/ucx_context_data.hpp for "
+            "definition of ucx_am_data and ucx_am_iovec and "
+            "other available types.");
         }
       };
 
@@ -2608,6 +2622,9 @@ class ucx_am_context::scheduler {
   friend dispatch_connection_error_sender tag_invoke(
     tag_t<handle_error_connection>, scheduler scheduler,
     std::function<bool(std::uint64_t conn_id, ucs_status_t status)> handler);
+  friend dispatch_connection_error_sender tag_invoke(
+    tag_t<handle_error_connection>, scheduler scheduler,
+    std::function<bool(std::uint64_t conn_id, std::error_code status)> handler);
   friend send_sender tag_invoke(
     tag_t<connection_send>, scheduler scheduler, conn_pair_t& conn,
     ucx_am_data& data);
@@ -2978,6 +2995,21 @@ class ucx_am_context::dispatch_connection_error_sender {
       -> bool { return false; })
     : context_(context),
       connection_error_handler_(std::move(connection_error_handler)) {}
+
+  explicit dispatch_connection_error_sender(
+    ucx_am_context& context,
+    std::function<bool(std::uint64_t, std::error_code status)>
+      connection_error_handler =
+        [](
+          [[maybe_unused]] std::uint64_t,
+          [[maybe_unused]] std::error_code status) -> bool { return false; })
+    : context_(context) {
+    connection_error_handler_ = [handler = std::move(connection_error_handler)](
+                                  std::uint64_t conn_id,
+                                  ucs_status_t status) -> bool {
+      return handler(conn_id, stdexe_ucx_runtime::make_error_code(status));
+    };
+  }
 
   /**
    * @brief Connects a receiver to the sender.

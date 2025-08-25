@@ -1303,12 +1303,27 @@ ucx_am_context::accept_connection tag_invoke(
 /**
  * @brief Creates a sender for handling connection errors.
  * @param scheduler The scheduler of the UCX context.
- * @param handler A function to call for each connection error.
+ * @param handler A function to call for each connection error with status
+ * (`ucs_status_t`).
  * @return A sender that completes with no value on success.
  */
 ucx_am_context::dispatch_connection_error_sender tag_invoke(
   tag_t<handle_error_connection>, ucx_am_context::scheduler scheduler,
   std::function<bool(std::uint64_t conn_id, ucs_status_t status)> handler) {
+  return ucx_am_context::dispatch_connection_error_sender{
+    *scheduler.context_, handler};
+}
+
+/**
+ * @brief Creates a sender for handling connection errors.
+ * @param scheduler The scheduler of the UCX context.
+ * @param handler A function to call for each connection error with status
+ * (`std::error_code`).
+ * @return A sender that completes with no value on success.
+ */
+ucx_am_context::dispatch_connection_error_sender tag_invoke(
+  tag_t<handle_error_connection>, ucx_am_context::scheduler scheduler,
+  std::function<bool(std::uint64_t conn_id, std::error_code status)> handler) {
   return ucx_am_context::dispatch_connection_error_sender{
     *scheduler.context_, handler};
 }

@@ -119,7 +119,7 @@ int main() {
   std::unique_ptr<UcxMemoryResourceManager> server_mem_res;
   server_mem_res.reset(new DefaultUcxMemoryResourceManager());
   auto server_context =
-    std::make_shared<ucx_am_context>(server_mem_res, "server");
+    std::make_shared<ucx_am_context>(*server_mem_res, "server");
   unifex::inplace_stop_source server_stop_source;
   std::thread server_thread{
     [&] { server_context->run(server_stop_source.get_token()); }};
@@ -127,7 +127,7 @@ int main() {
   std::unique_ptr<UcxMemoryResourceManager> client_mem_res;
   client_mem_res.reset(new DefaultUcxMemoryResourceManager());
   auto client_context =
-    std::make_shared<ucx_am_context>(client_mem_res, "client");
+    std::make_shared<ucx_am_context>(*client_mem_res, "client");
   unifex::inplace_stop_source client_stop_source;
   std::thread client_thread{
     [&] { client_context->run(client_stop_source.get_token()); }};
@@ -162,7 +162,7 @@ int main() {
 
   // 3. Define the server and client logic as unifex tasks.
   auto server_recv_logic =
-    [&](std::vector<std::pair<std::uint64_t, ucs_status_t>>&&
+    [&](std::vector<std::pair<std::uint64_t, std::error_code>>&&
           conn_id_status_vector) -> task<void> {
     // This call will populate the 'recv_data' struct upon message arrival.
     active_message_bundle bundle =
@@ -186,7 +186,7 @@ int main() {
           sizeof(sockaddr_in)),
         unifex::single(
           unifex::stop_on_request(server_stop_source.get_token()))),
-      [&](std::vector<std::pair<std::uint64_t, ucs_status_t>>&&
+      [&](std::vector<std::pair<std::uint64_t, std::error_code>>&&
             conn_id_status_vector) {
         // Only spawn_detached is available in a not-coroutine function
         unifex::spawn_detached(
@@ -283,7 +283,7 @@ This section details the primary APIs provided by `ucx_am_context` for network c
     *   **Description**: Registers a handler for connection errors. The handler decides whether to attempt reconnection.
     *   **Parameters**:
         *   `scheduler`: The `ucx_am_context` scheduler.
-        *   `handler`: A callable `std::function<bool(std::uint64_t, ucs_status_t)>`. It receives the connection ID and status. Return `true` to reconnect, `false` to close.
+        *   `handler`: A callable `std::function<bool(std::uint64_t, T)>` where T can be either `ucs_status_t` or `std::error_code`. It receives the connection ID and status. Return `true` to reconnect, `false` to close.
     *   **Returns**: A sender that completes with no value.
 
 #### Data Transfer

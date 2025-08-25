@@ -119,7 +119,7 @@ int main() {
   std::unique_ptr<UcxMemoryResourceManager> server_mem_res;
   server_mem_res.reset(new DefaultUcxMemoryResourceManager());
   auto server_context =
-    std::make_shared<ucx_am_context>(server_mem_res, "server");
+    std::make_shared<ucx_am_context>(*server_mem_res, "server");
   unifex::inplace_stop_source server_stop_source;
   std::thread server_thread{
     [&] { server_context->run(server_stop_source.get_token()); }};
@@ -127,7 +127,7 @@ int main() {
   std::unique_ptr<UcxMemoryResourceManager> client_mem_res;
   client_mem_res.reset(new DefaultUcxMemoryResourceManager());
   auto client_context =
-    std::make_shared<ucx_am_context>(client_mem_res, "client");
+    std::make_shared<ucx_am_context>(*client_mem_res, "client");
   unifex::inplace_stop_source client_stop_source;
   std::thread client_thread{
     [&] { client_context->run(client_stop_source.get_token()); }};
@@ -162,7 +162,7 @@ int main() {
 
   // 3. 将服务器和客户端逻辑定义为unifex任务
   auto server_recv_logic =
-    [&](std::vector<std::pair<std::uint64_t, ucs_status_t>>&&
+    [&](std::vector<std::pair<std::uint64_t, std::error_code>>&&
           conn_id_status_vector) -> task<void> {
     // 此调用将在消息到达时填充'recv_data'结构
     active_message_bundle bundle =
@@ -186,7 +186,7 @@ int main() {
           sizeof(sockaddr_in)),
         unifex::single(
           unifex::stop_on_request(server_stop_source.get_token()))),
-      [&](std::vector<std::pair<std::uint64_t, ucs_status_t>>&&
+      [&](std::vector<std::pair<std::uint64_t, std::error_code>>&&
             conn_id_status_vector) {
         // 在非协程函数中只能使用spawn_detached
         unifex::spawn_detached(
@@ -282,7 +282,7 @@ cc_binary(
     *   **描述**: 注册一个用于处理连接错误的处理器。该处理器决定是否尝试重新连接。
     *   **参数**:
         *   `scheduler`: `ucx_am_context` 调度器。
-        *   `handler`: 一个可调用的 `std::function<bool(std::uint64_t, ucs_status_t)>`。它接收连接 ID 和状态。返回 `true` 以重新连接，`false` 以关闭。
+        *   `handler`: 一个可调用的 `std::function<bool(std::uint64_t, T)>`，其中 T 可以是 `ucs_status_t` 或 `std::error_code`。它接收连接 ID 和状态。返回 `true` 以重新连接，`false` 以关闭。
     *   **返回值**: 一个不带值完成的 sender。
 
 #### 数据传输

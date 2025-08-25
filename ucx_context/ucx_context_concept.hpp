@@ -76,21 +76,14 @@ inline constexpr struct accept_endpoint_cpo final {
    * @return A sender that, when connected, yields a connection object.
    */
   template <
-    typename Scheduler,
-    typename SocketDescriptor,
+    typename Scheduler, typename SocketDescriptor,
     std::enable_if_t<is_socket_descriptor_v<SocketDescriptor>, int> = 0>
   constexpr auto operator()(
     Scheduler&& sched, SocketDescriptor&& desc, size_t addrlen = 0) const
     noexcept(is_nothrow_tag_invocable_v<
-             accept_endpoint_cpo,
-             Scheduler,
-             SocketDescriptor,
-             size_t>)
+             accept_endpoint_cpo, Scheduler, SocketDescriptor, size_t>)
       -> tag_invoke_result_t<
-        accept_endpoint_cpo,
-        Scheduler,
-        SocketDescriptor,
-        size_t> {
+        accept_endpoint_cpo, Scheduler, SocketDescriptor, size_t> {
     return tag_invoke(
       *this,
       static_cast<Scheduler&&>(sched),
@@ -165,12 +158,10 @@ inline constexpr struct connect_endpoint_cpo final {
    * connection.
    */
   template <
-    typename Scheduler,
-    typename SrcSaddr,
-    typename SocklenT,
+    typename Scheduler, typename SrcSaddr, typename SocklenT,
     std::enable_if_t<
-      is_source_socket_address_v<SrcSaddr> && is_length_type_v<SocklenT>,
-      int> = 0>
+      is_source_socket_address_v<SrcSaddr> && is_length_type_v<SocklenT>, int> =
+      0>
   constexpr auto operator()(
     Scheduler&& sched,
     SrcSaddr src_saddr,
@@ -178,16 +169,10 @@ inline constexpr struct connect_endpoint_cpo final {
       dst_saddr,
     SocklenT addrlen) const
     noexcept(is_nothrow_tag_invocable_v<
-             connect_endpoint_cpo,
-             Scheduler,
-             SrcSaddr,
-             std::unique_ptr<sockaddr>,
-             SocklenT>)
+             connect_endpoint_cpo, Scheduler, SrcSaddr,
+             std::unique_ptr<sockaddr>, SocklenT>)
       -> tag_invoke_result_t<
-        connect_endpoint_cpo,
-        Scheduler,
-        SrcSaddr,
-        std::unique_ptr<sockaddr>,
+        connect_endpoint_cpo, Scheduler, SrcSaddr, std::unique_ptr<sockaddr>,
         SocklenT> {
     return tag_invoke(
       *this,
@@ -215,8 +200,7 @@ inline constexpr struct connect_endpoint_cpo final {
    * arguments.
    */
   template <
-    typename Scheduler,
-    typename SendParam,
+    typename Scheduler, typename SendParam,
     std::enable_if_t<is_send_parameter_v<SendParam>, int> = 0>
   constexpr auto operator()(Scheduler&& sched, SendParam&& send_param) const
     noexcept(
@@ -285,8 +269,7 @@ inline constexpr struct send_cpo final {
       -> std::enable_if_t<
         (is_connection_type_v<Conn>
          || std::is_same_v<
-           remove_cvref_t<Conn>,
-           std::uintptr_t>)&&(is_data_type_v<Data>),
+           remove_cvref_t<Conn>, std::uintptr_t>)&&(is_data_type_v<Data>),
         tag_invoke_result_t<send_cpo, Scheduler, Conn, Data&>> {
     return tag_invoke(
       *this, static_cast<Scheduler&&>(sched), static_cast<Conn&&>(conn), data);
@@ -298,8 +281,7 @@ inline constexpr struct send_cpo final {
       -> std::enable_if_t<
         (is_connection_type_v<Conn>
          || std::is_same_v<
-           remove_cvref_t<Conn>,
-           std::uintptr_t>)&&(is_data_type_v<Data>),
+           remove_cvref_t<Conn>, std::uintptr_t>)&&(is_data_type_v<Data>),
         tag_invoke_result_t<send_cpo, Scheduler, Conn, Data&&>> {
     return tag_invoke(
       *this,
@@ -340,8 +322,7 @@ inline constexpr struct recv_cpo final {
    * @return A sender that completes with the received data.
    */
   template <
-    typename Scheduler,
-    typename RecvParam,
+    typename Scheduler, typename RecvParam,
     std::enable_if_t<is_receive_parameter_v<RecvParam>, int> = 0>
   constexpr auto operator()(Scheduler&& sched, RecvParam&& param) const
     noexcept(is_nothrow_tag_invocable_v<recv_cpo, Scheduler, RecvParam>)
@@ -391,8 +372,7 @@ inline constexpr struct recv_header_cpo final {
    * @return A sender that completes with the received header data.
    */
   template <
-    typename Scheduler,
-    typename Header,
+    typename Scheduler, typename Header,
     std::enable_if_t<is_receive_header_parameter_v<Header>, int> = 0>
   constexpr auto operator()(Scheduler&& sched, Header&& header) const
     noexcept(is_nothrow_tag_invocable_v<recv_header_cpo, Scheduler, Header>)
@@ -424,17 +404,16 @@ struct is_indexed_buffer_container : std::false_type {};
 
 template <typename T>
 struct is_indexed_buffer_container<
-  T,
-  std::void_t<
-    // Check 1: Existence of t.size() expression, convertible to std::size_t
-    std::enable_if_t<
-      std::is_convertible_v<decltype(std::declval<T&>().size()), std::size_t>>,
-    // Check 2: Existence of t[0] index access expression
-    decltype(std::declval<T&>()[0]),
-    // Check 3: The value_type is UcxBuffer
-    std::enable_if_t<std::is_same_v<
-      std::decay_t<decltype(std::declval<T&>()[0])>,
-      UcxBuffer>>>> : std::true_type {};
+  T, std::void_t<
+       // Check 1: Existence of t.size() expression, convertible to std::size_t
+       std::enable_if_t<std::is_convertible_v<
+         decltype(std::declval<T&>().size()), std::size_t>>,
+       // Check 2: Existence of t[0] index access expression
+       decltype(std::declval<T&>()[0]),
+       // Check 3: The value_type is UcxBuffer
+       std::enable_if_t<std::is_same_v<
+         std::decay_t<decltype(std::declval<T&>()[0])>, UcxBuffer>>>>
+  : std::true_type {};
 
 /**
  * @brief Type trait to constrain the parameter type for receive buffer
@@ -467,8 +446,7 @@ inline constexpr struct recv_buffer_cpo final {
    * @return A sender that completes with the received buffer data.
    */
   template <
-    typename Scheduler,
-    typename Data,
+    typename Scheduler, typename Data,
     std::enable_if_t<is_receive_buffer_parameter_v<Data>, int> = 0>
   constexpr auto operator()(Scheduler&& sched, size_t key, Data&& data) const
     noexcept(
@@ -489,8 +467,7 @@ inline constexpr struct recv_buffer_cpo final {
    * @return A sender that completes with the received buffer data.
    */
   template <
-    typename Scheduler,
-    typename Flag,
+    typename Scheduler, typename Flag,
     std::enable_if_t<is_receive_buffer_flag_parameter_v<Flag>, int> = 0>
   constexpr auto operator()(Scheduler&& sched, size_t key, Flag&& flag) const
     noexcept(
@@ -499,6 +476,17 @@ inline constexpr struct recv_buffer_cpo final {
     return tag_invoke(*this, static_cast<Scheduler&&>(sched), key, flag);
   }
 } connection_recv_buffer{};
+
+/**
+ * @brief Type trait to check if a type is a valid status type.
+ *
+ * A type T satisfies this trait if it is `ucs_status_t` or `std::error_code`.
+ * @tparam T The type to check.
+ */
+template <typename T>
+inline constexpr bool is_status_type_v =
+  std::is_same_v<std::decay_t<T>, ucs_status_t>
+  || std::is_same_v<std::decay_t<T>, std::error_code>;
 
 /**
  * @brief CPO for handling connection errors.
@@ -510,27 +498,53 @@ inline constexpr struct handle_error_cpo final {
   /**
    * @brief Creates a sender for handling connection errors.
    * @tparam Scheduler The type of the scheduler.
+   * @tparam Handler The type of the handler, must be callable with
+   * (std::uint64_t, Status) -> bool.
+   * @tparam Status The type of the status, constrained by `is_status_type_v`.
    * @param sched The scheduler for the operation.
    * @param handler A function to be called when an error occurs. The handler
    * receives the connection ID and status, and returns true to attempt
    * reconnection.
    * @return A sender that completes when the error handling is finished.
    */
+  template <
+    typename Scheduler, typename Handler, typename Status = ucs_status_t,
+    std::enable_if_t<
+      is_status_type_v<Status>
+        && std::is_invocable_r_v<bool, Handler, std::uint64_t, Status>,
+      int> = 0>
+  constexpr auto operator()(Scheduler&& sched, Handler&& handler) const
+    noexcept(is_nothrow_tag_invocable_v<
+             handle_error_cpo, Scheduler,
+             std::function<bool(std::uint64_t conn_id, Status)>>)
+      -> tag_invoke_result_t<
+        handle_error_cpo, Scheduler,
+        std::function<bool(std::uint64_t conn_id, Status)>> {
+    return tag_invoke(
+      *this, static_cast<Scheduler&&>(sched),
+      std::function<bool(std::uint64_t, Status)>(
+        static_cast<Handler&&>(handler)));
+  }
+
   template <typename Scheduler>
   constexpr auto operator()(
-    Scheduler&& sched,
-    std::function<bool(std::uint64_t conn_id, ucs_status_t status)> handler =
-      [](
-        [[maybe_unused]] std::uint64_t conn_id,
-        [[maybe_unused]] ucs_status_t status) -> bool { return false; }) const
-    noexcept(is_nothrow_tag_invocable_v<
-             handle_error_cpo,
-             Scheduler,
-             std::function<bool(std::uint64_t conn_id, ucs_status_t status)>>)
+    Scheduler&& sched, bool (*handler)(std::uint64_t, ucs_status_t)) const
+    noexcept(
+      is_nothrow_tag_invocable_v<
+        handle_error_cpo, Scheduler, bool (*)(std::uint64_t, ucs_status_t)>)
       -> tag_invoke_result_t<
-        handle_error_cpo,
-        Scheduler,
-        std::function<bool(std::uint64_t conn_id, ucs_status_t status)>> {
+        handle_error_cpo, Scheduler, bool (*)(std::uint64_t, ucs_status_t)> {
+    return tag_invoke(*this, static_cast<Scheduler&&>(sched), handler);
+  }
+
+  template <typename Scheduler>
+  constexpr auto operator()(
+    Scheduler&& sched, bool (*handler)(std::uint64_t, std::error_code)) const
+    noexcept(
+      is_nothrow_tag_invocable_v<
+        handle_error_cpo, Scheduler, bool (*)(std::uint64_t, std::error_code)>)
+      -> tag_invoke_result_t<
+        handle_error_cpo, Scheduler, bool (*)(std::uint64_t, std::error_code)> {
     return tag_invoke(*this, static_cast<Scheduler&&>(sched), handler);
   }
 } handle_error_connection{};
