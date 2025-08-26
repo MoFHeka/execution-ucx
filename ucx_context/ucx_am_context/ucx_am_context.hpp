@@ -1034,9 +1034,10 @@ class ucx_am_context::recv_sender {
               data_.buffer.data =
                 mr_.allocate(data_.buffer_type, amDesc.data_length);
             }
-            auto am_recv_cb =
-              std::make_unique<CqeEntryCallback>(op_, [this]() -> ucx_am_cqe& {
-                return this->context_.get_completion_queue_entry();
+            auto am_recv_cb = std::make_unique<CqeEntryCallback>(
+              op_, &(this->context_), [](void* context_ptr) -> ucx_am_cqe& {
+                return reinterpret_cast<ucx_am_context*>(context_ptr)
+                  ->get_completion_queue_entry();
               });
             auto impl_memh_ = reinterpret_cast<ucp_mem_h>(data_.mem_h);
             std::tie(this->result_, request_) = conn.get().recv_am_data(
@@ -1378,9 +1379,10 @@ class ucx_am_context::recv_buffer_sender_t {
           this->execute_ = &operation::on_read_complete;
 
           if (UcxConnection::ucx_am_is_rndv(amDesc)) {
-            auto am_recv_cb =
-              std::make_unique<CqeEntryCallback>(op_, [this]() -> ucx_am_cqe& {
-                return this->context_.get_completion_queue_entry();
+            auto am_recv_cb = std::make_unique<CqeEntryCallback>(
+              op_, &(this->context_), [](void* context_ptr) -> ucx_am_cqe& {
+                return reinterpret_cast<ucx_am_context*>(context_ptr)
+                  ->get_completion_queue_entry();
               });
 
             constexpr bool is_vec =
@@ -2070,20 +2072,23 @@ class ucx_am_context::send_sender_t {
         }
         if (use_cqe) {
           // Use context completion queue entry when large data is sent
-          am_send_cb = std::move(
-            std::make_unique<CqeEntryCallback>(op_, [this]() -> ucx_am_cqe& {
-              return this->context_.get_completion_queue_entry();
+          am_send_cb = std::move(std::make_unique<CqeEntryCallback>(
+            op_, reinterpret_cast<void*>(&(this->context_)),
+            [](void* context_ptr) -> ucx_am_cqe& {
+              return reinterpret_cast<ucx_am_context*>(context_ptr)
+                ->get_completion_queue_entry();
             }));
         } else {
           // Call completion callback directly
-          am_send_cb = std::move(
-            std::make_unique<DirectEntryCallback>([this](ucs_status_t status) {
-              this->result_ = status;
+          am_send_cb = std::move(std::make_unique<DirectEntryCallback>(
+            this, [](ucs_status_t status, void* op) {
+              auto this_ = static_cast<operation*>(op);
+              this_->result_ = status;
               // Schedule the completion to the pending IO queue front
-              --this->context_.sqUnflushedCount_;
-              // TODO(He Jia): This is may cause segment fault issue.
-              this->context_.reschedule_pending_io(
-                static_cast<completion_base*>(this));
+              --this_->context_.sqUnflushedCount_;
+              // TODO(He Jia): This may cause segment fault issue.
+              this_->context_.reschedule_pending_io(
+                static_cast<completion_base*>(this_));
             }));
         }
         // Prepare buffer
@@ -2259,7 +2264,8 @@ class ucx_am_context::send_sender_t {
       data_owned_(std::nullopt),
       data_(to_view(data)),
       mr_(context.mr_) {
-    auto conn_opt = context_.conn_manager_.get_connection(conn.first);
+    [[maybe_unused]] auto conn_opt =
+      context_.conn_manager_.get_connection(conn.first);
     UNIFEX_ASSERT(
       conn_opt.has_value() && "The connection must exist in context");
     UNIFEX_ASSERT(
@@ -2275,7 +2281,8 @@ class ucx_am_context::send_sender_t {
       data_owned_(std::nullopt),
       data_(to_view(data)),
       mr_(context.mr_) {
-    auto conn_opt = context_.conn_manager_.get_connection(conn_id);
+    [[maybe_unused]] auto conn_opt =
+      context_.conn_manager_.get_connection(conn_id);
     UNIFEX_ASSERT(
       conn_opt.has_value() && "The connection must exist in context");
     conn_ = conn_opt.value();
@@ -2290,7 +2297,8 @@ class ucx_am_context::send_sender_t {
       data_owned_(std::nullopt),
       data_(to_view(data)),
       mr_(context.mr_) {
-    auto conn_opt = context_.conn_manager_.get_connection(conn.id());
+    [[maybe_unused]] auto conn_opt =
+      context_.conn_manager_.get_connection(conn.id());
     UNIFEX_ASSERT(
       conn_opt.has_value() && "The connection must exist in context");
   }
@@ -2309,7 +2317,8 @@ class ucx_am_context::send_sender_t {
       data_owned_(std::forward<P>(data)),
       data_(to_view(*data_owned_)),
       mr_(context.mr_) {
-    auto conn_opt = context_.conn_manager_.get_connection(conn.first);
+    [[maybe_unused]] auto conn_opt =
+      context_.conn_manager_.get_connection(conn.first);
     UNIFEX_ASSERT(
       conn_opt.has_value() && "The connection must exist in context");
     UNIFEX_ASSERT(
@@ -2325,7 +2334,8 @@ class ucx_am_context::send_sender_t {
       data_owned_(std::forward<P>(data)),
       data_(to_view(*data_owned_)),
       mr_(context.mr_) {
-    auto conn_opt = context_.conn_manager_.get_connection(conn_id);
+    [[maybe_unused]] auto conn_opt =
+      context_.conn_manager_.get_connection(conn_id);
     UNIFEX_ASSERT(
       conn_opt.has_value() && "The connection must exist in context");
     conn_ = conn_opt.value();
@@ -2340,7 +2350,8 @@ class ucx_am_context::send_sender_t {
       data_owned_(std::forward<P>(data)),
       data_(to_view(*data_owned_)),
       mr_(context.mr_) {
-    auto conn_opt = context_.conn_manager_.get_connection(conn.id());
+    [[maybe_unused]] auto conn_opt =
+      context_.conn_manager_.get_connection(conn.id());
     UNIFEX_ASSERT(
       conn_opt.has_value() && "The connection must exist in context");
   }

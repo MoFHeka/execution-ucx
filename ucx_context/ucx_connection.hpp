@@ -128,26 +128,31 @@ class EmptyCallback : public UcxCallback {
 class CqeEntryCallback : public UcxCallback {
  public:
   explicit CqeEntryCallback(
-    std::uintptr_t user_data, std::function<ucx_am_cqe&()> get_entry_fn)
-    : user_data_(user_data), get_entry_fn_(get_entry_fn) {}
+    std::uintptr_t user_data, void* context_ptr,
+    ucx_am_cqe& (*get_entry_fn)(void*))
+    : user_data_(user_data),
+      context_ptr_(context_ptr),
+      get_entry_fn_(get_entry_fn) {}
 
   virtual void operator()(ucs_status_t status);
 
  private:
   std::uintptr_t user_data_;
-  std::function<ucx_am_cqe&()> get_entry_fn_;
+  void* context_ptr_;
+  ucx_am_cqe& (*get_entry_fn_)(void*);
 };
 
 // DirectEntryCallback for direct operation in completion
 class DirectEntryCallback : public UcxCallback {
  public:
-  explicit DirectEntryCallback(std::function<void(ucs_status_t)> op_fn)
-    : op_fn_(op_fn) {}
+  explicit DirectEntryCallback(void* op, void (*op_fn)(ucs_status_t, void*))
+    : op_(op), op_fn_(op_fn) {}
 
   virtual void operator()(ucs_status_t status);
 
  private:
-  std::function<void(ucs_status_t)> op_fn_;
+  void* op_;
+  void (*op_fn_)(ucs_status_t, void*);
 };
 
 bool is_rdma_transport_available(ucp_ep_h ep);

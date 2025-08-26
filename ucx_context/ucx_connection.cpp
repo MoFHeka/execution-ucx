@@ -65,13 +65,15 @@ UcxCallback::~UcxCallback() {}
 
 // CqeEntryCallback implementation
 void CqeEntryCallback::operator()(ucs_status_t status) {
-  auto& entry = get_entry_fn_();
+  auto& entry = get_entry_fn_(context_ptr_);
   entry.user_data = user_data_;
   entry.res = status;
 }
 
 // DirectEntryCallback implementation
-void DirectEntryCallback::operator()(ucs_status_t status) { op_fn_(status); }
+void DirectEntryCallback::operator()(ucs_status_t status) {
+  op_fn_(status, op_);
+}
 
 // Determine whether memory registration should be used based on UCP EP and
 // transport capabilities. Returns true if memory registration is recommended

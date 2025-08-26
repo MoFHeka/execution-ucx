@@ -15,11 +15,11 @@ build:debug --copt=-O0
 build:debug --strip=never
 build:debug --define=DEBUG=1
 
-# Release build settings 
-build:release --compilation_mode=opt
+# Release build settings
 build:release --copt=-O3
-build:release --strip=all
+build:release --strip=never
 build:release --define=NDEBUG=1
 
 # Debug build
 # build --config=debug
+build --config=release
