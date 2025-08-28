@@ -162,6 +162,12 @@ void ucx_am_context::run_impl(const bool& shouldStop) {
     deviceAutoContextOperation = (*deviceContext_)(ucpContext_, ucpWorker_);
   }
 
+  auto ucx_thread = std::thread([this, &shouldStop]() {
+    while (this->ucpContextInitialized_ && !shouldStop) {
+      [[maybe_unused]] unsigned result = progress_worker_event();
+    }
+  });
+
   while (ucpContextInitialized_) {
     // Dequeue and process local queue items (ready to run)
     execute_pending_local();
@@ -207,11 +213,13 @@ void ucx_am_context::run_impl(const bool& shouldStop) {
         "ucx_am_context::run_impl() - submit %u, pending %u\n",
         sqUnflushedCount_, pending_operation_count());
 
-      [[maybe_unused]] unsigned result = progress_worker_event();
+      // [[maybe_unused]] unsigned result = progress_worker_event();
 
       LOGX("ucp_worker_progress() returned - finished %u callbacks\n", result);
     }
   }
+
+  ucx_thread.join();
 }
 
 bool ucx_am_context::is_running_on_io_thread() const noexcept {
