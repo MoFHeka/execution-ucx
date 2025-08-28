@@ -785,6 +785,12 @@ ucs_status_t ucx_am_context::am_recv_callback(
   std::atomic_thread_fence(std::memory_order_acquire);
   if (!self->pendingRecvIoQueue_.empty()) {
     self->reschedule_pending_io(self->pendingRecvIoQueue_.front());
+    // if (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV) {
+    //   self->reschedule_pending_io(self->pendingRecvIoQueue_.front());
+    // } else {
+    //   self->pendingRecvIoQueue_.front()->execute_(
+    //     self->pendingRecvIoQueue_.front());
+    // }
     self->pendingRecvIoQueue_.pop_front();
   }
   std::atomic_thread_fence(std::memory_order_release);

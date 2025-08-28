@@ -1078,8 +1078,9 @@ class ucx_am_context::recv_sender {
             // Schedule the completion to the pending IO queue front
             --this->context_.sqUnflushedCount_;
             // TODO(He Jia): This is may cause segment fault issue.
-            this->context_.reschedule_pending_io(
-              static_cast<completion_base*>(this));
+            // this->context_.reschedule_pending_io(
+            //   static_cast<completion_base*>(this));
+            this->on_read_complete(static_cast<completion_base*>(this));
           }
         }
         UNIFEX_CATCH(...) { set_completion_entry(UCS_ERR_NO_MESSAGE); }
@@ -1745,8 +1746,9 @@ class ucx_am_context::recv_header_sender {
           // Schedule the completion to the pending IO queue front
           --this->context_.sqUnflushedCount_;
           // TODO(He Jia): This is may cause segment fault issue.
-          this->context_.reschedule_pending_io(
-            static_cast<completion_base*>(this));
+          // this->context_.reschedule_pending_io(
+          //   static_cast<completion_base*>(this));
+          this->on_read_complete(static_cast<completion_base*>(this));
         }
         UNIFEX_CATCH(...) { set_completion_entry(UCS_ERR_NO_MESSAGE); }
       };
@@ -2089,6 +2091,7 @@ class ucx_am_context::send_sender_t {
               // TODO(He Jia): This may cause segment fault issue.
               this_->context_.reschedule_pending_io(
                 static_cast<completion_base*>(this_));
+              // this_->on_write_complete(static_cast<completion_base*>(this_));
             }));
         }
         // Prepare buffer
