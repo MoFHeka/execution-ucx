@@ -144,6 +144,20 @@ cc_test(
     }),
 )
 
+cc_binary(
+    name = "ucx_am_context_perf",
+    srcs = ["ucx_am_context/ucx_am_context_perf.cpp"],
+    copts = [
+        "-std=c++17",
+        "-fcoroutines",
+    ],
+    linkstatic = False,  # Important for OpenUCX specific linking
+    deps = [
+        ":ucx_am_context",
+        "@unifex",
+    ],
+)
+
 sh_binary(
     name = "format",
     srcs = ["format.sh"],

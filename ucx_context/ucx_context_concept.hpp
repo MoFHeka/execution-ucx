@@ -259,7 +259,7 @@ inline constexpr struct send_cpo final {
    * `is_data_type_v`.
    * @param sched The scheduler for the operation.
    * @param conn A connection identifier (`conn_pair_t&`, `UcxConnection&`, or
-   * `std::uintptr_t`).
+   * `std::uint64_t`).
    * @param data The data to be sent (`ucx_am_data&` or `ucx_am_iovec_t&`).
    * @return A sender that completes when the send operation is finished.
    */
@@ -269,7 +269,7 @@ inline constexpr struct send_cpo final {
       -> std::enable_if_t<
         (is_connection_type_v<Conn>
          || std::is_same_v<
-           remove_cvref_t<Conn>, std::uintptr_t>)&&(is_data_type_v<Data>),
+           remove_cvref_t<Conn>, std::uint64_t>)&&(is_data_type_v<Data>),
         tag_invoke_result_t<send_cpo, Scheduler, Conn, Data&>> {
     return tag_invoke(
       *this, static_cast<Scheduler&&>(sched), static_cast<Conn&&>(conn), data);
@@ -281,7 +281,7 @@ inline constexpr struct send_cpo final {
       -> std::enable_if_t<
         (is_connection_type_v<Conn>
          || std::is_same_v<
-           remove_cvref_t<Conn>, std::uintptr_t>)&&(is_data_type_v<Data>),
+           remove_cvref_t<Conn>, std::uint64_t>)&&(is_data_type_v<Data>),
         tag_invoke_result_t<send_cpo, Scheduler, Conn, Data&&>> {
     return tag_invoke(
       *this,

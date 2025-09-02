@@ -289,7 +289,7 @@ This section details the primary APIs provided by `ucx_am_context` for network c
 #### Data Transfer
 
 *   **`connection_send(scheduler, conn_id, data)`**
-    *   **Description**: Sends an Active Message. Overloads exist for different connection identifiers (`conn_pair_t&`, `std::uintptr_t`, `UcxConnection&`) and data types (`ucx_am_data&`, `UcxAmData&&`, `ucx_am_iovec&`, `UcxAmIovec&&`).
+    *   **Description**: Sends an Active Message. Overloads exist for different connection identifiers (`conn_pair_t&`, `std::uint64_t`, `UcxConnection&`) and data types (`ucx_am_data&`, `UcxAmData&&`, `ucx_am_iovec&`, `UcxAmIovec&&`).
     *   **Parameters**:
         *   `scheduler`: The `ucx_am_context` scheduler.
         *   `conn_id`: The identifier for the connection.

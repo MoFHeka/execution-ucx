@@ -360,7 +360,7 @@ class UcxAmTest : public ::testing::Test {
             conn_id_status_vector) {
         if (conn_id_status_vector.size() > 0) {
           for (auto [conn_id, status] : conn_id_status_vector) {
-            EXPECT_NE(conn_id, std::uintptr_t(nullptr));
+            EXPECT_NE(conn_id, reinterpret_cast<std::uint64_t>(nullptr));
             EXPECT_TRUE(!status);
           }
         }
@@ -462,7 +462,7 @@ class UcxAmTest : public ::testing::Test {
             conn_id_status_vector) {
         if (conn_id_status_vector.size() > 0) {
           for (auto [conn_id, status] : conn_id_status_vector) {
-            EXPECT_NE(conn_id, std::uintptr_t(nullptr));
+            EXPECT_NE(conn_id, reinterpret_cast<std::uint64_t>(nullptr));
             EXPECT_TRUE(!status);
           }
         }
@@ -564,7 +564,7 @@ class UcxAmTest : public ::testing::Test {
             conn_id_status_vector) {
         if (conn_id_status_vector.size() > 0) {
           for (auto [conn_id, status] : conn_id_status_vector) {
-            EXPECT_NE(conn_id, std::uintptr_t(nullptr));
+            EXPECT_NE(conn_id, reinterpret_cast<std::uint64_t>(nullptr));
             EXPECT_TRUE(!status);
           }
         }
@@ -1327,8 +1327,7 @@ TEST_F(UcxAmTest, ErrorHandling) {
   sockaddr_in* addr = new sockaddr_in{
     .sin_family = AF_INET,
     .sin_port = htons(port),
-    // .sin_addr = {.s_addr = inet_addr("192.0.2.1")}};
-    .sin_addr = {.s_addr = inet_addr("192.0.2.1")}};
+    .sin_addr = {.s_addr = inet_addr("192.0.2.1")}};  // illegal address
   auto clientSocket =
     std::unique_ptr<sockaddr>(reinterpret_cast<sockaddr*>(addr));
   auto testData = create_test_data(1024);

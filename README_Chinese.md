@@ -288,7 +288,7 @@ cc_binary(
 #### 数据传输
 
 *   **`connection_send(scheduler, conn_id, data)`**
-    *   **描述**: 发送一个 Active Message。存在用于不同连接标识符 (`conn_pair_t&`, `std::uintptr_t`, `UcxConnection&`) 和数据类型 (`ucx_am_data&`, `UcxAmData&&`, `ucx_am_iovec&`, `UcxAmIovec&&`) 的重载。
+    *   **描述**: 发送一个 Active Message。存在用于不同连接标识符 (`conn_pair_t&`, `std::uint64_t`, `UcxConnection&`) 和数据类型 (`ucx_am_data&`, `UcxAmData&&`, `ucx_am_iovec&`, `UcxAmIovec&&`) 的重载。
     *   **参数**:
         *   `scheduler`: `ucx_am_context` 调度器。
         *   `conn_id`: 连接的标识符。
