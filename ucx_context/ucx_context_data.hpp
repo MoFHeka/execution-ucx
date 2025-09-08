@@ -48,11 +48,14 @@ class UcxBuffer {
   UcxBuffer(
     UcxMemoryResourceManager& mr, ucx_memory_type_t type, size_t size,
     void* mem_h = nullptr, bool own_buffer = true)
-    : mr_(mr), type_(type), buffer_{nullptr, 0}, own_buffer_(own_buffer) {
+    : mr_(mr),
+      type_(type),
+      buffer_{nullptr, 0},
+      mem_h_(mem_h),
+      own_buffer_(own_buffer) {
     if (size > 0) {
       buffer_.data = mr_.get().allocate(type_, size);
       buffer_.size = size;
-      mem_h_ = mem_h;
     }
   }
 

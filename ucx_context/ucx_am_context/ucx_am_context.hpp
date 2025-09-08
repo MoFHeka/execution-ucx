@@ -922,6 +922,7 @@ class ucx_am_context::recv_sender {
     template <typename Receiver2>
     explicit operation(const recv_sender& sender, Receiver2&& r)
       : context_(sender.context_),
+        ucpWorker_(sender.context_.ucpWorker_),
         data_own_(
           sender.data_own_.has_value()
             ? std::move(const_cast<recv_sender&>(sender).data_own_)
@@ -964,6 +965,11 @@ class ucx_am_context::recv_sender {
         stopCallbackConstructed_ = true;
       }
       auto populateSqe = [this]() noexcept {
+        // Handle cancellation
+        if (cancel_flag_.load(std::memory_order_consume)) {
+          this->result_ = UCS_ERR_CANCELED;
+          return true;
+        }
         // Get operation pointer for completion
         auto op_ =
           reinterpret_cast<std::uintptr_t>(static_cast<completion_base*>(this));
@@ -977,18 +983,14 @@ class ucx_am_context::recv_sender {
           this->result_ = status;
         };
 
-        // Handle cancellation
-        if (cancel_flag_.load(std::memory_order_consume)) {
-          set_completion_entry(UCS_ERR_CANCELED);
-          return;
-        }
-
         // No pending messages - schedule for later processing
         if (context_.amDescQueue_.empty()) {
           onPending_.store(true, std::memory_order_relaxed);
           this->execute_ = &operation::on_schedule_complete;
+          this->result_ = UCS_ERR_NO_MESSAGE;
+          --this->context_.sqUnflushedCount_;
           this->context_.pendingRecvIoQueue_.push_front(this);
-          return;
+          return true;
         }
 
         // Process pending AM message
@@ -1003,7 +1005,7 @@ class ucx_am_context::recv_sender {
           if (!conn_opt.has_value()) {
             // Connection not found
             set_completion_entry(UCS_ERR_UNREACHABLE);
-            return;
+            return true;
           }
 
           // Setup connection and data
@@ -1051,7 +1053,13 @@ class ucx_am_context::recv_sender {
               if (data_own_.has_value()) {
                 use_ucp_buffer_mem =
                   data_own_.value().set_ucp_release_fn([this](void* data) {
-                    ucp_am_data_release(this->context_.ucpWorker_, data);
+                    if (this->ucpWorker_ != nullptr) {
+                      ucp_am_data_release(this->ucpWorker_, data);
+                    } else {
+                      UCX_CTX_ERROR
+                        << "ucpWorker_ is nullptr when release data " << data
+                        << std::endl;
+                    }
                   });
               }
               if (use_ucp_buffer_mem) {
@@ -1066,7 +1074,12 @@ class ucx_am_context::recv_sender {
                 mr_.memcpy(
                   data_.buffer_type, data_.buffer.data, ucx_memory_type::HOST,
                   amDesc.desc, amDesc.data_length);
-                ucp_am_data_release(context_.ucpWorker_, amDesc.desc);
+                if (this->ucpWorker_ != nullptr) {
+                  ucp_am_data_release(this->ucpWorker_, amDesc.desc);
+                } else {
+                  UCX_CTX_ERROR << "ucpWorker_ is nullptr when release data "
+                                << amDesc.desc << std::endl;
+                }
               }
             } else {
               // Has been handled in the message callback
@@ -1078,11 +1091,12 @@ class ucx_am_context::recv_sender {
             // Schedule the completion to the pending IO queue front
             --this->context_.sqUnflushedCount_;
             // TODO(He Jia): This is may cause segment fault issue.
-            this->context_.reschedule_pending_io(
-              static_cast<completion_base*>(this));
+            this->on_read_complete(this);
           }
         }
         UNIFEX_CATCH(...) { set_completion_entry(UCS_ERR_NO_MESSAGE); }
+
+        return true;
       };
 
       if (!context_.try_submit_io(populateSqe)) {
@@ -1092,10 +1106,14 @@ class ucx_am_context::recv_sender {
     }
 
     void request_stop() noexcept {
+      if (!onPending_.load(std::memory_order_relaxed)) {
+        return;
+      }
       if (char expected = 1; !refCount_.compare_exchange_strong(
-                               expected, 2, std::memory_order_relaxed)
-                             && !onPending_.load(std::memory_order_relaxed)) {
+            expected, 2, std::memory_order_relaxed)) {
         // If refCount_ is 0 means the operation is already completed
+        // If onPending_ is true means the operation is pending to be
+        // rescheduled, no side effect to be cancelled
         UNIFEX_ASSERT(expected == 0);
         return;
       }
@@ -1159,6 +1177,8 @@ class ucx_am_context::recv_sender {
         self.refCount_.fetch_sub(1, std::memory_order_acq_rel) != 1
         && !self.onPending_.load(std::memory_order_relaxed)) {
         // stop callback is running, must complete the op
+        // If onPending_ is true, means the operation is not be rescheduled,
+        // so on_read_complete is legal to be called
         return;
       }
 
@@ -1230,6 +1250,7 @@ class ucx_am_context::recv_sender {
     };
 
     ucx_am_context& context_;
+    ucp_worker_h ucpWorker_;
     conn_opt_t conn_;
     std::optional<UcxAmData> data_own_;
     ucx_am_data& data_;
@@ -1336,6 +1357,11 @@ class ucx_am_context::recv_buffer_sender_t {
         stopCallbackConstructed_ = true;
       }
       auto populateSqe = [this]() noexcept {
+        // Handle cancellation
+        if (cancel_flag_.load(std::memory_order_consume)) {
+          this->result_ = UCS_ERR_CANCELED;
+          return true;
+        }
         // Get operation pointer for completion
         auto op_ =
           reinterpret_cast<std::uintptr_t>(static_cast<completion_base*>(this));
@@ -1349,16 +1375,10 @@ class ucx_am_context::recv_buffer_sender_t {
           this->result_ = status;
         };
 
-        // Handle cancellation
-        if (cancel_flag_.load(std::memory_order_consume)) {
-          set_completion_entry(UCS_ERR_CANCELED);
-          return;
-        }
-
         auto amDescOpt = context_.amDescMap_.pop(this->am_desc_key_);
         if (!amDescOpt.has_value()) {
           set_completion_entry(UCS_ERR_NO_MESSAGE);
-          return;
+          return true;
         }
         auto& amDesc = amDescOpt.value();
 
@@ -1369,7 +1389,7 @@ class ucx_am_context::recv_buffer_sender_t {
           if (!conn_opt.has_value()) {
             // Connection not found
             set_completion_entry(UCS_ERR_UNREACHABLE);
-            return;
+            return true;
           }
 
           // Setup connection and data
@@ -1428,7 +1448,6 @@ class ucx_am_context::recv_buffer_sender_t {
               UCX_CTX_ERROR << "recv_buffer_sender not implemented"
                             << std::endl;
               set_completion_entry(UCS_ERR_NOT_IMPLEMENTED);
-              return;
             }
           } else {
             // recv_buffer_sender should not handle eager protocol
@@ -1438,10 +1457,11 @@ class ucx_am_context::recv_buffer_sender_t {
               << "recv_buffer_sender should not handle eager protocol"
               << std::endl;
             set_completion_entry(UCS_ERR_NOT_IMPLEMENTED);
-            return;
           }
         }
         UNIFEX_CATCH(...) { set_completion_entry(UCS_ERR_NO_MESSAGE); }
+
+        return true;
       };
 
       if (!context_.try_submit_io(populateSqe)) {
@@ -1638,6 +1658,7 @@ class ucx_am_context::recv_header_sender {
     template <typename Receiver2>
     explicit operation(const recv_header_sender& sender, Receiver2&& r)
       : context_(sender.context_),
+        ucpWorker_(sender.context_.ucpWorker_),
         mr_(sender.mr_),
         receiver_(static_cast<Receiver2&&>(r)) {}
 
@@ -1665,6 +1686,12 @@ class ucx_am_context::recv_header_sender {
         stopCallbackConstructed_ = true;
       }
       auto populateSqe = [this]() noexcept {
+        // Handle cancellation
+        if (cancel_flag_.load(std::memory_order_consume)) {
+          this->result_ = UCS_ERR_CANCELED;
+          return true;
+        }
+
         // Get operation pointer for completion
         auto op_ =
           reinterpret_cast<std::uintptr_t>(static_cast<completion_base*>(this));
@@ -1678,18 +1705,14 @@ class ucx_am_context::recv_header_sender {
           this->result_ = status;
         };
 
-        // Handle cancellation
-        if (cancel_flag_.load(std::memory_order_consume)) {
-          set_completion_entry(UCS_ERR_CANCELED);
-          return;
-        }
-
         // No pending messages - schedule for later processing
         if (context_.amDescQueue_.empty()) {
           onPending_.store(true, std::memory_order_relaxed);
           this->execute_ = &operation::on_schedule_complete;
+          this->result_ = UCS_ERR_NO_MESSAGE;
+          --this->context_.sqUnflushedCount_;
           this->context_.pendingRecvIoQueue_.push_front(this);
-          return;
+          return true;
         }
 
         // Process pending AM message
@@ -1704,7 +1727,7 @@ class ucx_am_context::recv_header_sender {
           if (!conn_opt.has_value()) {
             // Connection not found
             set_completion_entry(UCS_ERR_UNREACHABLE);
-            return;
+            return true;
           }
 
           // Setup connection and data
@@ -1729,7 +1752,12 @@ class ucx_am_context::recv_header_sender {
               data_own_.emplace(UcxAmData(
                 context_.mr_, std::move(am_data), /*own_header=*/true,
                 /*own_buffer=*/true, [this](void* data) {
-                  ucp_am_data_release(this->context_.ucpWorker_, data);
+                  if (this->ucpWorker_ != nullptr) {
+                    ucp_am_data_release(this->ucpWorker_, data);
+                  } else {
+                    UCX_CTX_ERROR << "ucpWorker_ is nullptr when release data "
+                                  << data << std::endl;
+                  }
                 }));
             } else {
               // Has been handled in the message callback
@@ -1745,10 +1773,11 @@ class ucx_am_context::recv_header_sender {
           // Schedule the completion to the pending IO queue front
           --this->context_.sqUnflushedCount_;
           // TODO(He Jia): This is may cause segment fault issue.
-          this->context_.reschedule_pending_io(
-            static_cast<completion_base*>(this));
+          this->on_read_complete(this);
         }
         UNIFEX_CATCH(...) { set_completion_entry(UCS_ERR_NO_MESSAGE); }
+
+        return true;
       };
 
       if (!context_.try_submit_io(populateSqe)) {
@@ -1758,10 +1787,14 @@ class ucx_am_context::recv_header_sender {
     }
 
     void request_stop() noexcept {
+      if (!onPending_.load(std::memory_order_relaxed)) {
+        return;
+      }
       if (char expected = 1; !refCount_.compare_exchange_strong(
-                               expected, 2, std::memory_order_relaxed)
-                             && !onPending_.load(std::memory_order_relaxed)) {
+            expected, 2, std::memory_order_relaxed)) {
         // If refCount_ is 0 means the operation is already completed
+        // If onPending_ is true means the operation is pending to be
+        // rescheduled, no side effect to be cancelled
         UNIFEX_ASSERT(expected == 0);
         return;
       }
@@ -1917,6 +1950,7 @@ class ucx_am_context::recv_header_sender {
     };
 
     ucx_am_context& context_;
+    ucp_worker_h ucpWorker_;
     conn_opt_t conn_;
     ucx_request* request_ = nullptr;
     size_t am_desc_key_;
@@ -2053,25 +2087,20 @@ class ucx_am_context::send_sender_t {
         stopCallbackConstructed_ = true;
       }
       auto populateSqe = [this]() noexcept {
+        if (cancel_flag_.load(std::memory_order_consume)) {
+          this->result_ = UCS_ERR_CANCELED;
+          return true;
+        }
         auto op_ =
           reinterpret_cast<std::uintptr_t>(static_cast<completion_base*>(this));
         this->execute_ = &operation::on_write_complete;
-        if (cancel_flag_.load(std::memory_order_consume)) {
-          auto& entry = this->context_.get_completion_queue_entry();
-          entry.user_data = op_;
-          entry.res = UCS_ERR_CANCELED;
-          this->result_ = UCS_ERR_CANCELED;
-          return;
-        }
         auto& conn_ref = conn_.value().get();
-        // Prepare callback function
-        std::unique_ptr<UcxCallback> am_send_cb = nullptr;
-        bool use_cqe = true;
+        std::unique_ptr<UcxCallback> am_send_cb;
+        bool use_rndv = true;
         if constexpr (std::is_same_v<payload_view_t, ucx_am_data>) {
-          use_cqe = conn_ref.should_use_zcopy(data_.buffer.size);
+          use_rndv = conn_ref.should_use_zcopy(data_.buffer.size);
         }
-        if (use_cqe) {
-          // Use context completion queue entry when large data is sent
+        if (use_rndv) {
           am_send_cb = std::move(std::make_unique<CqeEntryCallback>(
             op_, reinterpret_cast<void*>(&(this->context_)),
             [](void* context_ptr) -> ucx_am_cqe& {
@@ -2079,16 +2108,14 @@ class ucx_am_context::send_sender_t {
                 ->get_completion_queue_entry();
             }));
         } else {
-          // Call completion callback directly
+          // TODO(He Jia): pendingIOQueue_ is faster than CQE
           am_send_cb = std::move(std::make_unique<DirectEntryCallback>(
             this, [](ucs_status_t status, void* op) {
-              auto this_ = static_cast<operation*>(op);
+              auto this_ = reinterpret_cast<operation*>(op);
               this_->result_ = status;
               // Schedule the completion to the pending IO queue front
               --this_->context_.sqUnflushedCount_;
-              // TODO(He Jia): This may cause segment fault issue.
-              this_->context_.reschedule_pending_io(
-                static_cast<completion_base*>(this_));
+              this_->context_.reschedule_pending_io(this_);
             }));
         }
         // Prepare buffer
@@ -2115,6 +2142,8 @@ class ucx_am_context::send_sender_t {
             "definition of ucx_am_data and ucx_am_iovec and "
             "other available types.");
         }
+
+        return true;
       };
 
       if (!context_.try_submit_io(populateSqe)) {
@@ -2275,7 +2304,7 @@ class ucx_am_context::send_sender_t {
 
   template <typename P = Payload>
   explicit send_sender_t(
-    ucx_am_context& context, std::uintptr_t conn_id, P& data,
+    ucx_am_context& context, std::uint64_t conn_id, P& data,
     std::enable_if_t<is_ucx_data_v<P>>* = nullptr) noexcept
     : context_(context),
       data_owned_(std::nullopt),
@@ -2328,7 +2357,7 @@ class ucx_am_context::send_sender_t {
 
   template <typename P = Payload>
   explicit send_sender_t(
-    ucx_am_context& context, std::uintptr_t conn_id, P&& data,
+    ucx_am_context& context, std::uint64_t conn_id, P&& data,
     std::enable_if_t<is_ucx_data_wrapper_v<P>>* = nullptr) noexcept
     : context_(context),
       data_owned_(std::forward<P>(data)),
@@ -2640,7 +2669,7 @@ class ucx_am_context::scheduler {
     tag_t<connection_send>, scheduler scheduler, conn_pair_t& conn,
     ucx_am_data& data);
   friend send_sender tag_invoke(
-    tag_t<connection_send>, scheduler scheduler, std::uintptr_t conn_id,
+    tag_t<connection_send>, scheduler scheduler, std::uint64_t conn_id,
     ucx_am_data& data);
   friend send_sender tag_invoke(
     tag_t<connection_send>, scheduler scheduler, UcxConnection& conn,
@@ -2649,7 +2678,7 @@ class ucx_am_context::scheduler {
     tag_t<connection_send>, scheduler scheduler, conn_pair_t& conn,
     UcxAmData&& data);
   friend send_sender_move tag_invoke(
-    tag_t<connection_send>, scheduler scheduler, std::uintptr_t conn_id,
+    tag_t<connection_send>, scheduler scheduler, std::uint64_t conn_id,
     UcxAmData&& data);
   friend send_sender_move tag_invoke(
     tag_t<connection_send>, scheduler scheduler, UcxConnection& conn,
@@ -2658,7 +2687,7 @@ class ucx_am_context::scheduler {
     tag_t<connection_send>, scheduler scheduler, conn_pair_t& conn,
     ucx_am_iovec& iovec);
   friend send_iovec_sender tag_invoke(
-    tag_t<connection_send>, scheduler scheduler, std::uintptr_t conn_id,
+    tag_t<connection_send>, scheduler scheduler, std::uint64_t conn_id,
     ucx_am_iovec& iovec);
   friend send_iovec_sender tag_invoke(
     tag_t<connection_send>, scheduler scheduler, UcxConnection& conn,
@@ -2667,7 +2696,7 @@ class ucx_am_context::scheduler {
     tag_t<connection_send>, scheduler scheduler, conn_pair_t& conn,
     UcxAmIovec&& iovec);
   friend send_iovec_sender_move tag_invoke(
-    tag_t<connection_send>, scheduler scheduler, std::uintptr_t conn_id,
+    tag_t<connection_send>, scheduler scheduler, std::uint64_t conn_id,
     UcxAmIovec&& iovec);
   friend send_iovec_sender_move tag_invoke(
     tag_t<connection_send>, scheduler scheduler, UcxConnection& conn,
@@ -2826,6 +2855,10 @@ class ucx_am_context::dispatch_connection_error_sender {
         stopCallbackConstructed_ = true;
       }
       auto populateSqe = [this]() noexcept {
+        if (cancel_flag_.load(std::memory_order_consume)) {
+          this->result_ = UCS_ERR_CANCELED;
+          return true;
+        }
         // Get failed connections
         auto& failed_conns = context_.conn_manager_.get_failed_connections();
         if (
@@ -2838,11 +2871,6 @@ class ucx_am_context::dispatch_connection_error_sender {
           // Process all failed connections
           ucs_status_t res = UCS_OK;
           while (!failed_conns.empty()) {
-            if (cancel_flag_.load(std::memory_order_consume)) {
-              // Operation canceled, set error and break
-              res = UCS_ERR_CANCELED;
-              break;
-            }
             auto old_conn = std::move(failed_conns.front());
             failed_conns.pop_front();
             auto old_conn_id = old_conn->id();
@@ -3082,17 +3110,16 @@ class ucx_am_context::connect_sender {
         stopCallbackConstructed_ = true;
       }
       auto populateSqe = [this]() noexcept {
+        // Check if operation has been canceled
+        if (cancel_flag_.load(std::memory_order_consume)) {
+          this->result_ = UCS_ERR_CANCELED;
+          return true;
+        }
+
         auto& entry = this->context_.get_completion_queue_entry();
         entry.user_data =
           reinterpret_cast<std::uintptr_t>(static_cast<completion_base*>(this));
         this->execute_ = &operation::on_connect;
-
-        // Check if operation has been canceled
-        if (cancel_flag_.load(std::memory_order_consume)) {
-          entry.res = UCS_ERR_CANCELED;
-          this->result_ = UCS_ERR_CANCELED;
-          return;
-        }
 
         // Create a new connection using the provided addresses
         if (ucp_address_buffer_.size() > 0) {
@@ -3114,6 +3141,8 @@ class ucx_am_context::connect_sender {
           entry.res = conn_.value().get().ucx_status();
           this->result_ = entry.res;
         }
+
+        return true;
       };
 
       if (!context_.try_submit_io(populateSqe)) {
@@ -3366,28 +3395,30 @@ class ucx_am_context::accept_sender {
         stopCallbackConstructed_ = true;
       }
       auto populateSqe = [this]() noexcept {
+        // Check if operation has been canceled
+        if (cancel_flag_.load(std::memory_order_consume)) {
+          this->result_ = UCS_ERR_CANCELED;
+          return true;
+        }
         // Check pending connection requests being created by callback
         if (context_.epConnReqQueue_.empty()) {
           onPending_.store(true, std::memory_order_relaxed);
           // No pending connection request, add this operation to pending queue
           this->execute_ = &operation::on_schedule_complete;
+          this->result_ = UCS_ERR_NO_MESSAGE;
+          --this->context_.sqUnflushedCount_;
           this->context_.pendingAcptIoQueue_.push_front(this);
           return true;
         } else {
           onPending_.store(false, std::memory_order_relaxed);
-          ucs_status_t status = UCS_ERR_CANCELED;
-          if (!cancel_flag_.load(std::memory_order_consume)) {
-            connIdStatusVector_ = context_.progress_pending_conn_requests();
-            status = UCS_OK;
-          }
-
+          connIdStatusVector_ = context_.progress_pending_conn_requests();
           // Update the cqe entry
           auto& entry = this->context_.get_completion_queue_entry();
           entry.user_data = reinterpret_cast<std::uintptr_t>(
             static_cast<completion_base*>(this));
-          entry.res = status;
+          entry.res = UCS_OK;
           this->execute_ = &operation::on_accept;
-          this->result_ = status;
+          this->result_ = UCS_OK;
         }
 
         return true;
@@ -3400,11 +3431,15 @@ class ucx_am_context::accept_sender {
     }
 
     void request_stop() noexcept {
+      if (!onPending_.load(std::memory_order_relaxed)) {
+        return;
+      }
       if (char expected = 1; !refCount_.compare_exchange_strong(
-                               expected, 2, std::memory_order_relaxed)
-                             && !onPending_.load(std::memory_order_relaxed)) {
-        // lost race with on_accept
-        UNIFEX_ASSERT(expected == 0);
+            expected, 2, std::memory_order_relaxed)) {
+        // If refCount_ is 0 means the operation is already completed
+        // If onPending_ is true means the operation is pending to be
+        // rescheduled, no side effect to be cancelled
+        UNIFEX_ASSERT(expected == 0);  // lost race with on_accept
         return;
       }
 
@@ -3792,7 +3827,8 @@ class ucx_am_context::accept_connection {
           unifex::start(acceptOp_.get());
         }
         UNIFEX_CATCH(...) {
-          unifex::set_error(receiver_, std::current_exception());
+          unifex::set_error(
+            static_cast<Receiver&&>(receiver_), std::current_exception());
         }
       }
     };

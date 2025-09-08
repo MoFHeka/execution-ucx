@@ -42,7 +42,8 @@ ConnectionManager::find_connection_in_map(
 
 void ConnectionManager::log_connection_operation(
   const std::string& operation, const UcxConnection& conn) const {
-  UCX_CTX_TRACE << operation << " connection " << conn.get_log_prefix() << "\n";
+  UCX_CTX_TRACE << operation << " connection " << conn.get_log_prefix()
+                << std::endl;
 }
 
 template <typename TargetContainer, typename MapType>

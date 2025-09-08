@@ -336,6 +336,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_data(
 
   ucs_status_ptr_t sptr = ucp_am_send_nbx(
     ep_, DEFAULT_AM_MSG_ID, header, header_length, buffer, length, &param);
+  ucp_worker_progress(worker_);
   return process_request(
     "ucp_am_send_nbx", sptr, std::move(callback), UcxRequestType::Send);
 }
@@ -362,6 +363,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_data(
 
   ucs_status_ptr_t sptr =
     ucp_am_recv_data_nbx(worker_, data_desc.desc, buffer, length, &param);
+  ucp_worker_progress(worker_);
   return process_request(
     "ucp_am_recv_data_nbx", sptr, std::move(callback), UcxRequestType::Recv);
 }
@@ -388,6 +390,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_iov_data(
 
   ucs_status_ptr_t sptr = ucp_am_send_nbx(
     ep_, IOVEC_AM_MSG_ID, header, header_length, iov_base, iov_count, &param);
+  ucp_worker_progress(worker_);
   return process_request(
     "ucp_am_send_nbx_iov", sptr, std::move(callback), UcxRequestType::Send);
 }
@@ -415,6 +418,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_iov_data(
 
   ucs_status_ptr_t sptr =
     ucp_am_recv_data_nbx(worker_, data_desc.desc, iov_base, iov_count, &param);
+  ucp_worker_progress(worker_);
   return process_request(
     "ucp_am_recv_data_nbx_iov", sptr, std::move(callback),
     UcxRequestType::Recv);
@@ -585,7 +589,7 @@ void UcxConnection::request_started(UcxRequest* r) {
 }
 
 void UcxConnection::request_completed(UcxRequest* r) {
-  const auto conn_ref = r->conn.value();
+  [[maybe_unused]] const auto conn_ref = r->conn.value();
   assert(&(conn_ref.get()) == this);
   ucs_list_del(&r->pos);
 

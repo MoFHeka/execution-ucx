@@ -16,6 +16,8 @@ build:debug --strip=never
 build:debug --define=DEBUG=1
 
 # Release build settings
+build:release --compilation_mode=opt
+# build:release --copt=-pg  # profiling with uftrace
 build:release --copt=-O3
 build:release --strip=never
 build:release --define=NDEBUG=1

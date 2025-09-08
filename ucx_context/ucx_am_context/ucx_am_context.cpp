@@ -140,6 +140,28 @@ ucx_am_context::~ucx_am_context() {
   if (ucpContext_ && !isUcpContextExternal_) {
     ucx_am_context::destroy_ucp_context(ucpContext_);
   }
+
+  // Clean up pending queue, Assume the items are already completed
+  while (!pendingIoQueue_.empty()) {
+    auto* item = pendingIoQueue_.pop_front();
+    UCX_CTX_DEBUG << "release pending IO queue item " << item << std::endl;
+  }
+
+  while (!localQueue_.empty()) {
+    auto* item = localQueue_.pop_front();
+    UCX_CTX_DEBUG << "release local queue item " << item << std::endl;
+  }
+
+  auto items = remoteQueue_.dequeue_all();
+  while (!items.empty()) {
+    auto* item = items.pop_front();
+    UCX_CTX_DEBUG << "release remote queue item " << item << std::endl;
+  }
+
+  while (!timers_.empty()) {
+    auto* item = timers_.pop();
+    UCX_CTX_DEBUG << "release timers queue item " << item << std::endl;
+  }
 }
 
 void ucx_am_context::run_impl(const bool& shouldStop) {
@@ -675,7 +697,8 @@ std::error_code ucx_am_context::init_with_internal_ucp_context(bool forceInit) {
   if (ec) {
     ucp_cleanup(ucpContext_);
     ucpContext_ = nullptr;
-    UCX_CTX_ERROR << "ucp_worker_create() failed: " << ec.message() << "\n";
+    UCX_CTX_ERROR << "ucp_worker_create() failed: " << ec.message()
+                  << std::endl;
     return ec;
   }
 
@@ -699,7 +722,7 @@ std::error_code ucx_am_context::init(std::string_view name, bool forceInit) {
   ec =
     init_ucp_context(name, &ucpContext_, /*mtWorkersShared=*/false, forceInit);
   if (ec) {
-    UCX_CTX_ERROR << "ucp_init() failed: " << ec.message();
+    UCX_CTX_ERROR << "ucp_init() failed: " << ec.message() << std::endl;
     return ec;
   }
 
@@ -836,7 +859,7 @@ ucs_status_t ucx_am_context::listen(
   }
 
   UCX_CTX_TRACE << "started listener on "
-                << ucx_connection::sockaddr_str(addr, addrlen) << "\n";
+                << ucx_connection::sockaddr_str(addr, addrlen) << std::endl;
   return UCS_OK;
 }
 
@@ -1092,11 +1115,11 @@ void ucx_am_context::connect_request_callback(
                   << ucx_connection::sockaddr_str(
                        (const struct sockaddr*)&conn_req_attr.client_address,
                        sizeof(conn_req_attr.client_address))
-                  << " client_id " << conn_req_attr.client_id << "\n";
+                  << " client_id " << conn_req_attr.client_id << std::endl;
   } else {
     UCX_CTX_ERROR << "got new connection request " << conn_req
                   << ", ucp_conn_request_query() failed ("
-                  << ucs_status_string(status) << ")\n";
+                  << ucs_status_string(status) << ")" << std::endl;
   }
 
   conn_request.conn_request = conn_req;
@@ -1351,7 +1374,7 @@ ucx_am_context::send_sender tag_invoke(
 ucx_am_context::send_sender tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
-  std::uintptr_t conn_id,
+  std::uint64_t conn_id,
   ucx_am_data& data) {
   return ucx_am_context::send_sender{*scheduler.context_, conn_id, data};
 }
@@ -1397,7 +1420,7 @@ ucx_am_context::send_sender_move tag_invoke(
 ucx_am_context::send_sender_move tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
-  std::uintptr_t conn_id,
+  std::uint64_t conn_id,
   UcxAmData&& data) {
   return ucx_am_context::send_sender_move{
     *scheduler.context_, conn_id, std::move(data)};
@@ -1445,7 +1468,7 @@ ucx_am_context::send_iovec_sender tag_invoke(
 ucx_am_context::send_iovec_sender tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
-  std::uintptr_t conn_id,
+  std::uint64_t conn_id,
   ucx_am_iovec& iovec) {
   return ucx_am_context::send_iovec_sender{*scheduler.context_, conn_id, iovec};
 }
@@ -1494,7 +1517,7 @@ ucx_am_context::send_iovec_sender_move tag_invoke(
 ucx_am_context::send_iovec_sender_move tag_invoke(
   tag_t<connection_send>,
   ucx_am_context::scheduler scheduler,
-  std::uintptr_t conn_id,
+  std::uint64_t conn_id,
   UcxAmIovec&& iovec) {
   return ucx_am_context::send_iovec_sender_move{
     *scheduler.context_, conn_id, std::move(iovec)};
