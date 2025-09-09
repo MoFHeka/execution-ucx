@@ -15,8 +15,8 @@ limitations under the License.
 
 #pragma once
 
-#ifndef UCX_CONTEXT_LOGGER_HPP_
-#define UCX_CONTEXT_LOGGER_HPP_
+#ifndef UCX_CONTEXT_UCX_CONTEXT_LOGGER_HPP_
+#define UCX_CONTEXT_UCX_CONTEXT_LOGGER_HPP_
 
 #include <iostream>
 #include <sstream>
@@ -336,4 +336,4 @@ inline UcxLogger& operator<<(UcxLogger& logger, LogLevel level) {
 
 }  // namespace stdexe_ucx_runtime
 
-#endif  // UCX_CONTEXT_LOGGER_HPP_
+#endif  // UCX_CONTEXT_UCX_CONTEXT_LOGGER_HPP_

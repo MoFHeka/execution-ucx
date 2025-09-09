@@ -15,8 +15,8 @@ limitations under the License.
 
 #pragma once
 
-#ifndef UCX_STATUS_HPP_
-#define UCX_STATUS_HPP_
+#ifndef UCX_CONTEXT_UCX_STATUS_HPP_
+#define UCX_CONTEXT_UCX_STATUS_HPP_
 
 #include <ucs/type/status.h>
 
@@ -145,4 +145,4 @@ inline std::error_condition make_error_condition(ucs_status_t status) noexcept {
   return stdexe_ucx_runtime::make_error_condition(status);
 }
 
-#endif  // UCX_STATUS_HPP_
+#endif  // UCX_CONTEXT_UCX_STATUS_HPP_

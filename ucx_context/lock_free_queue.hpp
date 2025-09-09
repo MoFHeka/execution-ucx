@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef UCX_AM_CONTEXT_LOCK_FREE_QUEUE_HPP_
-#define UCX_AM_CONTEXT_LOCK_FREE_QUEUE_HPP_
+#ifndef UCX_CONTEXT_LOCK_FREE_QUEUE_HPP_
+#define UCX_CONTEXT_LOCK_FREE_QUEUE_HPP_
 
 #pragma once
 
@@ -170,4 +170,4 @@ class LockFreeQueue {
 
 }  // namespace stdexe_ucx_runtime
 
-#endif  // UCX_AM_CONTEXT_LOCK_FREE_QUEUE_HPP_
+#endif  // UCX_CONTEXT_LOCK_FREE_QUEUE_HPP_

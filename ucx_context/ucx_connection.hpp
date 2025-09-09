@@ -15,8 +15,8 @@ limitations under the License.
 
 #pragma once
 
-#ifndef UCX_CONNECTION_HPP_
-#define UCX_CONNECTION_HPP_
+#ifndef UCX_CONTEXT_UCX_CONNECTION_HPP_
+#define UCX_CONTEXT_UCX_CONNECTION_HPP_
 
 #include <ucp/api/ucp.h>
 #include <ucs/datastruct/list.h>
@@ -550,4 +550,4 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
 
 }  // namespace stdexe_ucx_runtime
 
-#endif  // UCX_CONNECTION_HPP_
+#endif  // UCX_CONTEXT_UCX_CONNECTION_HPP_

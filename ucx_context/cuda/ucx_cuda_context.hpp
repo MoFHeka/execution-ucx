@@ -15,8 +15,8 @@ limitations under the License.
 
 #pragma once
 
-#ifndef UCX_CUDA_CONTEXT_HPP_
-#define UCX_CUDA_CONTEXT_HPP_
+#ifndef UCX_CONTEXT_CUDA_UCX_CUDA_CONTEXT_HPP_
+#define UCX_CONTEXT_CUDA_UCX_CUDA_CONTEXT_HPP_
 
 #include <cuda.h>
 
@@ -71,4 +71,4 @@ class UcxAutoCudaDeviceContext : public UcxAutoDeviceContext {
   CUcontext cuda_context_;
 };
 
-#endif  // UCX_CUDA_CONTEXT_HPP_
+#endif  // UCX_CONTEXT_CUDA_UCX_CUDA_CONTEXT_HPP_

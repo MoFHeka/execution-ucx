@@ -15,8 +15,8 @@
 
 #pragma once
 
-#ifndef UCX_CONTEXT_DATA_HPP_
-#define UCX_CONTEXT_DATA_HPP_
+#ifndef UCX_CONTEXT_UCX_CONTEXT_DATA_HPP_
+#define UCX_CONTEXT_UCX_CONTEXT_DATA_HPP_
 
 #include <atomic>
 #include <utility>
@@ -734,4 +734,4 @@ class UcxAmIovec {
 
 }  // namespace stdexe_ucx_runtime
 
-#endif  // UCX_CONTEXT_DATA_HPP_
+#endif  // UCX_CONTEXT_UCX_CONTEXT_DATA_HPP_
