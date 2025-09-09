@@ -15,8 +15,8 @@ limitations under the License.
 
 #pragma once
 
-#ifndef UCX_DEVICE_CONTEXT_HPP_
-#define UCX_DEVICE_CONTEXT_HPP_
+#ifndef UCX_CONTEXT_UCX_DEVICE_CONTEXT_HPP_
+#define UCX_CONTEXT_UCX_DEVICE_CONTEXT_HPP_
 
 #include <ucp/api/ucp.h>
 
@@ -141,4 +141,4 @@ class UcxAutoDefaultDeviceContext : public UcxAutoDeviceContext {
   }
 };
 
-#endif  // UCX_DEVICE_CONTEXT_HPP_
+#endif  // UCX_CONTEXT_UCX_DEVICE_CONTEXT_HPP_

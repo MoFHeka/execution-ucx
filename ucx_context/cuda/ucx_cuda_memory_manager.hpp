@@ -15,6 +15,9 @@ limitations under the License.
 
 #pragma once
 
+#ifndef UCX_CONTEXT_CUDA_UCX_CUDA_MEMORY_MANAGER_HPP_
+#define UCX_CONTEXT_CUDA_UCX_CUDA_MEMORY_MANAGER_HPP_
+
 #include <cuda.h>
 #include <cuda_runtime.h>
 
@@ -150,3 +153,5 @@ class UcxCudaMemoryResourceManager : public UcxMemoryResourceManager {
 };
 
 }  // namespace stdexe_ucx_runtime
+
+#endif  // UCX_CONTEXT_CUDA_UCX_CUDA_MEMORY_MANAGER_HPP_

@@ -16,8 +16,8 @@ limitations under the License.
 
 #pragma once
 
-#ifndef UCX_AM_CONTEXT_HPP_
-#define UCX_AM_CONTEXT_HPP_
+#ifndef UCX_CONTEXT_UCX_AM_CONTEXT_UCX_AM_CONTEXT_HPP_
+#define UCX_CONTEXT_UCX_AM_CONTEXT_UCX_AM_CONTEXT_HPP_
 
 #include <netinet/in.h>
 #include <ucp/api/ucp.h>
@@ -3895,4 +3895,4 @@ class ucx_am_context::accept_connection {
 
 }  // namespace stdexe_ucx_runtime
 
-#endif  // UCX_AM_CONTEXT_HPP_
+#endif  // UCX_CONTEXT_UCX_AM_CONTEXT_UCX_AM_CONTEXT_HPP_
