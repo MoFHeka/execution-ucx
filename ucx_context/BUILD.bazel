@@ -4,17 +4,24 @@ load("@rules_cuda//cuda:defs.bzl", "cuda_library", "requires_cuda")
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
+    name = "ucx_context_def_lib",
+    hdrs = [
+        "ucx_context_def.h",
+    ],
+)
+
+cc_library(
     name = "ucx_connection",
     srcs = [
         "ucx_connection.cpp",
     ],
     hdrs = [
         "ucx_connection.hpp",
-        "ucx_context_def.h",
         "ucx_context_logger.hpp",
     ],
     copts = ["-std=c++17"],
     deps = [
+        ":ucx_context_def_lib",
         "@ucx//:ucx_runtime",
     ],
 )
@@ -35,19 +42,40 @@ cc_library(
 )
 
 cc_library(
+    name = "ucx_memory_resource_lib",
+    srcs = [
+        "ucx_memory_resource.cpp",
+    ],
+    hdrs = [
+        "ucx_memory_resource.hpp",
+    ],
+    copts = ["-std=c++17"],
+    deps = [
+        ":ucx_context_def_lib",
+    ],
+)
+
+cc_library(
+    name = "ucx_context_data_lib",
+    hdrs = [
+        "ucx_context_data.hpp",
+    ],
+    deps = [
+        ":ucx_memory_resource_lib",
+    ],
+)
+
+cc_library(
     name = "ucx_am_context",
     srcs = [
         "ucx_am_context/ucx_am_context.cpp",
-        "ucx_memory_resource.cpp",
     ],
     hdrs = [
         "ucx_am_context/ucx_am_context.hpp",
         "ucx_context_concept.hpp",
-        "ucx_context_data.hpp",
         "ucx_context_def.h",
         "ucx_context_logger.hpp",
         "ucx_device_context.hpp",
-        "ucx_memory_resource.hpp",
         "ucx_status.hpp",
     ],
     copts = ["-std=c++17"],
@@ -55,6 +83,7 @@ cc_library(
     deps = [
         ":ucx_connection",
         ":ucx_connection_manager",
+        ":ucx_context_data_lib",
         "@ucx",
         "@unifex",
     ],
@@ -156,9 +185,4 @@ cc_binary(
         ":ucx_am_context",
         "@unifex",
     ],
-)
-
-sh_binary(
-    name = "format",
-    srcs = ["format.sh"],
 )

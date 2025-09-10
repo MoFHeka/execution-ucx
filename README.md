@@ -19,11 +19,13 @@ Its design goal is to provide an efficient, flexible, and composable asynchronou
 *   **Memory Management**: Integrated UCX memory registration/deregistration (`ucx_memory_resource`), simplifying RDMA operations.
 *   **CUDA Support**: Seamless support for CUDA device memory, enabling GPU-Direct RDMA (GDR).
 *   **Extensibility**: Modular design allows for easy extension to support new protocols or hardware.
+*   **General-Purpose RPC**: A flexible RPC module (`rpc_core`) for type-safe, cross-process function calls, supporting service discovery.
 
 ## Core Concepts
 
 *   `ucx_context`: The core component that encapsulates `ucp_worker_h` and drives all asynchronous operations. It has its own thread for polling UCX events and executing tasks.
 *   `ucx_am_context`: The Active Message context, providing an interface for sending and receiving Active Messages.
+*   `RpcDispatcher`: The central class for registering and invoking RPC functions. It manages function signatures and handles data serialization.
 *   `ucx_connection`: Encapsulates `ucp_ep_h`, representing a connection to a remote peer.
 *   `ucx_connection_manager`: Manages and reuses `ucx_connection`, handling connection establishment and teardown.
 *   `ucx_memory_resource`: A C++ PMR-style memory resource for allocating registered memory that can be used directly by UCX for RDMA operations.
@@ -316,6 +318,160 @@ This section details the primary APIs provided by `ucx_am_context` for network c
         *   `am_desc_key`: The key obtained from `connection_recv_header`.
         *   `buffer`: A `UcxBuffer&&` or `UcxBufferVec&&` to receive the data. An overload takes a `ucx_memory_type` to allocate the buffer internally.
     *   **Returns**: A sender producing an `active_message_buffer_bundle` (for `UcxBuffer`) or `active_message_iovec_buffer_bundle` (for `UcxBufferVec`) on success.
+
+## RPC Framework (`rpc_core`)
+
+On top of the low-level Active Message API, `execution-ucx` provides a high-level, type-safe RPC framework. This allows developers to register C++ functions on a server and call them from a client as if they were local, with automatic serialization of arguments and return values. It also includes a service discovery mechanism.
+
+### Usage Example
+
+This example demonstrates an end-to-end RPC workflow: a server registers a function, and a client discovers it, calls it, and verifies the result.
+
+#### rpc_example.cpp
+
+```cpp
+#include <cassert>
+#include <iostream>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "rpc_core/rpc_dispatcher.hpp"
+
+// Use declarations for clarity
+using stdexe_ucx_runtime::rpc_core::function_id_t;
+using stdexe_ucx_runtime::rpc_core::ParamMeta;
+using stdexe_ucx_runtime::rpc_core::ParamType;
+using stdexe_ucx_runtime::rpc_core::PrimitiveValue;
+using stdexe_ucx_runtime::rpc_core::RpcDispatcher;
+using stdexe_ucx_runtime::rpc_core::RpcFunctionSignature;
+using stdexe_ucx_runtime::rpc_core::RpcRequestHeader;
+using stdexe_ucx_runtime::rpc_core::session_id_t;
+namespace data = cista::offset;
+
+// A simple function to be exposed via RPC
+int add(int a, int b) { return a + b; }
+
+int main() {
+  // 1. A mock central registry for service discovery.
+  // In a real application, this could be a key-value store like etcd or Redis.
+  std::map<std::string, cista::byte_buf> registry;
+
+  // 2. Setup Server B (the service provider).
+  // It creates a dispatcher, registers a function, and publishes its
+  // signatures.
+  RpcDispatcher dispatcher_B("server_B_instance");
+  dispatcher_B.register_function(function_id_t{100}, &add,
+                                 data::string{"add_func"});
+
+  // Publish signatures to the central registry.
+  registry["server_B_instance"] = dispatcher_B.get_all_signatures();
+  std::cout << "Server B registered 'add_func' and published its signature."
+            << std::endl;
+
+  // 3. Client A (the caller) discovers and calls the function.
+  // --- Discovery Phase ---
+  auto serialized_sigs_it = registry.find("server_B_instance");
+  assert(serialized_sigs_it != registry.end());
+
+  auto deserialized_sigs =
+      cista::deserialize<data::vector<RpcFunctionSignature>>(
+          serialized_sigs_it->second);
+  assert(deserialized_sigs != nullptr);
+
+  std::optional<function_id_t> target_function_id;
+  for (const auto& sig : *deserialized_sigs) {
+    if (sig.function_name == data::string("add_func")) {
+      target_function_id = sig.id;
+      break;
+    }
+  }
+  assert(target_function_id.has_value());
+  std::cout << "Client A discovered 'add_func' with ID: "
+            << target_function_id.value().v_ << std::endl;
+
+  // --- RPC Call Phase ---
+  RpcRequestHeader request{};
+  request.function_id = target_function_id.value();
+  request.session_id = session_id_t{2025};
+
+  ParamMeta p1{};
+  p1.type = ParamType::PRIMITIVE_INT32;
+  p1.value.emplace<PrimitiveValue>(25);
+  request.add_param(std::move(p1));
+
+  ParamMeta p2{};
+  p2.type = ParamType::PRIMITIVE_INT32;
+  p2.value.emplace<PrimitiveValue>(17);
+  request.add_param(std::move(p2));
+
+  auto request_buffer = cista::serialize(request);
+
+  // Simulate sending the request to Server B's dispatcher and receiving a
+  // response. In a real system, this buffer would be sent over the network
+  // using ucx_am_context.
+  auto response_pair = dispatcher_B.dispatch(std::move(request_buffer));
+  auto& response_header = response_pair.header;
+
+  // --- Verification Phase ---
+  assert(response_header.session_id.v_ == 2025);
+  assert(response_header.results.size() == 1);
+  int32_t result = response_header.get_primitive<int32_t>(0);
+  assert(result == 42); // 25 + 17
+  assert(response_header.status.value == 0);
+
+  std::cout << "Client A called 'add_func(25, 17)' and got result: " << result
+            << std::endl;
+  std::cout << "RPC call successful!" << std::endl;
+
+  return 0;
+}
+```
+
+#### BUILD.bazel
+```python
+cc_binary(
+    name = "rpc_example",
+    srcs = ["rpc_example.cpp"],
+    deps = [
+        "//rpc_core",
+    ],
+)
+```
+
+### API Reference
+
+This section details the primary APIs provided by `RpcDispatcher`.
+
+*   **`RpcDispatcher(instance_name)`**
+    *   **Description**: Constructs an `RpcDispatcher`.
+    *   **Parameters**:
+        *   `instance_name`: A `data::string` to identify this dispatcher instance, used in function signatures for service discovery.
+
+*   **`register_function(id, func, name)`**
+    *   **Description**: Registers a C++ callable (function, lambda, etc.) as an RPC function.
+    *   **Parameters**:
+        *   `id`: A `function_id_t` (strong type over `uint64_t`) to uniquely identify the function.
+        *   `func`: The callable to register.
+        *   `name`: A human-readable `data::string` name for the function, used for service discovery.
+
+*   **`dispatch(request_buffer, [input_data])`**
+    *   **Description**: Deserializes a request from a buffer, invokes the corresponding function, and returns the result. This overload is for functions that either take no context or take a context by reference (`&`).
+    *   **Parameters**:
+        *   `request_buffer`: A `cista::byte_buf&&` containing the serialized `RpcRequestHeader`.
+        *   `input_data`: (Optional) An lvalue reference to a context object to be passed to the function.
+    *   **Returns**: An `RpcInvokeResult` containing the response header and any context object returned by the function.
+
+*   **`dispatch_move(request_buffer, input_data)`**
+    *   **Description**: Similar to `dispatch`, but moves the context object into the called function. This is intended for contexts that manage resources and whose ownership should be transferred, such as `UcxBufferVec`.
+    *   **Parameters**:
+        *   `request_buffer`: A `cista::byte_buf&&` with the serialized request.
+        *   `input_data`: An rvalue reference (`&&`) to the context object.
+    *   **Returns**: An `RpcInvokeResult` containing the response header and any returned context.
+
+*   **`get_all_signatures()`**
+    *   **Description**: Retrieves the signatures of all registered functions and serializes them. This is the core of the service discovery mechanism.
+    *   **Returns**: A `cista::byte_buf` containing a serialized `data::vector<RpcFunctionSignature>`. A client can deserialize this buffer to learn about the functions available on the server.
 
 ## License
 

@@ -97,6 +97,33 @@ using unifex::linuxos::monotonic_clock;
 
 static constexpr const std::uint32_t kCompletionQueueEntryCount = 256;
 
+// UCX context memory type map to UCS memory type
+// This is for a pure header ucx_am_context_def.h without ucp.h
+static constexpr ucs_memory_type_t mem_type_map(ucx_memory_type type) {
+  switch (type) {
+    case ucx_memory_type::HOST:
+      return UCS_MEMORY_TYPE_HOST;
+    case ucx_memory_type::CUDA:
+      return UCS_MEMORY_TYPE_CUDA;
+    case ucx_memory_type::CUDA_MANAGED:
+      return UCS_MEMORY_TYPE_CUDA_MANAGED;
+    case ucx_memory_type::ROCM:
+      return UCS_MEMORY_TYPE_ROCM;
+    case ucx_memory_type::ROCM_MANAGED:
+      return UCS_MEMORY_TYPE_ROCM_MANAGED;
+    case ucx_memory_type::RDMA:
+      return UCS_MEMORY_TYPE_RDMA;
+    case ucx_memory_type::ZE_HOST:
+      return UCS_MEMORY_TYPE_ZE_HOST;
+    case ucx_memory_type::ZE_DEVICE:
+      return UCS_MEMORY_TYPE_ZE_DEVICE;
+    case ucx_memory_type::ZE_MANAGED:
+      return UCS_MEMORY_TYPE_ZE_MANAGED;
+    default:
+      return UCS_MEMORY_TYPE_UNKNOWN;
+  }
+}
+
 /**
  * @class active_message_bundle
  * @brief A class that bundles UCX active message data with connection

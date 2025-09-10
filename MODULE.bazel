@@ -28,6 +28,7 @@ cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
 cuda.local_toolchain(
     name = "local_cuda",
     toolkit_path = "",
+    # toolkit_path = "/opt/nvidia/hpc_sdk/Linux_x86_64/2024/cuda/",  # Specify local CUDA toolkit path
 )
 use_repo(cuda, "local_cuda")
 
@@ -46,6 +47,10 @@ ucx_deps = use_extension("//third_party/openucx:extensions.bzl", "openucx_depend
 # ucx_deps.ucx_library(name = "ucx", ucx_path = "/opt/nvidia/hpc_sdk/Linux_x86_64/2024/comm_libs/12.5/hpcx/latest/ucx/")  # A local UCX path
 ucx_deps.ucx_git(name = "ucx", tag = "v1.18.1")
 use_repo(ucx_deps, "ucx")
+
+# setting cista for RPC serialization/deserialization
+cista_deps = use_extension("//third_party/cista:extensions.bzl", "cista_dep")
+use_repo(cista_deps, "cista")
 
 bazel_dep(name = "rules_foreign_cc", version = "0.12.0")
 
