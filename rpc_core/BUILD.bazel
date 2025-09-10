@@ -1,0 +1,35 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "rpc_headers",
+    srcs = [
+        "rpc_dispatcher.hpp",
+        "rpc_types.hpp",
+    ],
+)
+
+cc_library(
+    name = "rpc_headers_lib",
+    hdrs = [
+        ":rpc_headers",
+    ],
+    copts = ["-std=c++17"],
+    deps = [
+        "@cista",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+    ],
+)
+
+cc_test(
+    name = "rpc_dispatcher_test",
+    size = "small",
+    srcs = ["rpc_dispatcher_test.cpp"],
+    copts = ["-std=c++17"],
+    deps = [
+        ":rpc_headers_lib",
+        "@cista",
+        "@googletest//:gtest_main",
+    ],
+)

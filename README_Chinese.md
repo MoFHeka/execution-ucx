@@ -19,11 +19,13 @@
 *   **内存管理**：集成了 UCX 内存注册/反注册 (`ucx_memory_resource`)，简化了 RDMA 操作。
 *   **CUDA 支持**：无缝支持 CUDA 设备内存，可实现 GPU-Direct RDMA (GDR)。
 *   **可扩展性**：模块化设计，可以轻松扩展以支持新的协议或硬件。
+*   **通用 RPC 框架**：一个灵活的 RPC 模块 (`rpc_core`)，用于类型安全的跨进程函数调用，并支持服务发现。
 
 ## 核心概念
 
 *   `ucx_context`: 核心组件，封装了 `ucp_worker_h`，并驱动所有异步操作。它拥有一个独立的线程，负责轮询 UCX 事件和执行任务。
 *   `ucx_am_context`: Active Message 上下文，提供了发送和接收 Active Message 的接口。
+*   `RpcDispatcher`: 用于注册和调用 RPC 函数的核心类。它管理函数签名并处理数据序列化。
 *   `ucx_connection`: 封装了 `ucp_ep_h`，代表一个到远端的连接。
 *   `ucx_connection_manager`: 负责管理和复用 `ucx_connection`，处理连接建立和关闭。
 *   `ucx_memory_resource`: 一个 C++ PMR 风格的内存资源，用于分配可被 UCX 直接用于 RDMA 操作的注册内存。
@@ -316,6 +318,158 @@ cc_binary(
         *   `buffer`: 用于接收数据的 `UcxBuffer&&` 或 `UcxBufferVec&&`。一个重载版本接受 `ucx_memory_type` 以在内部自分配缓冲区。
     *   **返回值**: 成功时返回一个生成 `active_message_buffer_bundle`（对于 `UcxBuffer`）或 `active_message_iovec_buffer_bundle`（对于 `UcxBufferVec`）的 sender。
 
+## RPC 框架 (`rpc_core`)
+
+在底层的 Active Message API 之上，`execution-ucx` 提供了一个高级的、类型安全的 RPC 框架。这使得开发者可以在服务端注册 C++ 函数，并像调用本地函数一样从客户端调用它们，框架会自动处理参数和返回值的序列化。此外，它还包含一个服务发现机制。
+
+### 使用示例
+
+此示例演示了一个端到端的 RPC 工作流程：服务端注册一个函数，客户端发现该函数，然后调用它并验证结果。
+
+#### rpc_example.cpp
+
+```cpp
+#include <cassert>
+#include <iostream>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "rpc_core/rpc_dispatcher.hpp"
+
+// 使用声明以提高代码清晰度
+using stdexe_ucx_runtime::rpc_core::function_id_t;
+using stdexe_ucx_runtime::rpc_core::ParamMeta;
+using stdexe_ucx_runtime::rpc_core::ParamType;
+using stdexe_ucx_runtime::rpc_core::PrimitiveValue;
+using stdexe_ucx_runtime::rpc_core::RpcDispatcher;
+using stdexe_ucx_runtime::rpc_core::RpcFunctionSignature;
+using stdexe_ucx_runtime::rpc_core::RpcRequestHeader;
+using stdexe_ucx_runtime::rpc_core::session_id_t;
+namespace data = cista::offset;
+
+// 一个将通过 RPC 暴露的简单函数
+int add(int a, int b) { return a + b; }
+
+int main() {
+  // 1. 一个用于服务发现的模拟中央注册表。
+  // 在实际应用中，这可能是一个键值存储系统，如 etcd 或 Redis。
+  std::map<std::string, cista::byte_buf> registry;
+
+  // 2. 设置服务端 B (服务提供者)。
+  // 它创建一个分发器，注册一个函数，并发布其签名。
+  RpcDispatcher dispatcher_B("server_B_instance");
+  dispatcher_B.register_function(function_id_t{100}, &add,
+                                 data::string{"add_func"});
+
+  // 将签名发布到中央注册表。
+  registry["server_B_instance"] = dispatcher_B.get_all_signatures();
+  std::cout << "服务端 B 注册了 'add_func' 并发布了其签名。"
+            << std::endl;
+
+  // 3. 客户端 A (调用者) 发现并调用该函数。
+  // --- 服务发现阶段 ---
+  auto serialized_sigs_it = registry.find("server_B_instance");
+  assert(serialized_sigs_it != registry.end());
+
+  auto deserialized_sigs =
+      cista::deserialize<data::vector<RpcFunctionSignature>>(
+          serialized_sigs_it->second);
+  assert(deserialized_sigs != nullptr);
+
+  std::optional<function_id_t> target_function_id;
+  for (const auto& sig : *deserialized_sigs) {
+    if (sig.function_name == data::string("add_func")) {
+      target_function_id = sig.id;
+      break;
+    }
+  }
+  assert(target_function_id.has_value());
+  std::cout << "客户端 A 发现了 'add_func'，其 ID 为: "
+            << target_function_id.value().v_ << std::endl;
+
+  // --- RPC 调用阶段 ---
+  RpcRequestHeader request{};
+  request.function_id = target_function_id.value();
+  request.session_id = session_id_t{2025};
+
+  ParamMeta p1{};
+  p1.type = ParamType::PRIMITIVE_INT32;
+  p1.value.emplace<PrimitiveValue>(25);
+  request.add_param(std::move(p1));
+
+  ParamMeta p2{};
+  p2.type = ParamType::PRIMITIVE_INT32;
+  p2.value.emplace<PrimitiveValue>(17);
+  request.add_param(std::move(p2));
+
+  auto request_buffer = cista::serialize(request);
+
+  // 模拟将请求发送到服务端 B 的分发器并接收响应。
+  // 在真实系统中，这个缓冲区将通过 ucx_am_context 在网络上传输。
+  auto response_pair = dispatcher_B.dispatch(std::move(request_buffer));
+  auto& response_header = response_pair.header;
+
+  // --- 验证阶段 ---
+  assert(response_header.session_id.v_ == 2025);
+  assert(response_header.results.size() == 1);
+  int32_t result = response_header.get_primitive<int32_t>(0);
+  assert(result == 42); // 25 + 17
+  assert(response_header.status.value == 0);
+
+  std::cout << "客户端 A 调用 'add_func(25, 17)' 并得到结果: " << result
+            << std::endl;
+  std::cout << "RPC 调用成功!" << std::endl;
+
+  return 0;
+}
+```
+
+#### BUILD.bazel
+```python
+cc_binary(
+    name = "rpc_example",
+    srcs = ["rpc_example.cpp"],
+    deps = [
+        "//rpc_core",
+    ],
+)
+```
+
+### API 参考
+
+本节详细介绍 `RpcDispatcher` 提供的主要 API。
+
+*   **`RpcDispatcher(instance_name)`**
+    *   **描述**: 构造一个 `RpcDispatcher`。
+    *   **参数**:
+        *   `instance_name`: 一个 `data::string`，用于标识此分发器实例，该名称将用于函数签名中以进行服务发现。
+
+*   **`register_function(id, func, name)`**
+    *   **描述**: 将一个 C++ 可调用对象（函数、lambda 表达式等）注册为 RPC 函数。
+    *   **参数**:
+        *   `id`: 一个 `function_id_t`（`uint64_t` 的强类型），用于唯一标识该函数。
+        *   `func`: 要注册的可调用对象。
+        *   `name`: 一个人类可读的 `data::string` 名称，用于服务发现。
+
+*   **`dispatch(request_buffer, [input_data])`**
+    *   **描述**: 从缓冲区反序列化一个请求，调用对应的函数，并返回结果。此重载适用于不接受上下文或通过引用（`&`）接受上下文的函数。
+    *   **参数**:
+        *   `request_buffer`: 一个包含序列化的 `RpcRequestHeader` 的 `cista::byte_buf&&`。
+        *   `input_data`: （可选）一个要传递给函数的上下文对象的左值引用。
+    *   **返回值**: 一个 `RpcInvokeResult`，包含响应头和函数返回的任何上下文对象。
+
+*   **`dispatch_move(request_buffer, input_data)`**
+    *   **描述**: 功能与 `dispatch` 类似，但会将上下文对象移动（move）到被调用的函数中。这适用于管理资源且所有权应被转移的上下文类型，例如 `UcxBufferVec`。
+    *   **参数**:
+        *   `request_buffer`: 包含序列化请求的 `cista::byte_buf&&`。
+        *   `input_data`: 上下文对象的右值引用（`&&`）。
+    *   **返回值**: 一个 `RpcInvokeResult`，包含响应头和函数返回的任何上下文。
+
+*   **`get_all_signatures()`**
+    *   **描述**: 检索所有已注册函数的签名并将其序列化。这是服务发现机制的核心。
+    *   **返回值**: 一个 `cista::byte_buf`，其中包含一个序列化的 `data::vector<RpcFunctionSignature>`。客户端可以反序列化此缓冲区以了解服务端上可用的函数。
+
 ## 许可证
 
-本项目采用 [Apache License 2.0](LICENSE) 许可证。 
+本项目采用 [Apache License 2.0](LICENSE) 许可证。
