@@ -6,6 +6,7 @@ filegroup(
     name = "rpc_headers",
     srcs = [
         "rpc_dispatcher.hpp",
+        "rpc_status.hpp",
         "rpc_types.hpp",
     ],
 )
