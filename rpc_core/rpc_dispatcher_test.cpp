@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "rpc_core/rpc_dispatcher.hpp"
+#include "rpc_core/rpc_status.hpp"
 #include "ucx_context/ucx_context_data.hpp"
 #include "ucx_context/ucx_memory_resource.hpp"
 
@@ -490,6 +491,113 @@ TEST_F(RpcDispatcherTest, EndToEndRpcWithRegistry) {
     EXPECT_EQ(response_header.get_primitive<int32_t>(0), 42);  // 25 + 17
     EXPECT_EQ(response_header.status.value, 0);
   }
+}
+
+// =============================================================================
+// RpcStatus and RpcCategoryRegistry Test Cases
+// =============================================================================
+
+// 1. Define a mock third-party error system for testing extensibility.
+enum class MyThirdPartyErrc {
+  SUCCESS = 0,
+  FATAL_ERROR = 1,
+  NETWORK_TIMEOUT = 2
+};
+
+class MyThirdPartyErrorCategory : public std::error_category {
+ public:
+  const char* name() const noexcept override { return "MyThirdParty"; }
+  std::string message(int ev) const override {
+    switch (static_cast<MyThirdPartyErrc>(ev)) {
+      case MyThirdPartyErrc::SUCCESS:
+        return "Success";
+      case MyThirdPartyErrc::FATAL_ERROR:
+        return "Fatal error";
+      case MyThirdPartyErrc::NETWORK_TIMEOUT:
+        return "Network timeout";
+      default:
+        return "Unknown third-party error";
+    }
+  }
+};
+
+inline const MyThirdPartyErrorCategory& my_third_party_error_category() {
+  static const MyThirdPartyErrorCategory category;
+  return category;
+}
+
+}  // namespace rpc_core
+}  // namespace stdexe_ucx_runtime
+
+namespace std {
+template <>
+struct is_error_code_enum<stdexe_ucx_runtime::rpc_core::MyThirdPartyErrc>
+  : public true_type {};
+}  // namespace std
+
+namespace stdexe_ucx_runtime {
+namespace rpc_core {
+
+inline std::error_code make_error_code(MyThirdPartyErrc e) {
+  return {static_cast<int>(e), my_third_party_error_category()};
+}
+
+class RpcStatusTest : public ::testing::Test {};
+
+TEST_F(RpcStatusTest, DefaultConstruction) {
+  RpcStatus status;
+  std::error_code ec = status;
+  EXPECT_FALSE(ec);  // Default should be success (0)
+  EXPECT_EQ(ec.value(), 0);
+  EXPECT_EQ(ec, std::error_code(0, std::generic_category()));
+  EXPECT_EQ(&ec.category(), &std::generic_category());
+}
+
+TEST_F(RpcStatusTest, StdErrorCodeConversion) {
+  // Test with a generic error code
+  std::error_code generic_ec =
+    std::make_error_code(std::errc::invalid_argument);
+  RpcStatus status1(generic_ec);
+  std::error_code converted_generic_ec = status1;
+
+  EXPECT_EQ(converted_generic_ec, generic_ec);
+  EXPECT_EQ(
+    converted_generic_ec.value(),
+    static_cast<int>(std::errc::invalid_argument));
+  EXPECT_EQ(&converted_generic_ec.category(), &std::generic_category());
+
+  // Test with a custom RPC error code
+  std::error_code rpc_ec = make_error_code(RpcErrc::UNAVAILABLE);
+  RpcStatus status2(rpc_ec);
+  std::error_code converted_rpc_ec = status2;
+
+  EXPECT_EQ(converted_rpc_ec, rpc_ec);
+  EXPECT_EQ(converted_rpc_ec.value(), static_cast<int>(RpcErrc::UNAVAILABLE));
+  EXPECT_EQ(&converted_rpc_ec.category(), &rpc_error_category());
+}
+
+TEST_F(RpcStatusTest, ThirdPartyExtension) {
+  // 1. Register the custom third-party category.
+  // This would typically be done once during application startup.
+  RpcCategoryRegistry::get_instance().register_category(
+    my_third_party_error_category());
+
+  // 2. Create an error code using the third-party system.
+  std::error_code original_ec =
+    make_error_code(MyThirdPartyErrc::NETWORK_TIMEOUT);
+
+  // 3. Construct an RpcStatus from it.
+  RpcStatus status(original_ec);
+
+  // 4. Convert it back to a std::error_code.
+  std::error_code converted_ec = status;
+
+  // 5. Verify that the converted error code is identical to the original.
+  EXPECT_EQ(converted_ec, original_ec);
+  EXPECT_EQ(
+    converted_ec.value(), static_cast<int>(MyThirdPartyErrc::NETWORK_TIMEOUT));
+  EXPECT_EQ(&converted_ec.category(), &my_third_party_error_category());
+  EXPECT_EQ(converted_ec.message(), "Network timeout");
 }
 
 }  // namespace rpc_core

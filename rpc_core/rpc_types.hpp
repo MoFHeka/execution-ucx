@@ -22,10 +22,10 @@ limitations under the License.
 
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <type_traits>
 #include <utility>
 
+#include "rpc_core/rpc_status.hpp"
 #include "ucx_context/ucx_context_data.hpp"
 
 namespace stdexe_ucx_runtime {
@@ -290,44 +290,6 @@ struct RpcRequestHeader : public RpcMessageAccessor<RpcRequestHeader> {
   // CRTP interface method
   const data::vector<ParamMeta>& get_params_container() const { return params; }
   data::vector<ParamMeta>& get_params_container() { return params; }
-};
-
-// Custom status structure for serialization, compatible with std::error_code.
-struct RpcStatus {
-  // Default constructor for success status.
-  RpcStatus() = default;
-
-  // Constructor from std::error_code.
-  explicit RpcStatus(const std::error_code& ec)
-    : value(ec.value()), category_name(ec.category().name()) {}
-
-  // Assignment from std::error_code for convenience.
-  RpcStatus& operator=(const std::error_code& ec) {
-    value = ec.value();
-    category_name = data::string{ec.category().name()};
-    return *this;
-  }
-
-  // Implicit conversion to std::error_code.
-  operator std::error_code() const {
-    // For simplicity, we only handle the generic category, which is sufficient
-    // for most cross-platform RPC scenarios.
-    // In a real-world application, a more robust category mapping might be
-    // needed.
-    if (category_name == std::generic_category().name()) {
-      return {value, std::generic_category()};
-    }
-    // Return a generic error if the category is unknown.
-    return {value, std::generic_category()};
-  }
-
-  bool operator==(const std::error_code& other) const {
-    return value == other.value() && category_name == other.category().name();
-  }
-
-  int32_t value{0};
-  data::string category_name{std::generic_category().name()};
-  auto cista_members() const { return std::tie(value, category_name); }
 };
 
 // RPC response header
