@@ -25,7 +25,8 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 // Log levels
 /**
@@ -334,6 +335,7 @@ inline UcxLogger& operator<<(UcxLogger& logger, LogLevel level) {
 #define UCX_CTX_ERROR UCX_CONN_LOG << LogLevel::ERROR
 #define UCX_CTX_FATAL UCX_CONN_LOG << LogLevel::FATAL
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux
 
 #endif  // UCX_CONTEXT_UCX_CONTEXT_LOGGER_HPP_

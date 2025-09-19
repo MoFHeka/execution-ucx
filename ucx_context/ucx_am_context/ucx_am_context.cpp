@@ -34,7 +34,8 @@ limitations under the License.
 #include "ucx_context/ucx_connection.hpp"
 #include "ucx_context/ucx_context_logger.hpp"
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 static thread_local ucx_am_context* currentThreadContext;
 
@@ -640,7 +641,7 @@ std::error_code ucx_am_context::init_ucp_context(
 
   ucp_config_release(config);
 
-  return stdexe_ucx_runtime::make_error_code(status);
+  return eux::ucxx::make_error_code(status);
 }
 
 void ucx_am_context::destroy_ucp_context(ucp_context_h ucpContext) {
@@ -662,7 +663,7 @@ std::error_code ucx_am_context::init_ucp_worker() {
 
   ucs_status_t status =
     ucp_worker_create(ucpContext_, &worker_params, &ucpWorker_);
-  return stdexe_ucx_runtime::make_error_code(status);
+  return eux::ucxx::make_error_code(status);
 }
 
 std::error_code ucx_am_context::get_ucp_address(
@@ -672,7 +673,7 @@ std::error_code ucx_am_context::get_ucp_address(
   ucs_status_t status = ucp_worker_query(ucpWorker_, &attr);
   auto address = reinterpret_cast<const std::byte*>(attr.address);
   address_buffer.assign(address, address + attr.address_length);
-  return stdexe_ucx_runtime::make_error_code(status);
+  return eux::ucxx::make_error_code(status);
 }
 
 void ucx_am_context::set_setimer_action_event() {
@@ -715,7 +716,7 @@ std::error_code ucx_am_context::init(std::string_view name, bool forceInit) {
 
   if (ucpContextInitialized_ && !forceInit) {
     UCX_CTX_INFO << "UCP Context already initialized\n";
-    return stdexe_ucx_runtime::make_error_code(UCS_OK);
+    return eux::ucxx::make_error_code(UCS_OK);
   }
 
   /* Create context */
@@ -983,7 +984,7 @@ std::error_code ucx_am_context::register_ucx_memory(
   if (status != UCS_OK) {
     UCX_CTX_ERROR << "ucp_mem_map() failed: " << ucs_status_string(status);
   }
-  return stdexe_ucx_runtime::make_error_code(status);
+  return eux::ucxx::make_error_code(status);
 }
 
 void ucx_am_context::unregister_ucx_memory(ucp_mem_h& memh) {
@@ -1042,7 +1043,7 @@ ucx_am_context::progress_pending_conn_requests() {
     const auto epConnReq = std::move(epConnReqQueue_.front());
     auto [status, conn_id] = progress_conn_request(epConnReq);
     conn_id_status_vector.push_back(
-      {conn_id, stdexe_ucx_runtime::make_error_code(status)});
+      {conn_id, eux::ucxx::make_error_code(status)});
     epConnReqQueue_.pop_front();
   }
 
@@ -1624,4 +1625,5 @@ ucx_am_context::recv_iovec_buffer_sender tag_invoke(
     *scheduler.context_, am_desc_key, std::move(buffers)};
 }
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux

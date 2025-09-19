@@ -23,7 +23,8 @@ limitations under the License.
 #include <string>
 #include <system_error>
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 /**
  * @brief Error category for UCX status codes
@@ -94,7 +95,8 @@ inline const UcxErrorCategory& ucx_error_category() noexcept {
   return category;
 }
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux
 
 // Register UCX status codes with std::error_code system
 namespace std {
@@ -106,7 +108,8 @@ struct is_error_condition_enum<ucs_status_t> : public true_type {};
 }  // namespace std
 
 // Global make_error_code and make_error_condition functions for ADL
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 /**
  * @brief Global make_error_code function for ucs_status_t
@@ -134,15 +137,16 @@ inline std::error_condition make_error_condition(ucs_status_t status) noexcept {
   return std::error_condition(static_cast<int>(status), ucx_error_category());
 }
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux
 
 // Additional ADL support in global namespace
 inline std::error_code make_error_code(ucs_status_t status) noexcept {
-  return stdexe_ucx_runtime::make_error_code(status);
+  return eux::ucxx::make_error_code(status);
 }
 
 inline std::error_condition make_error_condition(ucs_status_t status) noexcept {
-  return stdexe_ucx_runtime::make_error_condition(status);
+  return eux::ucxx::make_error_condition(status);
 }
 
 #endif  // UCX_CONTEXT_UCX_STATUS_HPP_

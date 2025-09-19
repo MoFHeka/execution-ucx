@@ -26,8 +26,8 @@ limitations under the License.
 #include "ucx_context/ucx_context_data.hpp"
 #include "ucx_context/ucx_memory_resource.hpp"
 
-namespace stdexe_ucx_runtime {
-namespace rpc_core {
+namespace eux {
+namespace rpc {
 
 // Test fixture for RpcDispatcher
 class RpcDispatcherTest : public ::testing::Test {
@@ -526,17 +526,16 @@ inline const MyThirdPartyErrorCategory& my_third_party_error_category() {
   return category;
 }
 
-}  // namespace rpc_core
-}  // namespace stdexe_ucx_runtime
+}  // namespace rpc
+}  // namespace eux
 
 namespace std {
 template <>
-struct is_error_code_enum<stdexe_ucx_runtime::rpc_core::MyThirdPartyErrc>
-  : public true_type {};
+struct is_error_code_enum<eux::rpc::MyThirdPartyErrc> : public true_type {};
 }  // namespace std
 
-namespace stdexe_ucx_runtime {
-namespace rpc_core {
+namespace eux {
+namespace rpc {
 
 inline std::error_code make_error_code(MyThirdPartyErrc e) {
   return {static_cast<int>(e), my_third_party_error_category()};
@@ -600,5 +599,5 @@ TEST_F(RpcStatusTest, ThirdPartyExtension) {
   EXPECT_EQ(converted_ec.message(), "Network timeout");
 }
 
-}  // namespace rpc_core
-}  // namespace stdexe_ucx_runtime
+}  // namespace rpc
+}  // namespace eux

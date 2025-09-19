@@ -19,7 +19,7 @@
 *   **内存管理**：集成了 UCX 内存注册/反注册 (`ucx_memory_resource`)，简化了 RDMA 操作。
 *   **CUDA 支持**：无缝支持 CUDA 设备内存，可实现 GPU-Direct RDMA (GDR)。
 *   **可扩展性**：模块化设计，可以轻松扩展以支持新的协议或硬件。
-*   **通用 RPC 框架**：一个灵活的 RPC 模块 (`rpc_core`)，用于类型安全的跨进程函数调用，并支持服务发现。
+*   **通用 RPC 框架**：一个灵活的 RPC 模块 (`rpc`)，用于类型安全的跨进程函数调用，并支持服务发现。
 
 ## 核心概念
 
@@ -96,14 +96,14 @@
 #include "ucx_context/ucx_memory_resource.hpp"
 
 // 使用声明以提高代码清晰度
-using stdexe_ucx_runtime::accept_endpoint;
-using stdexe_ucx_runtime::active_message_bundle;
-using stdexe_ucx_runtime::connect_endpoint;
-using stdexe_ucx_runtime::connection_recv;
-using stdexe_ucx_runtime::connection_send;
-using stdexe_ucx_runtime::DefaultUcxMemoryResourceManager;
-using stdexe_ucx_runtime::ucx_am_context;
-using stdexe_ucx_runtime::UcxMemoryResourceManager;
+using eux::ucxx::accept_endpoint;
+using eux::ucxx::active_message_bundle;
+using eux::ucxx::connect_endpoint;
+using eux::ucxx::connection_recv;
+using eux::ucxx::connection_send;
+using eux::ucxx::DefaultUcxMemoryResourceManager;
+using eux::ucxx::ucx_am_context;
+using eux::ucxx::UcxMemoryResourceManager;
 using unifex::task;
 
 // 辅助函数：创建套接字地址
@@ -318,7 +318,7 @@ cc_binary(
         *   `buffer`: 用于接收数据的 `UcxBuffer&&` 或 `UcxBufferVec&&`。一个重载版本接受 `ucx_memory_type` 以在内部自分配缓冲区。
     *   **返回值**: 成功时返回一个生成 `active_message_buffer_bundle`（对于 `UcxBuffer`）或 `active_message_iovec_buffer_bundle`（对于 `UcxBufferVec`）的 sender。
 
-## RPC 框架 (`rpc_core`)
+## RPC 框架 (`rpc`)
 
 在底层的 Active Message API 之上，`execution-ucx` 提供了一个高级的、类型安全的 RPC 框架。这使得开发者可以在服务端注册 C++ 函数，并像调用本地函数一样从客户端调用它们，框架会自动处理参数和返回值的序列化。此外，它还包含一个服务发现机制。
 
@@ -338,14 +338,14 @@ cc_binary(
 #include "rpc_core/rpc_dispatcher.hpp"
 
 // 使用声明以提高代码清晰度
-using stdexe_ucx_runtime::rpc_core::function_id_t;
-using stdexe_ucx_runtime::rpc_core::ParamMeta;
-using stdexe_ucx_runtime::rpc_core::ParamType;
-using stdexe_ucx_runtime::rpc_core::PrimitiveValue;
-using stdexe_ucx_runtime::rpc_core::RpcDispatcher;
-using stdexe_ucx_runtime::rpc_core::RpcFunctionSignature;
-using stdexe_ucx_runtime::rpc_core::RpcRequestHeader;
-using stdexe_ucx_runtime::rpc_core::session_id_t;
+using eux::rpc::function_id_t;
+using eux::rpc::ParamMeta;
+using eux::rpc::ParamType;
+using eux::rpc::PrimitiveValue;
+using eux::rpc::RpcDispatcher;
+using eux::rpc::RpcFunctionSignature;
+using eux::rpc::RpcRequestHeader;
+using eux::rpc::session_id_t;
 namespace data = cista::offset;
 
 // 一个将通过 RPC 暴露的简单函数
@@ -431,7 +431,7 @@ cc_binary(
     name = "rpc_example",
     srcs = ["rpc_example.cpp"],
     deps = [
-        "//rpc_core",
+        "//rpc",
     ],
 )
 ```

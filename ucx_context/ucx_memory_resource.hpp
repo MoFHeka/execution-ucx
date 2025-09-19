@@ -28,7 +28,8 @@ limitations under the License.
 
 #include "ucx_context/ucx_context_def.h"
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 /**
  * @brief Base class for managing different types of memory resources in UCX
@@ -187,6 +188,7 @@ class DefaultUcxMemoryResourceManager : public UcxMemoryResourceManager {
     const void* src, size_t count) override;
 };
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux
 
 #endif  // UCX_MEMORY_RESOURCE_HPP_

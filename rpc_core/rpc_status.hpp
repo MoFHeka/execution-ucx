@@ -25,8 +25,8 @@ limitations under the License.
 
 #include "ucx_context/ucx_context_data.hpp"
 
-namespace stdexe_ucx_runtime {
-namespace rpc_core {
+namespace eux {
+namespace rpc {
 
 namespace data = cista::offset;
 
@@ -194,13 +194,12 @@ struct RpcStatus {
   auto cista_members() const { return std::tie(value, category_name); }
 };
 
-}  // namespace rpc_core
-}  // namespace stdexe_ucx_runtime
+}  // namespace rpc
+}  // namespace eux
 
 namespace std {
 template <>
-struct is_error_code_enum<stdexe_ucx_runtime::rpc_core::RpcErrc>
-  : public true_type {};
+struct is_error_code_enum<eux::rpc::RpcErrc> : public true_type {};
 }  // namespace std
 
 #endif  // RPC_CORE_RPC_STATUS_HPP_
