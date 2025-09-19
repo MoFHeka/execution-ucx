@@ -23,6 +23,9 @@ limitations under the License.
 #include <iostream>
 #include <memory>
 
+namespace eux {
+namespace ucxx {
+
 // Forward declaration
 class UcxAutoDeviceContext;
 
@@ -140,5 +143,8 @@ class UcxAutoDefaultDeviceContext : public UcxAutoDeviceContext {
     return op;
   }
 };
+
+}  // namespace ucxx
+}  // namespace eux
 
 #endif  // UCX_CONTEXT_UCX_DEVICE_CONTEXT_HPP_

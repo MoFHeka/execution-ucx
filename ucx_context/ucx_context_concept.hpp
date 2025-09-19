@@ -34,7 +34,8 @@ limitations under the License.
 #include "ucx_context/ucx_context_data.hpp"
 #include "ucx_context/ucx_memory_resource.hpp"
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 using unifex::is_nothrow_tag_invocable_v;
 using unifex::remove_cvref_t;
@@ -219,7 +220,7 @@ using conn_pair_t = std::pair<uint64_t, std::reference_wrapper<UcxConnection>>;
  * I/O operations.
  *
  * A type T satisfies this trait if it is `conn_pair_t` or
- * `stdexe_ucx_runtime::UcxConnection`.
+ * `eux::ucxx::UcxConnection`.
  * @tparam T The type to check.
  */
 template <typename T>
@@ -549,7 +550,8 @@ inline constexpr struct handle_error_cpo final {
   }
 } handle_error_connection{};
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux
 
 #include <unifex/detail/epilogue.hpp>
 

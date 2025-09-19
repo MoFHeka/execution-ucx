@@ -30,7 +30,8 @@ limitations under the License.
 #include "ucx_context/lock_free_queue.hpp"
 #include "ucx_context/ucx_connection.hpp"
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 // UCX connection type
 using conn_pair_t =
@@ -114,6 +115,7 @@ class ConnectionManager {
     std::uint64_t conn_id, TargetContainer& target_container, MapType& map);
 };
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux
 
 #endif  // UCX_CONNECTION_MANAGER_HPP_

@@ -25,6 +25,9 @@ limitations under the License.
 #include "ucx_context/cuda/ucx_cuda_macro.h"
 #include "ucx_context/ucx_device_context.hpp"
 
+namespace eux {
+namespace ucxx {
+
 class UcxAutoCudaDeviceContext : public UcxAutoDeviceContext {
  public:
   explicit UcxAutoCudaDeviceContext(CUcontext cuda_context)
@@ -70,5 +73,8 @@ class UcxAutoCudaDeviceContext : public UcxAutoDeviceContext {
  private:
   CUcontext cuda_context_;
 };
+
+}  // namespace ucxx
+}  // namespace eux
 
 #endif  // UCX_CONTEXT_CUDA_UCX_CUDA_CONTEXT_HPP_

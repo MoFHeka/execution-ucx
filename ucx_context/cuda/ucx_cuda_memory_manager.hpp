@@ -30,7 +30,8 @@ Be careful, please use your own memory manager instead of this class!
 This class is only for testing purpose!
 */
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 /**
  * @brief CUDA-specific memory resource manager implementation
@@ -152,6 +153,7 @@ class UcxCudaMemoryResourceManager : public UcxMemoryResourceManager {
   }
 };
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux
 
 #endif  // UCX_CONTEXT_CUDA_UCX_CUDA_MEMORY_MANAGER_HPP_

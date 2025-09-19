@@ -28,8 +28,8 @@ limitations under the License.
 #include "rpc_core/rpc_status.hpp"
 #include "ucx_context/ucx_context_data.hpp"
 
-namespace stdexe_ucx_runtime {
-namespace rpc_core {
+namespace eux {
+namespace rpc {
 
 namespace data = cista::offset;
 
@@ -313,7 +313,7 @@ struct RpcResponseHeader : public RpcMessageAccessor<RpcResponseHeader> {
   data::vector<ParamMeta>& get_params_container() { return results; }
 };
 
-}  // namespace rpc_core
-}  // namespace stdexe_ucx_runtime
+}  // namespace rpc
+}  // namespace eux
 
 #endif  // MEEPO_EMBEDDING_FRAMEWORK_RPC_TYPES_HPP_

@@ -24,7 +24,8 @@ limitations under the License.
 #include <typeinfo>
 #include <utility>
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 ////////////////////////////////////////////////////////////
 // Connection manager
@@ -212,4 +213,5 @@ void ConnectionManager::remove_disconnected_connections() {
   }
 }
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux

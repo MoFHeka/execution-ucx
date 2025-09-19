@@ -24,7 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-namespace stdexe_ucx_runtime {
+namespace eux {
 
 /**
  * @brief A high-performance lock-free queue implementation
@@ -168,6 +168,6 @@ class LockFreeQueue {
   }
 };
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace eux
 
 #endif  // UCX_CONTEXT_LOCK_FREE_QUEUE_HPP_

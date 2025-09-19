@@ -31,8 +31,8 @@ limitations under the License.
 
 #include "rpc_core/rpc_types.hpp"
 
-namespace stdexe_ucx_runtime {
-namespace rpc_core {
+namespace eux {
+namespace rpc {
 
 #if WITH_CISTA_VERSION && WITH_CISTA_INTEGRITY
 constexpr auto const MODE =  // opt. versioning + check sum
@@ -623,7 +623,7 @@ class RpcDispatcher {
   }
 };
 
-}  // namespace rpc_core
-}  // namespace stdexe_ucx_runtime
+}  // namespace rpc
+}  // namespace eux
 
 #endif  // RPC_CORE_RPC_DISPATCHER_HPP_

@@ -25,7 +25,8 @@
 #include "ucx_context/ucx_context_def.h"
 #include "ucx_context/ucx_memory_resource.hpp"
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 /**
  * @class UcxBuffer
@@ -732,6 +733,7 @@ class UcxAmIovec {
   std::atomic<bool> own_buffer_;
 };
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux
 
 #endif  // UCX_CONTEXT_UCX_CONTEXT_DATA_HPP_

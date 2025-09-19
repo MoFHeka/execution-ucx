@@ -42,13 +42,13 @@ limitations under the License.
 #include "ucx_context/ucx_memory_resource.hpp"
 #include "ucx_context/ucx_status.hpp"
 
-using stdexe_ucx_runtime::connect_endpoint;
-using stdexe_ucx_runtime::connection_recv;
-using stdexe_ucx_runtime::connection_send;
-using stdexe_ucx_runtime::DefaultUcxMemoryResourceManager;
-using stdexe_ucx_runtime::ucx_am_context;
-using stdexe_ucx_runtime::UcxAmData;
-using stdexe_ucx_runtime::UcxMemoryResourceManager;
+using eux::ucxx::connect_endpoint;
+using eux::ucxx::connection_recv;
+using eux::ucxx::connection_send;
+using eux::ucxx::DefaultUcxMemoryResourceManager;
+using eux::ucxx::ucx_am_context;
+using eux::ucxx::UcxAmData;
+using eux::ucxx::UcxMemoryResourceManager;
 
 using unifex::defer;
 using unifex::finally;

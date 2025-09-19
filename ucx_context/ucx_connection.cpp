@@ -34,7 +34,8 @@ limitations under the License.
 #include <tuple>
 #include <utility>
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 /*
 TODO(He Jia): For now only support Active Message.
@@ -716,4 +717,5 @@ const std::string UcxConnection::sockaddr_str(
   return buf;
 }
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux

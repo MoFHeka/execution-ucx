@@ -80,7 +80,8 @@ limitations under the License.
 // template library's snake_case, this project maintains consistency with the
 // standard template style only within ucx_am_context.
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 using unifex::atomic_intrusive_queue;
 using unifex::blocking_kind;
@@ -1250,8 +1251,7 @@ class ucx_am_context::recv_sender {
         }
         unifex::set_error(
           std::move(self.receiver_),
-          stdexe_ucx_runtime::make_error_code(
-            static_cast<ucs_status_t>(self.result_)));
+          eux::ucxx::make_error_code(static_cast<ucs_status_t>(self.result_)));
       }
     }
 
@@ -1577,8 +1577,7 @@ class ucx_am_context::recv_buffer_sender_t {
       } else {
         unifex::set_error(
           std::move(self.receiver_),
-          stdexe_ucx_runtime::make_error_code(
-            static_cast<ucs_status_t>(self.result_)));
+          eux::ucxx::make_error_code(static_cast<ucs_status_t>(self.result_)));
       }
     }
 
@@ -1921,7 +1920,7 @@ class ucx_am_context::recv_header_sender {
           // TODO(He Jia): UCS_ERR_LAST is not a valid error code
           unifex::set_error(
             std::move(self.receiver_),
-            stdexe_ucx_runtime::make_error_code(UCS_ERR_LAST));
+            eux::ucxx::make_error_code(UCS_ERR_LAST));
         }
       } else if (self.result_ == UCS_ERR_CANCELED) {
         UNIFEX_TRY {
@@ -1950,8 +1949,7 @@ class ucx_am_context::recv_header_sender {
         }
         unifex::set_error(
           std::move(self.receiver_),
-          stdexe_ucx_runtime::make_error_code(
-            static_cast<ucs_status_t>(self.result_)));
+          eux::ucxx::make_error_code(static_cast<ucs_status_t>(self.result_)));
       }
     }
 
@@ -2250,8 +2248,7 @@ class ucx_am_context::send_sender_t {
       } else {
         unifex::set_error(
           std::move(self.receiver_),
-          stdexe_ucx_runtime::make_error_code(
-            static_cast<ucs_status_t>(self.result_)));
+          eux::ucxx::make_error_code(static_cast<ucs_status_t>(self.result_)));
       }
     }
 
@@ -2994,8 +2991,7 @@ class ucx_am_context::dispatch_connection_error_sender {
       } else {
         unifex::set_error(
           std::move(self.receiver_),
-          stdexe_ucx_runtime::make_error_code(
-            static_cast<ucs_status_t>(self.result_)));
+          eux::ucxx::make_error_code(static_cast<ucs_status_t>(self.result_)));
       }
     }
 
@@ -3073,7 +3069,7 @@ class ucx_am_context::dispatch_connection_error_sender {
     connection_error_handler_ = [handler = std::move(connection_error_handler)](
                                   std::uint64_t conn_id,
                                   ucs_status_t status) -> bool {
-      return handler(conn_id, stdexe_ucx_runtime::make_error_code(status));
+      return handler(conn_id, eux::ucxx::make_error_code(status));
     };
   }
 
@@ -3264,8 +3260,7 @@ class ucx_am_context::connect_sender {
       } else {
         unifex::set_error(
           std::move(self.receiver_),
-          stdexe_ucx_runtime::make_error_code(
-            static_cast<ucs_status_t>(self.result_)));
+          eux::ucxx::make_error_code(static_cast<ucs_status_t>(self.result_)));
       }
     }
 
@@ -3553,8 +3548,7 @@ class ucx_am_context::accept_sender {
       } else {
         unifex::set_error(
           std::move(self.receiver_),
-          stdexe_ucx_runtime::make_error_code(
-            static_cast<ucs_status_t>(self.result_)));
+          eux::ucxx::make_error_code(static_cast<ucs_status_t>(self.result_)));
       }
     }
 
@@ -3722,8 +3716,7 @@ class ucx_am_context::accept_connection {
       void start() noexcept {
         if (listener_status_ != UCS_OK) {
           unifex::set_error(
-            std::move(receiver_),
-            stdexe_ucx_runtime::make_error_code(listener_status_));
+            std::move(receiver_), eux::ucxx::make_error_code(listener_status_));
         } else {
           start_accept();
         }
@@ -3920,6 +3913,7 @@ class ucx_am_context::accept_connection {
   size_t addrlen_;
 };
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux
 
 #endif  // UCX_CONTEXT_UCX_AM_CONTEXT_UCX_AM_CONTEXT_HPP_

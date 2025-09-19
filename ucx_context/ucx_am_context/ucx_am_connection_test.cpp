@@ -30,6 +30,7 @@ limitations under the License.
 #include <future>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -38,7 +39,8 @@ limitations under the License.
 
 static constexpr size_t RNDV_THRESHOLD = 8192;
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 namespace test {
 
 // Test fixture for UcxConnection tests
@@ -161,9 +163,10 @@ TEST_F(UcxConnectionTest, Connect) {
   // In a real test environment, we would need a server to accept the connection
   // For now, we just check that the callback was called
   EXPECT_TRUE(connect_callback_called);
-  auto reset_fn = [&conn]() { conn.reset(nullptr); };
-  EXPECT_DEATH(reset_fn(), ".*");
-  conn->disconnect();
+  testing::internal::CaptureStderr();
+  conn.reset(nullptr);
+  std::string output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(output.find("closing ep") != std::string::npos);
 }
 
 // Test sending and receiving active messages
@@ -1068,4 +1071,5 @@ TEST_F(UcxConnectionTest, SendIovRecvAmLargeData) {
 }
 
 }  // namespace test
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux

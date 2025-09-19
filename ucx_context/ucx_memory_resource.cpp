@@ -20,7 +20,8 @@ limitations under the License.
 #include <stdexcept>
 #include <utility>
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 // Default constructor initializes all memory resources to default resource
 // and memcpy functions to std::memcpy
@@ -107,4 +108,5 @@ void* DefaultUcxMemoryResourceManager::memcpy(
   return get_memcpy_fn(dest_type, src_type)(dest, src, count);
 }
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux

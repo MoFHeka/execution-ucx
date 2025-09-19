@@ -73,27 +73,29 @@ limitations under the License.
 #endif
 #include "ucx_context/ucx_am_context/ucx_am_context_test_helper.h"
 
-using stdexe_ucx_runtime::accept_endpoint;
-using stdexe_ucx_runtime::connect_endpoint;
-using stdexe_ucx_runtime::connection_recv;
-using stdexe_ucx_runtime::connection_recv_buffer;
-using stdexe_ucx_runtime::connection_recv_header;
-using stdexe_ucx_runtime::connection_send;
-using stdexe_ucx_runtime::DefaultUcxMemoryResourceManager;
+using eux::ucxx::accept_endpoint;
+using eux::ucxx::active_message_bundle;
+using eux::ucxx::connect_endpoint;
+using eux::ucxx::connection_recv;
+using eux::ucxx::connection_recv_buffer;
+using eux::ucxx::connection_recv_header;
+using eux::ucxx::connection_send;
+using eux::ucxx::DefaultUcxMemoryResourceManager;
+using eux::ucxx::handle_error_connection;
+using eux::ucxx::ucx_am_context;
+using eux::ucxx::UcxAmData;
+using eux::ucxx::UcxAmDesc;
+using eux::ucxx::UcxAmIovec;
+using eux::ucxx::UcxAutoDeviceContext;
+using eux::ucxx::UcxBuffer;
+using eux::ucxx::UcxBufferVec;
+using eux::ucxx::UcxConnection;
+using eux::ucxx::UcxHeader;
+using eux::ucxx::UcxMemoryResourceManager;
 #if CUDA_ENABLED
-using stdexe_ucx_runtime::UcxCudaMemoryResourceManager;
+using eux::ucxx::UcxAutoCudaDeviceContext;
+using eux::ucxx::UcxCudaMemoryResourceManager;
 #endif
-using stdexe_ucx_runtime::active_message_bundle;
-using stdexe_ucx_runtime::handle_error_connection;
-using stdexe_ucx_runtime::ucx_am_context;
-using stdexe_ucx_runtime::UcxAmData;
-using stdexe_ucx_runtime::UcxAmDesc;
-using stdexe_ucx_runtime::UcxAmIovec;
-using stdexe_ucx_runtime::UcxBuffer;
-using stdexe_ucx_runtime::UcxBufferVec;
-using stdexe_ucx_runtime::UcxConnection;
-using stdexe_ucx_runtime::UcxHeader;
-using stdexe_ucx_runtime::UcxMemoryResourceManager;
 
 using unifex::current_scheduler;
 using unifex::defer;
@@ -221,7 +223,7 @@ class UcxContextCUDARunner : public UcxContextRunner {
     context_.reset(new ucx_am_context(
       *memoryResource_, ucp_context_, timeout_,
       /*connectionHandleError=*/!use_ucp_address_,
-      /*clientId=*/stdexe_ucx_runtime::CLIENT_ID_UNDEFINED,
+      /*clientId=*/eux::ucxx::CLIENT_ID_UNDEFINED,
       std::move(auto_cuda_context_)));
     thread_ = std::thread([this] {
       if (use_ucp_address_) {

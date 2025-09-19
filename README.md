@@ -19,7 +19,7 @@ Its design goal is to provide an efficient, flexible, and composable asynchronou
 *   **Memory Management**: Integrated UCX memory registration/deregistration (`ucx_memory_resource`), simplifying RDMA operations.
 *   **CUDA Support**: Seamless support for CUDA device memory, enabling GPU-Direct RDMA (GDR).
 *   **Extensibility**: Modular design allows for easy extension to support new protocols or hardware.
-*   **General-Purpose RPC**: A flexible RPC module (`rpc_core`) for type-safe, cross-process function calls, supporting service discovery.
+*   **General-Purpose RPC**: A flexible RPC module (`rpc`) for type-safe, cross-process function calls, supporting service discovery.
 
 ## Core Concepts
 
@@ -96,14 +96,14 @@ For more details, please refer to the [test code](ucx_context/ucx_am_context_tes
 #include "ucx_context/ucx_memory_resource.hpp"
 
 // Using declarations for clarity
-using stdexe_ucx_runtime::accept_endpoint;
-using stdexe_ucx_runtime::active_message_bundle;
-using stdexe_ucx_runtime::connect_endpoint;
-using stdexe_ucx_runtime::connection_recv;
-using stdexe_ucx_runtime::connection_send;
-using stdexe_ucx_runtime::DefaultUcxMemoryResourceManager;
-using stdexe_ucx_runtime::ucx_am_context;
-using stdexe_ucx_runtime::UcxMemoryResourceManager;
+using eux::ucxx::accept_endpoint;
+using eux::ucxx::active_message_bundle;
+using eux::ucxx::connect_endpoint;
+using eux::ucxx::connection_recv;
+using eux::ucxx::connection_send;
+using eux::ucxx::DefaultUcxMemoryResourceManager;
+using eux::ucxx::ucx_am_context;
+using eux::ucxx::UcxMemoryResourceManager;
 using unifex::task;
 
 // Helper to create a socket address
@@ -319,7 +319,7 @@ This section details the primary APIs provided by `ucx_am_context` for network c
         *   `buffer`: A `UcxBuffer&&` or `UcxBufferVec&&` to receive the data. An overload takes a `ucx_memory_type` to allocate the buffer internally.
     *   **Returns**: A sender producing an `active_message_buffer_bundle` (for `UcxBuffer`) or `active_message_iovec_buffer_bundle` (for `UcxBufferVec`) on success.
 
-## RPC Framework (`rpc_core`)
+## RPC Framework (`rpc`)
 
 On top of the low-level Active Message API, `execution-ucx` provides a high-level, type-safe RPC framework. This allows developers to register C++ functions on a server and call them from a client as if they were local, with automatic serialization of arguments and return values. It also includes a service discovery mechanism.
 
@@ -339,14 +339,14 @@ This example demonstrates an end-to-end RPC workflow: a server registers a funct
 #include "rpc_core/rpc_dispatcher.hpp"
 
 // Use declarations for clarity
-using stdexe_ucx_runtime::rpc_core::function_id_t;
-using stdexe_ucx_runtime::rpc_core::ParamMeta;
-using stdexe_ucx_runtime::rpc_core::ParamType;
-using stdexe_ucx_runtime::rpc_core::PrimitiveValue;
-using stdexe_ucx_runtime::rpc_core::RpcDispatcher;
-using stdexe_ucx_runtime::rpc_core::RpcFunctionSignature;
-using stdexe_ucx_runtime::rpc_core::RpcRequestHeader;
-using stdexe_ucx_runtime::rpc_core::session_id_t;
+using eux::rpc::function_id_t;
+using eux::rpc::ParamMeta;
+using eux::rpc::ParamType;
+using eux::rpc::PrimitiveValue;
+using eux::rpc::RpcDispatcher;
+using eux::rpc::RpcFunctionSignature;
+using eux::rpc::RpcRequestHeader;
+using eux::rpc::session_id_t;
 namespace data = cista::offset;
 
 // A simple function to be exposed via RPC
@@ -434,7 +434,7 @@ cc_binary(
     name = "rpc_example",
     srcs = ["rpc_example.cpp"],
     deps = [
-        "//rpc_core",
+        "//rpc",
     ],
 )
 ```

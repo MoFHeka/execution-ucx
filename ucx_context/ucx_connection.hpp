@@ -34,7 +34,8 @@ limitations under the License.
 #include "ucx_context/ucx_context_def.h"
 #include "ucx_context/ucx_context_logger.hpp"
 
-namespace stdexe_ucx_runtime {
+namespace eux {
+namespace ucxx {
 
 /*
 TODO(He Jia): For now only support Active Message.
@@ -548,6 +549,7 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
   bool is_rdma_transport_available_ = false;
 };
 
-}  // namespace stdexe_ucx_runtime
+}  // namespace ucxx
+}  // namespace eux
 
 #endif  // UCX_CONTEXT_UCX_CONNECTION_HPP_
