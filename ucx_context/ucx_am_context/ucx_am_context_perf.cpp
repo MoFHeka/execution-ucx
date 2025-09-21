@@ -38,7 +38,6 @@ limitations under the License.
 #include <unifex/then.hpp>
 
 #include "ucx_context/ucx_connection.hpp"
-#include "ucx_context/ucx_context_def.h"
 #include "ucx_context/ucx_memory_resource.hpp"
 #include "ucx_context/ucx_status.hpp"
 
@@ -153,6 +152,20 @@ void print_statistics(
             << std::endl;
 }
 
+void print_throughput_statistics(
+  int total_messages, double duration_seconds, size_t msg_size) {
+  double qps = total_messages / duration_seconds;
+  double mbps = (total_messages * msg_size) / duration_seconds / (1024 * 1024);
+
+  std::cout << "===== Throughput Test Results (msg size: " << msg_size
+            << " bytes) =====" << std::endl;
+  std::cout << "Total Messages: " << total_messages << std::endl;
+  std::cout << "Duration (seconds): " << duration_seconds << std::endl;
+  std::cout << "QPS (queries per second): " << qps << std::endl;
+  std::cout << "Throughput (MB/s): " << mbps << std::endl;
+  std::cout << "======================================" << std::endl;
+}
+
 void echo_server_task(
   const ucx_am_context::scheduler& scheduler,
   std::vector<std::byte>& client_ucp_address, int warmup_iters, int iters) {
@@ -190,6 +203,70 @@ void echo_server_task(
   //       })
   //     | sync_wait();
   // }
+}
+
+void receiver_task(
+  const ucx_am_context::scheduler& scheduler,
+  std::vector<std::byte>& client_ucp_address, int warmup_iters, int iters) {
+  [[maybe_unused]] auto conn_id =
+    sync_wait(connect_endpoint(scheduler, client_ucp_address)).value();
+
+  // Warm-up
+  for (int i = 0; i < warmup_iters; ++i) {
+    connection_recv(scheduler, ucx_memory_type::HOST) | sync_wait();
+  }
+
+  // Measurement
+  defer([&] {
+    return let_value(
+      connection_recv(scheduler, ucx_memory_type::HOST),
+      [&](auto&&) { return unifex::just(); });
+  }) | repeat_effect_until([iters]() mutable {
+    if (iters == 1) return true;  // 1 is the last iteration then end
+    --iters;
+    return false;
+  }) | sync_wait();
+}
+
+std::pair<int, double> sender_task(
+  const ucx_am_context::scheduler& scheduler,
+  std::vector<std::byte>& server_ucp_address, inplace_stop_source& stop_source,
+  size_t header_size, size_t msg_size, int warmup_iters, int iters) {
+  auto conn_id =
+    sync_wait(connect_endpoint(scheduler, server_ucp_address)).value();
+
+  std::vector<char> send_header(header_size, 'h');
+  std::vector<char> send_buffer(msg_size, 'a');
+  ucx_am_data send_data{};
+  send_data.buffer.data = send_buffer.data();
+  send_data.buffer.size = send_buffer.size();
+  send_data.buffer_type = ucx_memory_type::HOST;
+  send_data.header.data = send_header.data();
+  send_data.header.size = send_header.size();
+
+  // Warm-up
+  for (int i = 0; i < warmup_iters; ++i) {
+    connection_send(scheduler, conn_id, send_data) | sync_wait();
+  }
+
+  // Measurement
+  std::chrono::microseconds total_duration{0};
+  defer([&]() {
+    auto start_time = std::chrono::high_resolution_clock::now();
+    return connection_send(scheduler, conn_id, send_data)
+           | then([&, start_time = std::move(start_time)] {
+               auto end_time = std::chrono::high_resolution_clock::now();
+               total_duration +=
+                 std::chrono::duration_cast<std::chrono::microseconds>(
+                   end_time - start_time);
+             });
+  }) | repeat_effect_until([iters]() mutable {
+    if (iters == 1) return true;  // 1 is the last iteration then end
+    --iters;
+    return false;
+  }) | sync_wait();
+
+  return std::make_pair(iters, total_duration.count() / 1000000.0);  // seconds
 }
 
 template <typename Sender>
@@ -268,6 +345,7 @@ std::vector<double> echo_client_task(
 
 int main(int argc, char** argv) {
   // Config
+  std::string test_type = "latency";
   size_t header_size = 8;
   size_t msg_size = 64;
   int warmup_iters = 1;
@@ -275,7 +353,9 @@ int main(int argc, char** argv) {
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if ((arg == "--header_size" || arg == "-H") && i + 1 < argc) {
+    if ((arg == "--test_type" || arg == "-t") && i + 1 < argc) {
+      test_type = argv[++i];
+    } else if ((arg == "--header_size" || arg == "-H") && i + 1 < argc) {
       header_size = static_cast<size_t>(std::stoul(argv[++i]));
     } else if ((arg == "--msg_size" || arg == "-M") && i + 1 < argc) {
       msg_size = static_cast<size_t>(std::stoul(argv[++i]));
@@ -285,7 +365,8 @@ int main(int argc, char** argv) {
       iters = std::stoi(argv[++i]);
     } else if (arg == "--help" || arg == "-h") {
       std::cout << "Usage: " << argv[0]
-                << " [--header_size N|-H N] [--msg_size N|-M N] "
+                << " [--test_type latency|throughput|-t latency|throughput] "
+                   "[--header_size N|-H N] [--msg_size N|-M N] "
                    "[--warmup_iters N|-w N] [--iters N|-i N]\n";
       std::exit(0);
     }
@@ -304,26 +385,55 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  inplace_stop_source stop_source;
-  std::vector<double> latencies;
+  if (test_type == "latency") {
+    // Run latency test
+    inplace_stop_source stop_source;
+    std::vector<double> latencies;
 
-  std::thread server_thread([&]() {
-    echo_server_task(
-      server_runner.get_context().get_scheduler(), client_addr, warmup_iters,
-      iters);
-  });
+    std::thread server_thread([&]() {
+      echo_server_task(
+        server_runner.get_context().get_scheduler(), client_addr, warmup_iters,
+        iters);
+    });
 
-  std::thread client_thread([&]() {
-    latencies = echo_client_task(
-      client_runner.get_context().get_scheduler(), server_addr, stop_source,
-      header_size, msg_size, warmup_iters, iters);
-  });
+    std::thread client_thread([&]() {
+      latencies = echo_client_task(
+        client_runner.get_context().get_scheduler(), server_addr, stop_source,
+        header_size, msg_size, warmup_iters, iters);
+    });
 
-  client_thread.join();
-  server_thread.join();
+    client_thread.join();
+    server_thread.join();
 
-  print_statistics(
-    latencies, msg_size, 0.5);  // factor = 0.5 to convert to half route time
+    print_statistics(
+      latencies, msg_size, 0.5);  // factor = 0.5 to convert to half route time
+  } else if (test_type == "throughput") {
+    // Run throughput test
+    inplace_stop_source stop_source;
+    std::pair<int, double> result;
+
+    std::thread receiver_thread([&]() {
+      receiver_task(
+        server_runner.get_context().get_scheduler(), client_addr, warmup_iters,
+        iters);
+    });
+
+    std::thread sender_thread([&]() {
+      result = sender_task(
+        client_runner.get_context().get_scheduler(), server_addr, stop_source,
+        header_size, msg_size, warmup_iters, iters);
+    });
+
+    sender_thread.join();
+    receiver_thread.join();
+
+    print_throughput_statistics(
+      result.first, result.second, (header_size + msg_size));
+  } else {
+    std::cerr << "Invalid test type: " << test_type
+              << ". Use 'latency' or 'throughput'" << std::endl;
+    return 1;
+  }
 
   return 0;
 }
