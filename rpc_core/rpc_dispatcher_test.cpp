@@ -58,12 +58,41 @@ int sum_vec(const data::vector<int32_t>& vec) {
 }
 
 // A test function that takes a UcxBufferVec by value (move) and processes it.
-uint64_t process_buffer_vec(UcxBufferVec in_vec) {
+uint64_t process_buffer_vec(eux::ucxx::UcxBufferVec in_vec) {
   uint64_t total_size = 0;
   for (const auto& buf : in_vec) {
     total_size += buf.size;
   }
   return total_size;
+}
+
+TensorMetadata make_test_tensor_meta() {
+  TensorMetadata meta{};
+  meta.device = DLDevice{kDLCPU, 0};
+  meta.ndim = 2;
+  meta.dtype = DLDataType{kDLFloat, 32, 1};
+  meta.byte_offset = 16;
+  meta.shape.emplace_back(2);
+  meta.shape.emplace_back(3);
+  meta.strides.emplace_back(3);
+  meta.strides.emplace_back(1);
+  return meta;
+}
+
+TensorMetadata mutate_tensor_meta(TensorMetadata meta) {
+  for (auto& dim : meta.shape) {
+    dim += 1;
+  }
+  meta.byte_offset += 8;
+  return meta;
+}
+
+int64_t tensor_meta_numel(const TensorMetadata& meta) {
+  int64_t total = 1;
+  for (auto dim : meta.shape) {
+    total *= dim;
+  }
+  return total;
 }
 
 struct MyContext {
@@ -338,6 +367,10 @@ TEST_F(RpcDispatcherTest, TypeMismatch) {
     response_header.status, std::make_error_code(std::errc::invalid_argument));
 }
 
+int64_t tensor_meta_volume(const TensorMetadata& meta) {
+  return tensor_meta_numel(meta);
+}
+
 TEST_F(RpcDispatcherTest, GetFunctionSignature) {
   dispatcher.register_function(
     function_id_t{1}, &add, data::string("add_func"));
@@ -345,6 +378,8 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
     function_id_t{2}, &no_op, data::string("no_op_func"));
   dispatcher.register_function(
     function_id_t{6}, &get_context_value, data::string("get_context"));
+  dispatcher.register_function(
+    function_id_t{11}, &tensor_meta_volume, data::string("tensor_meta_volume"));
 
   // Test signature for 'add'
   auto add_sig_opt = dispatcher.get_signature(function_id_t{1});
@@ -378,13 +413,23 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
   EXPECT_EQ(ctx_sig.param_types.size(), 0);  // Context is not a parameter
   EXPECT_EQ(ctx_sig.return_type, ParamType::PRIMITIVE_INT32);
 
+  // Test signature for 'tensor_meta_volume'
+  auto tensor_sig_opt = dispatcher.get_signature(function_id_t{11});
+  ASSERT_TRUE(tensor_sig_opt.has_value());
+  auto& tensor_sig = tensor_sig_opt.value();
+  EXPECT_EQ(tensor_sig.id.v_, 11);
+  EXPECT_EQ(tensor_sig.function_name, data::string("tensor_meta_volume"));
+  ASSERT_EQ(tensor_sig.param_types.size(), 1);
+  EXPECT_EQ(tensor_sig.param_types[0], ParamType::TENSOR_META);
+  EXPECT_EQ(tensor_sig.return_type, ParamType::PRIMITIVE_INT64);
+
   // Test getting all signatures
   auto serialized_sigs = dispatcher.get_all_signatures();
   auto deserialized_sigs =
     cista::deserialize<data::vector<RpcFunctionSignature>>(serialized_sigs);
 
   ASSERT_NE(deserialized_sigs, nullptr);
-  EXPECT_EQ(deserialized_sigs->size(), 3);
+  EXPECT_EQ(deserialized_sigs->size(), 4);
 
   // Verify one of the deserialized signatures
   bool found_add_sig = false;
@@ -407,9 +452,9 @@ TEST_F(RpcDispatcherTest, DispatchWithUcxBufferVecContext) {
 
   // 2. Prepare the context object (UcxBufferVec).
   // This requires a memory manager.
-  auto mr = DefaultUcxMemoryResourceManager();
+  auto mr = eux::ucxx::DefaultUcxMemoryResourceManager();
   std::vector<size_t> sizes = {1024, 2048, 4096};
-  UcxBufferVec buffer_vec(mr, ucx_memory_type::HOST, sizes);
+  eux::ucxx::UcxBufferVec buffer_vec(mr, ucx_memory_type::HOST, sizes);
 
   // 3. Prepare and serialize the RPC request header.
   RpcRequestHeader request{};
@@ -426,6 +471,93 @@ TEST_F(RpcDispatcherTest, DispatchWithUcxBufferVecContext) {
   ASSERT_EQ(response_header.results.size(), 1);
   EXPECT_EQ(
     response_header.get_primitive<uint64_t>(0), 7168);  // 1024+2048+4096
+  EXPECT_EQ(response_header.status.value, 0);
+}
+
+TensorMetadata tensor_meta_identity(const TensorMetadata& meta) { return meta; }
+
+TensorMetadata tensor_meta_mutator(TensorMetadata meta) {
+  return mutate_tensor_meta(std::move(meta));
+}
+
+TEST_F(RpcDispatcherTest, DispatchTensorMetadataParameter) {
+  dispatcher.register_function(function_id_t{11}, &tensor_meta_volume);
+
+  TensorMetadata input_meta = make_test_tensor_meta();
+
+  RpcRequestHeader request{};
+  request.function_id = function_id_t{11};
+  request.session_id = session_id_t{200};
+
+  ParamMeta tensor_param{};
+  tensor_param.type = ParamType::TENSOR_META;
+  tensor_param.value.emplace<TensorMetadata>(input_meta);
+  request.add_param(std::move(tensor_param));
+
+  auto request_buffer = cista::serialize(request);
+  auto response_pair = dispatcher.dispatch(std::move(request_buffer));
+  auto& response_header = response_pair.header;
+
+  ASSERT_EQ(response_header.results.size(), 1);
+  EXPECT_EQ(response_header.results[0].type, ParamType::PRIMITIVE_INT64);
+  EXPECT_EQ(
+    response_header.get_primitive<int64_t>(0), tensor_meta_numel(input_meta));
+  EXPECT_EQ(response_header.status.value, 0);
+}
+
+TEST_F(RpcDispatcherTest, DispatchTensorMetadataReturnValue) {
+  dispatcher.register_function(function_id_t{12}, &tensor_meta_identity);
+
+  TensorMetadata input_meta = make_test_tensor_meta();
+
+  RpcRequestHeader request{};
+  request.function_id = function_id_t{12};
+  request.session_id = session_id_t{201};
+
+  ParamMeta tensor_param{};
+  tensor_param.type = ParamType::TENSOR_META;
+  tensor_param.value.emplace<TensorMetadata>(input_meta);
+  request.add_param(std::move(tensor_param));
+
+  auto request_buffer = cista::serialize(request);
+  auto response_pair = dispatcher.dispatch(std::move(request_buffer));
+  auto& response_header = response_pair.header;
+
+  ASSERT_EQ(response_header.results.size(), 1);
+  EXPECT_EQ(response_header.results[0].type, ParamType::TENSOR_META);
+  const TensorMetadata& returned_meta = response_header.get_tensor(0);
+  EXPECT_EQ(returned_meta.ndim, input_meta.ndim);
+  EXPECT_EQ(returned_meta.byte_offset, input_meta.byte_offset);
+  ASSERT_EQ(returned_meta.shape.size(), input_meta.shape.size());
+  for (size_t i = 0; i < input_meta.shape.size(); ++i) {
+    EXPECT_EQ(returned_meta.shape[i], input_meta.shape[i]);
+  }
+  EXPECT_EQ(response_header.status.value, 0);
+}
+
+TEST_F(RpcDispatcherTest, DispatchTensorMetadataMoveParameterAndReturn) {
+  dispatcher.register_function(function_id_t{13}, &tensor_meta_mutator);
+
+  RpcRequestHeader request{};
+  request.function_id = function_id_t{13};
+  request.session_id = session_id_t{202};
+
+  ParamMeta tensor_param{};
+  tensor_param.type = ParamType::TENSOR_META;
+  tensor_param.value.emplace<TensorMetadata>(make_test_tensor_meta());
+  request.add_param(std::move(tensor_param));
+
+  auto request_buffer = cista::serialize(request);
+  auto response_pair = dispatcher.dispatch(std::move(request_buffer));
+  auto& response_header = response_pair.header;
+
+  ASSERT_EQ(response_header.results.size(), 1);
+  EXPECT_EQ(response_header.results[0].type, ParamType::TENSOR_META);
+  const TensorMetadata& returned_meta = response_header.get_tensor(0);
+  EXPECT_EQ(returned_meta.byte_offset, 24);
+  ASSERT_EQ(returned_meta.shape.size(), 2);
+  EXPECT_EQ(returned_meta.shape[0], 3);
+  EXPECT_EQ(returned_meta.shape[1], 4);
   EXPECT_EQ(response_header.status.value, 0);
 }
 

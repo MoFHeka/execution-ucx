@@ -26,6 +26,8 @@ limitations under the License.
 #include <utility>
 
 #include "rpc_core/rpc_status.hpp"
+#include "rpc_core/utils/hybrid_logical_clock.hpp"
+#include "rpc_core/utils/tensor_meta.hpp"
 #include "ucx_context/ucx_context_data.hpp"
 
 namespace eux {
@@ -34,9 +36,8 @@ namespace rpc {
 namespace data = cista::offset;
 
 // Strong type definitions for type safety
-using function_id_t = cista::strong<uint64_t, struct function_id_tag>;
-using session_id_t = cista::strong<uint64_t, struct session_id_tag>;
-using tensor_id_t = cista::strong<uint64_t, struct tensor_id_tag>;
+using function_id_t = cista::strong<uint32_t, struct function_id_tag>;
+using session_id_t = cista::strong<uint32_t, struct session_id_tag>;
 
 // Parameter types for RPC calls
 enum class ParamType : uint8_t {
@@ -64,7 +65,9 @@ enum class ParamType : uint8_t {
   VECTOR_FLOAT64 = 21,
   STRING = 22,
   VOID = 23,
-  CUSTOM = 24
+  TENSOR_META = 24,
+  UNKNOWN = 255,
+  LAST = UNKNOWN,
 };
 
 // --- Nested Variant Definitions to Avoid Cista Bug ---
@@ -101,7 +104,8 @@ using VectorValue = data::variant<
   data::vector<double>>;
 
 // Top-level variant for parameter values
-using ParamValue = data::variant<PrimitiveValue, VectorValue, data::string>;
+using ParamValue =
+  data::variant<PrimitiveValue, VectorValue, data::string, TensorMetadata>;
 
 // Optimized parameter metadata for RPC header
 struct ParamMeta {
@@ -252,6 +256,16 @@ struct RpcMessageAccessor {
     return cista::get<data::vector<T>>(cista::get<VectorValue>(item.value));
   }
 
+  const TensorMetadata& get_tensor(size_t index) const {
+    const auto& container = derived().get_params_container();
+    if (
+      index >= container.size()
+      || container[index].type != ParamType::TENSOR_META) {
+      throw std::runtime_error("Invalid item access for tensor metadata");
+    }
+    return cista::get<TensorMetadata>(container[index].value);
+  }
+
   // --- Move-based accessors for taking ownership ---
 
   template <typename T>
@@ -269,16 +283,74 @@ struct RpcMessageAccessor {
     return cista::get<data::vector<T>>(
       std::move(cista::get<VectorValue>(container[index].value)));
   }
+
+  TensorMetadata&& move_tensor(size_t index) {
+    auto& container = derived().get_params_container();
+    if (
+      index >= container.size()
+      || container[index].type != ParamType::TENSOR_META) {
+      throw std::runtime_error("Invalid item access for tensor metadata");
+    }
+    return std::move(cista::get<TensorMetadata>(container[index].value));
+  }
+
+  // --- Temporal metadata helpers
+  // -------------------------------------------------
+
+  const utils::HybridLogicalClock& clock() const noexcept {
+    return derived().get_temporal_metadata().clock;
+  }
+
+  utils::HybridLogicalClock& clock() noexcept {
+    return derived().get_temporal_metadata().clock;
+  }
+
+  void tick_local_event() noexcept { clock().tick_local(); }
+
+  void merge_remote_clock(uint64_t remote_raw_timestamp) noexcept {
+    clock().merge(remote_raw_timestamp);
+  }
+
+  void merge_remote_clock(const utils::HybridLogicalClock& remote) noexcept {
+    clock().merge(remote);
+  }
+
+  const data::string& workflow_id() const noexcept {
+    return derived().get_temporal_metadata().workflow_id;
+  }
+
+  data::string& workflow_id() noexcept {
+    return derived().get_temporal_metadata().workflow_id;
+  }
+
+  const utils::EventMetadata& event() const noexcept {
+    return derived().get_temporal_metadata().event;
+  }
+
+  utils::EventMetadata& event() noexcept {
+    return derived().get_temporal_metadata().event;
+  }
+
+  void clear_event() noexcept {
+    derived().get_temporal_metadata().event.clear();
+  }
+
+  void assign_event(
+    utils::event_id_t id,
+    utils::workflow_id_t workflow_id = utils::workflow_id_t{}) noexcept {
+    derived().get_temporal_metadata().event.assign(id, workflow_id);
+  }
 };
 
 // RPC request header (contains all non-tensor parameters)
 struct RpcRequestHeader : public RpcMessageAccessor<RpcRequestHeader> {
-  function_id_t function_id;       // Target function identifier
-  session_id_t session_id;         // RPC session identifier
-  data::vector<ParamMeta> params;  // Parameter list
+  function_id_t function_id;            // Target function identifier
+  session_id_t session_id;              // RPC session identifier
+  data::vector<ParamMeta> params;       // Parameter list
+  utils::RpcTemporalMetadata temporal;  // Temporal metadata for tracing
 
   auto cista_members() const {
-    return std::tie(function_id, session_id, params);
+    return std::tie(function_id, session_id, params, temporal);
   }
 
   // Add a parameter to the request
@@ -290,15 +362,24 @@ struct RpcRequestHeader : public RpcMessageAccessor<RpcRequestHeader> {
   // CRTP interface method
   const data::vector<ParamMeta>& get_params_container() const { return params; }
   data::vector<ParamMeta>& get_params_container() { return params; }
+
+  const utils::RpcTemporalMetadata& get_temporal_metadata() const {
+    return temporal;
+  }
+
+  utils::RpcTemporalMetadata& get_temporal_metadata() { return temporal; }
 };
 
 // RPC response header
 struct RpcResponseHeader : public RpcMessageAccessor<RpcResponseHeader> {
-  session_id_t session_id;          // RPC session identifier
-  data::vector<ParamMeta> results;  // List of result parameters
-  RpcStatus status{};               // Response status
+  session_id_t session_id;              // RPC session identifier
+  data::vector<ParamMeta> results;      // List of result parameters
+  RpcStatus status{};                   // Response status
+  utils::RpcTemporalMetadata temporal;  // Temporal metadata for tracing
 
-  auto cista_members() const { return std::tie(session_id, results, status); }
+  auto cista_members() const {
+    return std::tie(session_id, results, status, temporal);
+  }
 
   // Add a result to the response
   template <typename T>
@@ -311,6 +392,12 @@ struct RpcResponseHeader : public RpcMessageAccessor<RpcResponseHeader> {
     return results;
   }
   data::vector<ParamMeta>& get_params_container() { return results; }
+
+  const utils::RpcTemporalMetadata& get_temporal_metadata() const {
+    return temporal;
+  }
+
+  utils::RpcTemporalMetadata& get_temporal_metadata() { return temporal; }
 };
 
 }  // namespace rpc
