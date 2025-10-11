@@ -3,11 +3,42 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
+    name = "rpc_utils",
+    srcs = [
+        "utils/hybrid_logical_clock.hpp",
+        "utils/tensor_meta.hpp",
+    ],
+)
+
+filegroup(
     name = "rpc_headers",
     srcs = [
         "rpc_dispatcher.hpp",
         "rpc_status.hpp",
         "rpc_types.hpp",
+    ],
+)
+
+cc_library(
+    name = "hybrid_logical_clock_lib",
+    hdrs = [
+        "utils/hybrid_logical_clock.hpp",
+    ],
+    copts = ["-std=c++17"],
+    deps = [
+        "@cista",
+    ],
+)
+
+cc_library(
+    name = "tensor_meta_lib",
+    hdrs = [
+        "utils/tensor_meta.hpp",
+    ],
+    copts = ["-std=c++17"],
+    deps = [
+        "@cista",
+        "@dlpack",
     ],
 )
 
@@ -18,8 +49,22 @@ cc_library(
     ],
     copts = ["-std=c++17"],
     deps = [
+        ":hybrid_logical_clock_lib",
+        ":tensor_meta_lib",
         "@cista",
         "@execution-ucx//ucx_context:ucx_context_data_lib",
+    ],
+)
+
+cc_test(
+    name = "hybrid_logical_clock_test",
+    size = "small",
+    srcs = ["utils/hybrid_logical_clock_test.cpp"],
+    copts = ["-std=c++17"],
+    deps = [
+        ":hybrid_logical_clock_lib",
+        "@cista",
+        "@googletest//:gtest_main",
     ],
 )
 
@@ -29,6 +74,19 @@ cc_test(
     srcs = ["rpc_dispatcher_test.cpp"],
     copts = ["-std=c++17"],
     deps = [
+        ":rpc_headers_lib",
+        "@cista",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "rpc_temporal_metadata_test",
+    size = "small",
+    srcs = ["rpc_temporal_metadata_test.cpp"],
+    copts = ["-std=c++17"],
+    deps = [
+        ":hybrid_logical_clock_lib",
         ":rpc_headers_lib",
         "@cista",
         "@googletest//:gtest_main",

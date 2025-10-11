@@ -167,7 +167,8 @@ struct context_finder {
       && !is_cista_strong<current_element>::value
       && !std::is_same_v<current_element, RpcRequestHeader>
       && !is_data_vector<current_element>::value
-      && !std::is_same_v<current_element, data::string>,
+      && !std::is_same_v<current_element, data::string>
+      && !std::is_same_v<current_element, TensorMetadata>,
     current_element, typename context_finder<Tuple, Index + 1>::type>;
 };
 
@@ -195,6 +196,12 @@ T extract_arg(RpcRequestHeader& req, Context&& context, size_t& param_idx) {
     return DecayedT{req.get_primitive<UnderlyingType>(param_idx++)};
   } else if constexpr (std::is_same_v<DecayedT, data::string>) {
     return req.get_string(param_idx++);
+  } else if constexpr (std::is_same_v<DecayedT, TensorMetadata>) {
+    if constexpr (std::is_lvalue_reference_v<T>) {
+      return req.get_tensor(param_idx++);
+    } else {
+      return req.move_tensor(param_idx++);
+    }
   } else if constexpr (is_data_vector<DecayedT>::value) {
     using ElementType = typename DecayedT::value_type;
     // The ternary operator was causing a -Wreturn-local-addr warning because
@@ -449,7 +456,7 @@ class RpcDispatcher {
       std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>;
 
     if constexpr (std::is_same_v<DecayedT, RpcRequestHeader>) {
-      return ParamType::CUSTOM;  // Should be filtered by caller
+      return ParamType::UNKNOWN;  // Should be filtered by caller
     } else if constexpr (is_arithmetic_or_enum) {
       return get_primitive_param_info<DecayedT>().type;
     } else if constexpr (is_cista_strong<DecayedT>::value) {
@@ -458,11 +465,13 @@ class RpcDispatcher {
       return get_primitive_param_info<UnderlyingType>().type;
     } else if constexpr (std::is_same_v<DecayedT, data::string>) {
       return ParamType::STRING;
+    } else if constexpr (std::is_same_v<DecayedT, TensorMetadata>) {
+      return ParamType::TENSOR_META;
     } else if constexpr (is_data_vector<DecayedT>::value) {
       using ElementType = typename DecayedT::value_type;
       return get_vector_param_info<ElementType>().type;
     } else {
-      return ParamType::CUSTOM;  // Context type
+      return ParamType::UNKNOWN;  // Context type
     }
   }
 
@@ -509,16 +518,17 @@ class RpcDispatcher {
         std::is_arithmetic_v<DecayR> || std::is_enum_v<DecayR>;
       static constexpr bool is_serializable_value =
         is_arithmetic_or_enum || std::is_same_v<DecayR, data::string>
+        || std::is_same_v<DecayR, TensorMetadata>
         || is_data_vector<DecayR>::value;
 
       if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
-        sig.return_type = ParamType::CUSTOM;
+        sig.return_type = ParamType::UNKNOWN;
       } else if constexpr (is_rpc_header_pair) {
-        sig.return_type = ParamType::CUSTOM;
+        sig.return_type = ParamType::UNKNOWN;
       } else if constexpr (is_serializable_value) {
         sig.return_type = get_param_type<DecayR>();
       } else {
-        sig.return_type = ParamType::CUSTOM;
+        sig.return_type = ParamType::UNKNOWN;
       }
     }
     return sig;
@@ -577,6 +587,7 @@ class RpcDispatcher {
                 std::is_arithmetic_v<DecayR> || std::is_enum_v<DecayR>;
               static constexpr bool is_serializable_value =
                 is_arithmetic_or_enum || std::is_same_v<DecayR, data::string>
+                || std::is_same_v<DecayR, TensorMetadata>
                 || is_data_vector<DecayR>::value;
 
               if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
@@ -595,6 +606,9 @@ class RpcDispatcher {
                 } else if constexpr (std::is_same_v<DecayR, data::string>) {
                   result_meta.type = ParamType::STRING;
                   result_meta.value.emplace<data::string>(std::move(result));
+                } else if constexpr (std::is_same_v<DecayR, TensorMetadata>) {
+                  result_meta.type = ParamType::TENSOR_META;
+                  result_meta.value.emplace<TensorMetadata>(std::move(result));
                 } else {  // is_data_vector
                   result_meta.type =
                     get_vector_param_info<typename DecayR::value_type>().type;
