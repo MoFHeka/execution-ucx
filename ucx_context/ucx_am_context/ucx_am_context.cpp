@@ -766,19 +766,24 @@ ucs_status_t ucx_am_context::am_recv_callback(
   assert(param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP);
 
   uint64_t conn_id = reinterpret_cast<uint64_t>(param->reply_ep);
-  auto conn_opt = self->conn_manager_.get_connection(conn_id);
-  if (!conn_opt.has_value()) {
-    // TODO(He Jia): change this to assert when AM data dropping is
-    // implemented
-    UCX_CTX_WARN << "could not find connection with ep " << param->reply_ep
-                 << "(" << conn_id << ")\n";
-    return status;
+  if (self->isRejectingMessages_.load(std::memory_order_acquire)) {
+    self->rejectedMessagesInfo_.emplace_back(
+      conn_id,
+      std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
+    return UCS_ERR_REJECTED;
   }
 
-  auto conn = conn_opt.value();
-
-  if (conn.get().ucx_status() != UCS_OK) {
-    return conn.get().ucx_status();
+  auto conn_opt = self->conn_manager_.get_connection(conn_id);
+  if (!conn_opt.has_value()) {
+    conn_id = self->create_new_connection(param->reply_ep);
+    conn_opt = self->conn_manager_.get_connection(conn_id);
+    if (__builtin_expect(!conn_opt.has_value(), 0)) {
+      return UCS_ERR_UNREACHABLE;
+    }
+  }
+  const auto conn_status = conn_opt.value().get().ucx_status();
+  if (conn_status < UCS_OK) {
+    return conn_status;
   }
 
   // Allocate and copy header in host memory before it is freed
@@ -897,7 +902,7 @@ std::uint64_t ucx_am_context::create_new_connection(
     handle_err_cb = std::make_unique<ucx_handle_err_callback>(*this);
   }
   auto new_conn = std::make_unique<ucx_connection>(
-    ucpWorker_, std::move(handle_err_cb), [this]() { return get_client_id(); });
+    ucpWorker_, std::move(handle_err_cb), nullptr);
 
   // Call UcxConnection::connect to establish connection
   new_conn->connect(
@@ -915,11 +920,23 @@ std::uint64_t ucx_am_context::create_new_connection(
     handle_err_cb = std::make_unique<ucx_handle_err_callback>(*this);
   }
   auto new_conn = std::make_unique<ucx_connection>(
-    ucpWorker_, std::move(handle_err_cb), [this]() { return get_client_id(); });
+    ucpWorker_, std::move(handle_err_cb), nullptr);
 
   // Call UcxConnection::connect to establish connection
   new_conn->connect(
     ucp_address, std::make_unique<ucx_connect_callback>(*this, new_conn.get()));
+
+  return handle_new_connection(std::move(new_conn));
+}
+
+std::uint64_t ucx_am_context::create_new_connection(ucp_ep_h ep) {
+  // Create a new connection instance
+  std::unique_ptr<ucx_handle_err_callback> handle_err_cb = nullptr;
+  if (connectionHandleError_) {
+    handle_err_cb = std::make_unique<ucx_handle_err_callback>(*this);
+  }
+  auto new_conn =
+    std::make_unique<ucx_connection>(ucpWorker_, std::move(handle_err_cb), ep);
 
   return handle_new_connection(std::move(new_conn));
 }
@@ -1012,8 +1029,7 @@ std::tuple<ucs_status_t, std::uint64_t> ucx_am_context::progress_conn_request(
     status = ucp_listener_reject(ucpListener_, epConnReq.conn_request);
   } else {
     auto conn = std::make_unique<ucx_connection>(
-      ucpWorker_, std::make_unique<ucx_handle_err_callback>(*this),
-      [this]() { return get_client_id(); });
+      ucpWorker_, std::make_unique<ucx_handle_err_callback>(*this), nullptr);
     // TODO(He Jia): Fix this ugly code, should not use raw pointer
     conn->accept(
       epConnReq.conn_request,

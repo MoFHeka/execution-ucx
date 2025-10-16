@@ -184,7 +184,7 @@ class ConnectionIdGenerator {
 };
 
 // Default connection ID generation function
-static std::uint64_t default_connection_id_generator() {
+[[maybe_unused]] static std::uint64_t default_connection_id_generator() {
   return ConnectionIdGenerator::generate();
 }
 
@@ -198,11 +198,8 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
    * @param get_conn_id Function to generate connection ID (optional)
    */
   explicit UcxConnection(
-    ucp_worker_h worker,
-    std::unique_ptr<UcxCallback>
-      handle_err_cb,
-    std::function<std::uint64_t()> get_conn_id =
-      default_connection_id_generator);
+    ucp_worker_h worker, std::unique_ptr<UcxCallback> handle_err_cb,
+    ucp_ep_h ep = nullptr);
 
   /**
    * @brief Destructor for UcxConnection
@@ -360,7 +357,7 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
    *
    * @return The connection ID
    */
-  uint64_t id() const { return conn_id_; }
+  uint64_t id() const { return reinterpret_cast<uint64_t>(ep_); }
 
   /**
    * @brief Gets the current UCX status
@@ -535,11 +532,8 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
   std::unique_ptr<UcxCallback> handle_err_cb_ = nullptr;
   std::unique_ptr<UcxCallback> establish_cb_ = nullptr;
   std::unique_ptr<UcxCallback> disconnect_cb_ = nullptr;
-  std::uintptr_t conn_id_ = reinterpret_cast<uintptr_t>(
-    nullptr);  // use ucp_ep_h pointer address as conn_id
-  std::uintptr_t remote_conn_id_;
   char log_prefix_[MAX_LOG_PREFIX_SIZE];
-  ucp_ep_h ep_ = nullptr;
+  ucp_ep_h ep_ = nullptr;  // use ucp_ep_h pointer address as conn_id
   std::string remote_address_;
   void* close_request_;  // it's a ucs_status_ptr_t or UcxRequest*
   ucs_list_link_t all_requests_;
