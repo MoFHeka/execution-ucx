@@ -200,7 +200,7 @@ class UcxBufferVec {
    * @param mem_h The memory handle of the buffers.
    * @param own_buffer Whether to own the buffers.
    */
-  UcxBufferVec(
+  explicit UcxBufferVec(
     UcxMemoryResourceManager& mr, ucx_memory_type_t type,
     const std::vector<size_t>& sizes, void* mem_h = nullptr,
     bool own_buffer = true)
@@ -267,7 +267,7 @@ class UcxBufferVec {
 
   UcxBufferVec& operator=(const UcxBufferVec&) = delete;
 
-  UcxBufferVec(
+  explicit UcxBufferVec(
     UcxMemoryResourceManager& mr, ucx_memory_type_t type,
     std::vector<ucx_buffer_t>&& buffers, void* mem_h = nullptr,
     bool own_buffer = false)
@@ -277,7 +277,7 @@ class UcxBufferVec {
       mem_h_(mem_h),
       own_buffer_(own_buffer) {}
 
-  UcxBufferVec(
+  explicit UcxBufferVec(
     UcxMemoryResourceManager& mr, ucx_memory_type_t type,
     const std::vector<ucx_buffer_t>& buffers, void* mem_h = nullptr,
     bool own_buffer = false)
@@ -287,7 +287,7 @@ class UcxBufferVec {
       mem_h_(mem_h),
       own_buffer_(own_buffer) {}
 
-  explicit UcxBufferVec(std::vector<UcxBuffer>&& buffers, void* mem_h = nullptr)
+  explicit UcxBufferVec(std::vector<UcxBuffer>&& buffers)
     : mr_(buffers[0].mr_),
       type_(buffers[0].type()),
       mem_h_(buffers[0].mem_h()),
@@ -296,6 +296,15 @@ class UcxBufferVec {
       buffers_.push_back(*buf.get());
     }
     buffers[0].own_buffer_.store(false, std::memory_order_relaxed);
+  }
+
+  explicit UcxBufferVec(UcxBuffer&& buffer)
+    : mr_(buffer.mr_),
+      type_(buffer.type()),
+      mem_h_(buffer.mem_h()),
+      own_buffer_(buffer.own_buffer()) {
+    buffers_.push_back(*buffer.get());
+    buffer.own_buffer_.store(false, std::memory_order_relaxed);
   }
 
   /**
@@ -363,6 +372,21 @@ class UcxBufferVec {
    * @return Const reference to the ucx_buffer_t at the given index.
    */
   const ucx_buffer_t& operator[](size_t idx) const { return buffers_[idx]; }
+
+  /**
+   * @brief Accesses the buffer at the given index with bounds checking.
+   * @param idx The index of the buffer.
+   * @return Reference to the ucx_buffer_t at the specified index.
+   * @throws std::out_of_range if the index is out of bounds.
+   */
+  ucx_buffer_t& at(size_t idx) { return buffers_.at(idx); }
+  /**
+   * @brief Accesses the buffer at the given index with bounds checking (const).
+   * @param idx The index of the buffer.
+   * @return Const reference to the ucx_buffer_t at the specified index.
+   * @throws std::out_of_range if the index is out of bounds.
+   */
+  const ucx_buffer_t& at(size_t idx) const { return buffers_.at(idx); }
 
   /**
    * @brief Returns the underlying buffer vector.

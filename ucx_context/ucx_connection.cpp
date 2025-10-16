@@ -126,20 +126,29 @@ size_t get_zcopy_thresh() {
 
 // UcxConnection implementation
 UcxConnection::UcxConnection(
-  ucp_worker_h worker,
-  std::unique_ptr<UcxCallback>
-    handle_err_cb,
-  std::function<std::uint64_t()>
-    get_conn_id)
+  ucp_worker_h worker, std::unique_ptr<UcxCallback> handle_err_cb, ucp_ep_h ep)
   : worker_(worker),
     handle_err_cb_(std::move(handle_err_cb)),
     establish_cb_(nullptr),
     disconnect_cb_(nullptr),
-    conn_id_(get_conn_id()),
-    remote_conn_id_(0),
-    ep_(nullptr),
+    ep_(ep),
     close_request_(nullptr),
     ucx_status_(UCS_INPROGRESS) {
+  if (ep_ != nullptr) {
+    ucp_ep_params_t ep_params;
+    ep_params.field_mask |=
+      UCP_EP_PARAM_FIELD_ERR_HANDLER | UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
+    ep_params.err_mode =
+      handle_err_cb_ ? UCP_ERR_HANDLING_MODE_PEER : UCP_ERR_HANDLING_MODE_NONE;
+    ep_params.err_handler.cb = error_callback;
+    ep_params.err_handler.arg = reinterpret_cast<void*>(this);
+    ucx_status_ = UCS_PTR_STATUS(ucp_ep_modify_nb(ep_, &ep_params));
+    if (ucx_status_ != UCS_OK) {
+      UCX_CONN_ERROR << "ucp_ep_modify_nb() for ep " << ep_
+                     << " failed: " << ucs_status_string(ucx_status_)
+                     << std::endl;
+    }
+  }
   ++num_instances_;
   struct sockaddr_in in_addr = {0};
   in_addr.sin_family = AF_INET;
@@ -152,10 +161,14 @@ UcxConnection::UcxConnection(
 UcxConnection::~UcxConnection() {
   /* establish cb must be destroyed earlier since it accesses
    * the connection */
-  if (ep_ != nullptr) {
-    UCX_CONN_ERROR << "Disconnect connection before destroying! closing ep "
-                   << ep_ << " mode force" << std::endl;
-    ucp_ep_close_nb(ep_, UCP_EP_CLOSE_MODE_FORCE);
+  disconnect_direct();
+  if (UCS_PTR_IS_PTR(close_request_)) {
+    if (ucp_request_check_status(close_request_) == UCS_INPROGRESS) {
+      UCX_CONN_WARN << "ep close request is in progress" << std::endl;
+    } else {
+      ucp_request_free(close_request_);
+      close_request_ = nullptr;
+    }
   }
   assert(ep_ == nullptr);
   assert(ucs_list_is_empty(&all_requests_));
@@ -260,6 +273,7 @@ void UcxConnection::disconnect_direct() {
   cancel_all();
   if (ep_) {
     ep_close(UCP_EP_CLOSE_MODE_FORCE);
+    UCX_CONN_WARN << "Forced closed ep " << ep_ << std::endl;
   }
   ep_ = nullptr;
 }
@@ -529,8 +543,8 @@ void UcxConnection::set_log_prefix(
   const struct sockaddr* saddr, socklen_t addrlen) {
   std::stringstream ss;
   remote_address_ = sockaddr_str(saddr, addrlen);
-  ss << "[UCX-connection " << this << ": #" << conn_id_ << " "
-     << remote_address_ << "]";
+  ss << "[UCX-connection " << this << ": #" << id() << " " << remote_address_
+     << "]";
   memset(log_prefix_, 0, MAX_LOG_PREFIX_SIZE);
   auto length = ss.str().length();
   if (length >= MAX_LOG_PREFIX_SIZE) {
@@ -560,7 +574,7 @@ void UcxConnection::connect_common(
     return;
   }
 
-  UCX_CONN_DEBUG << "created endpoint " << ep_ << ", connection id " << conn_id_
+  UCX_CONN_DEBUG << "created endpoint " << ep_ << ", connection id " << id()
                  << std::endl;
 
   // When connecting sucessfully, the establish_cb_ will be called.
@@ -572,7 +586,6 @@ void UcxConnection::connect_common(
 void UcxConnection::connect_am(std::unique_ptr<UcxCallback> callback) {
   // With AM use ep as a connection ID. AM receive callback provides
   // reply ep, which can be used for finding a proper connection.
-  conn_id_ = reinterpret_cast<uint64_t>(ep_);
   established(UCS_OK);
 }
 
@@ -614,6 +627,14 @@ void UcxConnection::ep_close(enum ucp_ep_close_mode mode) {
   UCX_CONN_DEBUG << "closing ep " << ep_ << " mode " << mode_str[mode]
                  << std::endl;
   close_request_ = ucp_ep_close_nb(ep_, mode);
+  if (UCS_PTR_IS_PTR(close_request_)) {
+    if (ucp_request_check_status(close_request_) == UCS_INPROGRESS) {
+      UCX_CONN_WARN << "ep close request is in progress" << std::endl;
+    } else {
+      ucp_request_free(close_request_);
+      close_request_ = nullptr;
+    }
+  }
   ep_ = nullptr;
 }
 

@@ -481,6 +481,37 @@ class ucx_am_context {
     return connectionHandleError_;
   }
 
+  /**
+   * @brief Set if the messages should be rejected.
+   * @param reject If true, reject the messages.
+   */
+  void set_reject_messages(bool reject) {
+    isRejectingMessages_.store(reject, std::memory_order_release);
+  }
+
+  /**
+   * @brief Check if the messages should be rejected.
+   * @return true if the messages should be rejected, false otherwise.
+   */
+  bool is_rejecting_messages() const noexcept {
+    return isRejectingMessages_.load(std::memory_order_relaxed);
+  }
+
+  /**
+   * @brief Get the information of the rejected messages.
+   * @return std::vector<std::pair<uint64_t, time_t>> The information of the
+   * rejected messages. <conn_id, timestamp>
+   */
+  std::vector<std::pair<uint64_t, time_t>> get_rejected_messages_info()
+    const noexcept {
+    return rejectedMessagesInfo_;
+  }
+
+  /**
+   * @brief Clear the information of the rejected messages.
+   */
+  void clear_rejected_messages_info() { rejectedMessagesInfo_.clear(); }
+
  protected:
   class ucx_accept_callback;
   class ucx_connect_callback;
@@ -581,6 +612,8 @@ class ucx_am_context {
     socklen_t addrlen);
 
   std::uint64_t create_new_connection(const ucp_address_t* ucp_address);
+
+  std::uint64_t create_new_connection(ucp_ep_h ep);
 
   // Helper method to handle common connection creation logic
   inline std::uint64_t handle_new_connection(
@@ -763,6 +796,13 @@ class ucx_am_context {
 
   // UCX arrived active message pending queue
   std::deque<ucx_am_desc> amDescQueue_;
+  // If isRejectingMessages_ is true, reject the messages in amDescQueue_
+  // and store them in rejectedMessages_
+  // When isRejectingMessages_ is false, restore the messages in
+  // rejectedMessages_ to amDescQueue_
+  std::atomic<bool> isRejectingMessages_ = false;
+  std::vector<std::pair<uint64_t, time_t>> rejectedMessagesInfo_;
+
   // UCX arrived active message pending map, used to delay receiving the buffer
   // until the recv_buffer_sender operation is scheduled
   ucx_am_desc_map amDescMap_;
