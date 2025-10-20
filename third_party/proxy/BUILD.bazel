@@ -1,0 +1,14 @@
+# Description:
+#   Proxy: Next Generation Polymorphism in C++.
+
+licenses(["notice"])  # Apache 2
+
+exports_files(["LICENSE"])
+
+cc_library(
+    name = "proxy",
+    hdrs = glob(["include/**/*.h"]),
+    copts = ["-std=c++20"],
+    strip_include_prefix = "include",
+    visibility = ["//visibility:public"],
+)

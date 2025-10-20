@@ -21,6 +21,7 @@
 #include "rpc_core/utils/hybrid_logical_clock.hpp"
 
 namespace eux {
+namespace rpc {
 namespace utils {
 
 namespace {
@@ -156,4 +157,5 @@ TEST_F(HybridLogicalClockTest, MergeWithLowerObservedPhysicalPrefersObserved) {
 }  // namespace
 
 }  // namespace utils
+}  // namespace rpc
 }  // namespace eux

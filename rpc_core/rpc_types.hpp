@@ -35,9 +35,17 @@ namespace rpc {
 
 namespace data = cista::offset;
 
+using utils::event_id_t;
+using utils::EventMetadata;
+using utils::HybridLogicalClock;
+using utils::RpcTemporalMetadata;
+using utils::TensorMeta;
+using utils::workflow_id_t;
+
 // Strong type definitions for type safety
 using function_id_t = cista::strong<uint32_t, struct function_id_tag>;
 using session_id_t = cista::strong<uint32_t, struct session_id_tag>;
+using request_id_t = cista::strong<uint32_t, struct request_id_tag>;
 
 // Parameter types for RPC calls
 enum class ParamType : uint8_t {
@@ -68,6 +76,13 @@ enum class ParamType : uint8_t {
   TENSOR_META = 24,
   UNKNOWN = 255,
   LAST = UNKNOWN,
+};
+
+// Describes the type of context object returned by an RPC function.
+enum class ContextType : uint8_t {
+  MONOSTATE,
+  UCX_BUFFER,
+  UCX_BUFFER_VEC,
 };
 
 // --- Nested Variant Definitions to Avoid Cista Bug ---
@@ -104,8 +119,12 @@ using VectorValue = data::variant<
   data::vector<double>>;
 
 // Top-level variant for parameter values
-using ParamValue =
-  data::variant<PrimitiveValue, VectorValue, data::string, TensorMetadata>;
+using ParamValue = data::variant<
+  PrimitiveValue,
+  VectorValue,
+  data::string,
+  std::nullptr_t,
+  TensorMeta>;
 
 // Optimized parameter metadata for RPC header
 struct ParamMeta {
@@ -128,6 +147,7 @@ struct RpcFunctionSignature {
   data::string function_name;
   data::vector<ParamType> param_types;
   ParamType return_type;
+  ContextType return_context_type;
   bool takes_context;
 
   auto cista_members() const {
@@ -137,6 +157,7 @@ struct RpcFunctionSignature {
       function_name,
       param_types,
       return_type,
+      return_context_type,
       takes_context);
   }
 };
@@ -256,14 +277,14 @@ struct RpcMessageAccessor {
     return cista::get<data::vector<T>>(cista::get<VectorValue>(item.value));
   }
 
-  const TensorMetadata& get_tensor(size_t index) const {
+  const TensorMeta& get_tensor(size_t index) const {
     const auto& container = derived().get_params_container();
     if (
       index >= container.size()
       || container[index].type != ParamType::TENSOR_META) {
       throw std::runtime_error("Invalid item access for tensor metadata");
     }
-    return cista::get<TensorMetadata>(container[index].value);
+    return cista::get<TensorMeta>(container[index].value);
   }
 
   // --- Move-based accessors for taking ownership ---
@@ -284,14 +305,14 @@ struct RpcMessageAccessor {
       std::move(cista::get<VectorValue>(container[index].value)));
   }
 
-  TensorMetadata&& move_tensor(size_t index) {
+  TensorMeta&& move_tensor(size_t index) {
     auto& container = derived().get_params_container();
     if (
       index >= container.size()
       || container[index].type != ParamType::TENSOR_META) {
       throw std::runtime_error("Invalid item access for tensor metadata");
     }
-    return std::move(cista::get<TensorMetadata>(container[index].value));
+    return std::move(cista::get<TensorMeta>(container[index].value));
   }
 
   // --- Temporal metadata helpers
@@ -346,11 +367,62 @@ struct RpcMessageAccessor {
 struct RpcRequestHeader : public RpcMessageAccessor<RpcRequestHeader> {
   function_id_t function_id;            // Target function identifier
   session_id_t session_id;              // RPC session identifier
+  request_id_t request_id;              // Unique request identifier
   data::vector<ParamMeta> params;       // Parameter list
   utils::RpcTemporalMetadata temporal;  // Temporal metadata for tracing
 
+  RpcRequestHeader() = default;
+
+  RpcRequestHeader(
+    function_id_t function_id,
+    session_id_t session_id,
+    request_id_t request_id,
+    const data::vector<ParamMeta>& params,
+    const utils::RpcTemporalMetadata& temporal)
+    : function_id(function_id),
+      session_id(session_id),
+      request_id(request_id),
+      params(params),
+      temporal(temporal) {}
+
+  RpcRequestHeader(
+    uint32_t function_id,
+    uint64_t session_id,
+    uint32_t request_id,
+    const data::vector<ParamMeta>& params,
+    const utils::RpcTemporalMetadata& temporal)
+    : function_id(function_id),
+      session_id(session_id),
+      request_id(request_id),
+      params(params),
+      temporal(temporal) {}
+
+  RpcRequestHeader(
+    function_id_t function_id,
+    session_id_t session_id,
+    request_id_t request_id,
+    data::vector<ParamMeta>&& params,
+    utils::RpcTemporalMetadata&& temporal)
+    : function_id(function_id),
+      session_id(session_id),
+      request_id(request_id),
+      params(std::move(params)),
+      temporal(std::move(temporal)) {}
+
+  RpcRequestHeader(
+    uint32_t function_id,
+    uint64_t session_id,
+    uint32_t request_id,
+    data::vector<ParamMeta>&& params,
+    utils::RpcTemporalMetadata&& temporal)
+    : function_id(function_id),
+      session_id(session_id),
+      request_id(request_id),
+      params(std::move(params)),
+      temporal(std::move(temporal)) {}
+
   auto cista_members() const {
-    return std::tie(function_id, session_id, params, temporal);
+    return std::tie(function_id, session_id, request_id, params, temporal);
   }
 
   // Add a parameter to the request
@@ -373,12 +445,63 @@ struct RpcRequestHeader : public RpcMessageAccessor<RpcRequestHeader> {
 // RPC response header
 struct RpcResponseHeader : public RpcMessageAccessor<RpcResponseHeader> {
   session_id_t session_id;              // RPC session identifier
+  request_id_t request_id;              // Unique request identifier
   data::vector<ParamMeta> results;      // List of result parameters
   RpcStatus status{};                   // Response status
   utils::RpcTemporalMetadata temporal;  // Temporal metadata for tracing
 
+  RpcResponseHeader() = default;
+
+  RpcResponseHeader(
+    session_id_t session_id,
+    request_id_t request_id,
+    const data::vector<ParamMeta>& results,
+    RpcStatus status,
+    const utils::RpcTemporalMetadata& temporal)
+    : session_id(session_id),
+      request_id(request_id),
+      results(results),
+      status(status),
+      temporal(temporal) {}
+
+  RpcResponseHeader(
+    uint64_t session_id,
+    uint32_t request_id,
+    const data::vector<ParamMeta>& results,
+    RpcStatus status,
+    const utils::RpcTemporalMetadata& temporal)
+    : session_id(session_id),
+      request_id(request_id),
+      results(results),
+      status(status),
+      temporal(temporal) {}
+
+  RpcResponseHeader(
+    session_id_t session_id,
+    request_id_t request_id,
+    data::vector<ParamMeta>&& results,
+    RpcStatus status,
+    utils::RpcTemporalMetadata&& temporal)
+    : session_id(session_id),
+      request_id(request_id),
+      results(std::move(results)),
+      status(status),
+      temporal(std::move(temporal)) {}
+
+  RpcResponseHeader(
+    uint64_t session_id,
+    uint32_t request_id,
+    data::vector<ParamMeta>&& results,
+    RpcStatus status,
+    utils::RpcTemporalMetadata&& temporal)
+    : session_id(session_id),
+      request_id(request_id),
+      results(std::move(results)),
+      status(status),
+      temporal(std::move(temporal)) {}
+
   auto cista_members() const {
-    return std::tie(session_id, results, status, temporal);
+    return std::tie(session_id, request_id, results, status, temporal);
   }
 
   // Add a result to the response
