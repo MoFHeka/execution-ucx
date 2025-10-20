@@ -28,6 +28,7 @@
 #include <tuple>
 
 namespace eux {
+namespace rpc {
 namespace utils {
 
 namespace data = cista::offset;
@@ -215,6 +216,14 @@ struct EventMetadata {
   event_id_t event_id{};
   workflow_id_t workflow_id{};
 
+  EventMetadata() = default;
+
+  EventMetadata(event_id_t eid, workflow_id_t wid)
+    : event_id{eid}, workflow_id{wid} {}
+
+  EventMetadata(unsigned int eid, unsigned int wid)
+    : event_id{eid}, workflow_id{wid} {}
+
   [[nodiscard]] constexpr bool valid() const noexcept {
     return event_id != event_id_t{};
   }
@@ -248,6 +257,7 @@ struct RpcTemporalMetadata {
 };
 
 }  // namespace utils
+}  // namespace rpc
 }  // namespace eux
 
 #endif  // RPC_CORE_UTILS_HYBRID_LOGICAL_CLOCK_HPP_

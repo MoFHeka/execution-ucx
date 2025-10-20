@@ -52,6 +52,21 @@ use_repo(ucx_deps, "ucx")
 cista_deps = use_extension("//third_party/cista:extensions.bzl", "cista_dep")
 use_repo(cista_deps, "cista")
 
+# setting plf::hive for object hive
+hive_deps = use_extension("//third_party/plf_hive:extensions.bzl", "plf_hive_dep")
+use_repo(hive_deps, "plf_hive")
+
+# setting dlpack for tensor packaging
+dlpack_deps = use_extension("//third_party/dlpack:extensions.bzl", "dlpack_dep")
+use_repo(dlpack_deps, "dlpack")
+
+# setting avro for RPC checkpointing convertor
+bazel_dep(name = "avro-cpp", version = "1.12.0")
+
+# setting proxy for next generation polymorphism in C++
+proxy_deps = use_extension("//third_party/proxy:extensions.bzl", "proxy_dep")
+use_repo(proxy_deps, "proxy")
+
 bazel_dep(name = "rules_foreign_cc", version = "0.12.0")
 
 bazel_dep(name = "platforms", version = "0.0.10")

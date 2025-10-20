@@ -25,14 +25,22 @@ limitations under the License.
 #include <string>
 #include <tuple>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include <proxy/proxy.h>
+
 #include "rpc_core/rpc_types.hpp"
+#include "ucx_context/ucx_context_data.hpp"
 
 namespace eux {
 namespace rpc {
+
+// The set of possible context types that can be returned from an RPC function.
+using ReturnedContext =
+  std::variant<std::monostate, ucxx::UcxBuffer, ucxx::UcxBufferVec>;
 
 #if WITH_CISTA_VERSION && WITH_CISTA_INTEGRITY
 constexpr auto const MODE =  // opt. versioning + check sum
@@ -57,7 +65,7 @@ constexpr auto const MODE = cista::mode::NONE;
 template <typename ContextT = std::monostate>
 struct RpcInvokeResult {
   RpcResponseHeader header;
-  ContextT context;
+  std::optional<ContextT> context;
 };
 
 /**
@@ -68,14 +76,14 @@ struct RpcInvokeResult {
  */
 using RpcContextPtr = std::unique_ptr<void, void (*)(void*)>;
 
-/**
- * @brief A type-erased wrapper for a registered RPC function.
- *
- * It takes a request header and an optional context pointer and returns a pair
- * containing the response header and a type-erased context (if any).
- */
-using ErasedRpcFunction = std::function<std::pair<RpcResponseHeader, std::any>(
-  RpcRequestHeader&, RpcContextPtr)>;
+struct ErasedRpcFunctionFacade
+  : pro::facade_builder::add_convention<
+      pro::operator_dispatch<"()">,
+      std::pair<RpcResponseHeader, ReturnedContext>(
+        RpcRequestHeader&, RpcContextPtr)>::
+      support_relocation<pro::constraint_level::trivial>::build {};
+
+using ErasedRpcFunction = pro::proxy<ErasedRpcFunctionFacade>;
 
 // =============================================================================
 // SFINAE Type Traits for C++17 Compatibility
@@ -168,7 +176,7 @@ struct context_finder {
       && !std::is_same_v<current_element, RpcRequestHeader>
       && !is_data_vector<current_element>::value
       && !std::is_same_v<current_element, data::string>
-      && !std::is_same_v<current_element, TensorMetadata>,
+      && !std::is_same_v<current_element, TensorMeta>,
     current_element, typename context_finder<Tuple, Index + 1>::type>;
 };
 
@@ -186,8 +194,7 @@ T extract_arg(RpcRequestHeader& req, Context&& context, size_t& param_idx) {
     std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>;
 
   if constexpr (std::is_same_v<DecayedT, RpcRequestHeader>) {
-    return std::is_rvalue_reference_v<T&&> ? std::move(req)
-                                           : static_cast<T>(req);
+    return req;
   } else if constexpr (is_arithmetic_or_enum) {
     return req.get_primitive<DecayedT>(param_idx++);
   } else if constexpr (is_cista_strong<DecayedT>::value) {
@@ -196,7 +203,7 @@ T extract_arg(RpcRequestHeader& req, Context&& context, size_t& param_idx) {
     return DecayedT{req.get_primitive<UnderlyingType>(param_idx++)};
   } else if constexpr (std::is_same_v<DecayedT, data::string>) {
     return req.get_string(param_idx++);
-  } else if constexpr (std::is_same_v<DecayedT, TensorMetadata>) {
+  } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
     if constexpr (std::is_lvalue_reference_v<T>) {
       return req.get_tensor(param_idx++);
     } else {
@@ -258,10 +265,10 @@ class RpcDispatcher {
 
  private:
   data::string instance_name_;
-  cista::offset::hash_map<function_id_t, ErasedRpcFunction> functions_;
-  cista::offset::hash_map<function_id_t, RpcFunctionSignature> signatures_;
+  std::unordered_map<function_id_t, ErasedRpcFunction> functions_;
+  data::hash_map<function_id_t, RpcFunctionSignature> signatures_;
 
-  std::pair<RpcResponseHeader, std::any> dispatch_impl(
+  std::pair<RpcResponseHeader, ReturnedContext> dispatch_impl(
     cista::byte_buf&& request_buffer, RpcContextPtr context) {
     RpcRequestHeader* request_ptr = nullptr;
     try {
@@ -275,14 +282,15 @@ class RpcDispatcher {
         throw std::runtime_error("Function not found");
       }
 
-      return it->second(*request_ptr, std::move(context));
+      return (*it->second)(*request_ptr, std::move(context));
     } catch (const std::exception& e) {
       RpcResponseHeader error_response;
       if (request_ptr) {
         error_response.session_id = request_ptr->session_id;
+        error_response.request_id = request_ptr->request_id;
       }
       error_response.status = std::make_error_code(std::errc::invalid_argument);
-      return {std::move(error_response), std::any{}};
+      return {std::move(error_response), std::monostate{}};
     }
   }
 
@@ -310,7 +318,8 @@ class RpcDispatcher {
   void register_function(
     function_id_t id, Func&& func,
     const data::string& name = data::string{"anonymous"}) {
-    functions_[id] = make_rpc_wrapper(std::forward<Func>(func));
+    functions_[id] = pro::make_proxy<ErasedRpcFunctionFacade>(
+      make_rpc_wrapper(std::forward<Func>(func)));
     signatures_[id] = make_rpc_signature<Func>(id, name, instance_name_);
   }
 
@@ -327,18 +336,19 @@ class RpcDispatcher {
    * @return An RpcInvokeResult containing the response header and any returned
    * context.
    */
-  template <typename ReturnContextT = std::monostate, typename InputData>
+  template <typename ReturnContextT, typename InputData>
   RpcInvokeResult<ReturnContextT> dispatch(
     cista::byte_buf&& request_buffer, InputData& input_data) {
-    auto [header, context_any] = dispatch_impl(
+    auto [header, context_variant] = dispatch_impl(
       std::move(request_buffer),
-      // RpcContextPtr is a observation, it does not own the data
       RpcContextPtr(&input_data, [](void*) { /* non-owning */ }));
 
-    ReturnContextT context = context_any.has_value()
-                               ? std::any_cast<ReturnContextT>(context_any)
-                               : ReturnContextT{};
-    return {std::move(header), std::move(context)};
+    if (static_cast<std::error_code>(header.status)) {
+      return {std::move(header), std::nullopt};
+    }
+
+    return {
+      std::move(header), std::get<ReturnContextT>(std::move(context_variant))};
   }
 
   /**
@@ -356,7 +366,7 @@ class RpcDispatcher {
    * @return An RpcInvokeResult containing the response header and any returned
    * context.
    */
-  template <typename ReturnContextT = std::monostate, typename InputData>
+  template <typename ReturnContextT, typename InputData>
   RpcInvokeResult<ReturnContextT> dispatch_move(
     cista::byte_buf&& request_buffer, InputData&& input_data) {
     // Take ownership of the input data by moving it to a local variable on the
@@ -371,13 +381,14 @@ class RpcDispatcher {
     // RpcContextPtr is a observation, it does not own the data
     RpcContextPtr non_owning_ptr(&owned_input_data, [](void*) {});
 
-    auto [header, context_any] =
+    auto [header, context_variant] =
       dispatch_impl(std::move(request_buffer), std::move(non_owning_ptr));
 
-    ReturnContextT context = context_any.has_value()
-                               ? std::any_cast<ReturnContextT>(context_any)
-                               : ReturnContextT{};
-    return {std::move(header), std::move(context)};
+    if (static_cast<std::error_code>(header.status)) {
+      return {std::move(header), std::nullopt};
+    }
+    return {
+      std::move(header), std::get<ReturnContextT>(std::move(context_variant))};
   }
 
   /**
@@ -390,15 +401,65 @@ class RpcDispatcher {
    * @return An RpcInvokeResult containing the response header and any returned
    * context.
    */
-  template <typename ReturnContextT = std::monostate>
+  template <typename ReturnContextT>
   RpcInvokeResult<ReturnContextT> dispatch(cista::byte_buf&& request_buffer) {
-    auto [header, context_any] = dispatch_impl(
+    auto [header, context_variant] = dispatch_impl(
       std::move(request_buffer), RpcContextPtr(nullptr, [](void*) {}));
 
-    ReturnContextT context = context_any.has_value()
-                               ? std::any_cast<ReturnContextT>(context_any)
-                               : ReturnContextT{};
-    return {std::move(header), std::move(context)};
+    if (static_cast<std::error_code>(header.status)) {
+      return {std::move(header), std::nullopt};
+    }
+    return {
+      std::move(header), std::get<ReturnContextT>(std::move(context_variant))};
+  }
+
+  /**
+   * @brief Dynamically dispatches a request without knowing the return context
+   * type at compile time.
+   *
+   * This is the dynamic counterpart to the templated `dispatch` method. It
+   * returns the raw `std::variant` of possible context types, allowing the
+   * caller to inspect the result at runtime using `std::visit` or
+   * `std::holds_alternative`.
+   *
+   * @param request_buffer The serialized request buffer.
+   * @return An `RpcInvokeResult` containing the header and an optional variant
+   * of the returned context.
+   */
+  RpcInvokeResult<ReturnedContext> dispatch(cista::byte_buf&& request_buffer) {
+    auto [header, context_variant] = dispatch_impl(
+      std::move(request_buffer), RpcContextPtr(nullptr, [](void*) {}));
+    if (static_cast<std::error_code>(header.status)) {
+      return {std::move(header), std::nullopt};
+    }
+    return {std::move(header), std::move(context_variant)};
+  }
+
+  template <typename InputData>
+  RpcInvokeResult<ReturnedContext> dispatch(
+    cista::byte_buf&& request_buffer, const InputData& input_data) {
+    auto [header, context_variant] = dispatch_impl(
+      std::move(request_buffer),
+      RpcContextPtr(
+        const_cast<InputData*>(&input_data), [](void*) { /* non-owning */ }));
+    if (static_cast<std::error_code>(header.status)) {
+      return {std::move(header), std::nullopt};
+    }
+    return {std::move(header), std::move(context_variant)};
+  }
+
+  template <typename InputData>
+  RpcInvokeResult<ReturnedContext> dispatch_move(
+    cista::byte_buf&& request_buffer, InputData&& input_data) {
+    using DecayedInput = std::decay_t<InputData>;
+    DecayedInput owned_input_data(std::forward<InputData>(input_data));
+    RpcContextPtr non_owning_ptr(&owned_input_data, [](void*) {});
+    auto [header, context_variant] =
+      dispatch_impl(std::move(request_buffer), std::move(non_owning_ptr));
+    if (static_cast<std::error_code>(header.status)) {
+      return {std::move(header), std::nullopt};
+    }
+    return {std::move(header), std::move(context_variant)};
   }
 
   /**
@@ -465,7 +526,7 @@ class RpcDispatcher {
       return get_primitive_param_info<UnderlyingType>().type;
     } else if constexpr (std::is_same_v<DecayedT, data::string>) {
       return ParamType::STRING;
-    } else if constexpr (std::is_same_v<DecayedT, TensorMetadata>) {
+    } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
       return ParamType::TENSOR_META;
     } else if constexpr (is_data_vector<DecayedT>::value) {
       using ElementType = typename DecayedT::value_type;
@@ -496,19 +557,20 @@ class RpcDispatcher {
     using Traits = function_traits<std::decay_t<Func>>;
     using ReturnType = typename Traits::return_type;
     using ArgsTuple = typename Traits::args_tuple;
-    using ContextType = typename context_finder<ArgsTuple>::type;
+    using InputContextType = typename context_finder<ArgsTuple>::type;
 
     RpcFunctionSignature sig;
     sig.instance_name = instance_name;
     sig.id = id;
     sig.function_name = function_name;
-    sig.takes_context = !std::is_void_v<ContextType>;
+    sig.takes_context = !std::is_void_v<InputContextType>;
 
-    fill_param_types_impl<ArgsTuple, ContextType>(sig.param_types);
+    fill_param_types_impl<ArgsTuple, InputContextType>(sig.param_types);
 
     using DecayR = std::decay_t<ReturnType>;
     if constexpr (std::is_void_v<DecayR>) {
       sig.return_type = ParamType::VOID;
+      sig.return_context_type = ContextType::MONOSTATE;
     } else {
       static constexpr bool is_rpc_header_pair =
         is_pair<DecayR>::value
@@ -518,27 +580,45 @@ class RpcDispatcher {
         std::is_arithmetic_v<DecayR> || std::is_enum_v<DecayR>;
       static constexpr bool is_serializable_value =
         is_arithmetic_or_enum || std::is_same_v<DecayR, data::string>
-        || std::is_same_v<DecayR, TensorMetadata>
-        || is_data_vector<DecayR>::value;
+        || std::is_same_v<DecayR, TensorMeta> || is_data_vector<DecayR>::value;
 
       if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
         sig.return_type = ParamType::UNKNOWN;
+        sig.return_context_type = ContextType::MONOSTATE;
       } else if constexpr (is_rpc_header_pair) {
         sig.return_type = ParamType::UNKNOWN;
+        using ContextT = std::decay_t<typename DecayR::second_type>;
+        if constexpr (std::is_same_v<ContextT, ucxx::UcxBuffer>) {
+          sig.return_context_type = ContextType::UCX_BUFFER;
+        } else if constexpr (std::is_same_v<ContextT, ucxx::UcxBufferVec>) {
+          sig.return_context_type = ContextType::UCX_BUFFER_VEC;
+        } else {
+          sig.return_context_type = ContextType::MONOSTATE;
+        }
       } else if constexpr (is_serializable_value) {
         sig.return_type = get_param_type<DecayR>();
+        sig.return_context_type = ContextType::MONOSTATE;
       } else {
         sig.return_type = ParamType::UNKNOWN;
+        if constexpr (std::is_same_v<DecayR, ucxx::UcxBuffer>) {
+          sig.return_context_type = ContextType::UCX_BUFFER;
+        } else if constexpr (std::is_same_v<DecayR, ucxx::UcxBufferVec>) {
+          sig.return_context_type = ContextType::UCX_BUFFER_VEC;
+        } else {
+          sig.return_context_type = ContextType::MONOSTATE;
+        }
       }
     }
     return sig;
   }
 
   template <typename Func>
-  static ErasedRpcFunction make_rpc_wrapper(Func&& func) {
+  static std::function<std::pair<RpcResponseHeader, ReturnedContext>(
+    RpcRequestHeader&, RpcContextPtr)>
+  make_rpc_wrapper(Func&& func) {
     return [func = std::forward<Func>(func)](
              RpcRequestHeader& request, RpcContextPtr context_ptr)
-             -> std::pair<RpcResponseHeader, std::any> {
+             -> std::pair<RpcResponseHeader, ReturnedContext> {
       try {
         using Traits = function_traits<std::decay_t<Func>>;
         using ReturnType = typename Traits::return_type;
@@ -546,7 +626,7 @@ class RpcDispatcher {
         using ContextType = typename context_finder<ArgsTuple>::type;
 
         auto invoke_and_package =
-          [&]() -> std::pair<RpcResponseHeader, std::any> {
+          [&]() -> std::pair<RpcResponseHeader, ReturnedContext> {
           auto args = [&]() {
             if constexpr (std::is_void_v<ContextType>) {
               return extract_args_impl<ArgsTuple>(
@@ -566,11 +646,12 @@ class RpcDispatcher {
 
           RpcResponseHeader response;
           response.session_id = request.session_id;
+          response.request_id = request.request_id;
 
           if constexpr (std::is_void_v<ReturnType>) {
             // Case: Function returns void
             std::apply(func, std::move(args));
-            return {std::move(response), std::any{}};
+            return {std::move(response), std::monostate{}};
           } else {
             // Case: Function returns a value
             auto result = std::apply(func, std::move(args));
@@ -578,7 +659,7 @@ class RpcDispatcher {
 
             // Use a constexpr lambda to process the result based on its type.
             // This can sometimes help the compiler with complex template logic.
-            return [&]() -> std::pair<RpcResponseHeader, std::any> {
+            return [&]() -> std::pair<RpcResponseHeader, ReturnedContext> {
               static constexpr bool is_rpc_header_pair =
                 is_pair<DecayR>::value
                 && is_rpc_response_header<std::decay_t<
@@ -587,16 +668,17 @@ class RpcDispatcher {
                 std::is_arithmetic_v<DecayR> || std::is_enum_v<DecayR>;
               static constexpr bool is_serializable_value =
                 is_arithmetic_or_enum || std::is_same_v<DecayR, data::string>
-                || std::is_same_v<DecayR, TensorMetadata>
+                || std::is_same_v<DecayR, TensorMeta>
                 || is_data_vector<DecayR>::value;
 
               if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
                 // Returns RpcResponseHeader directly
-                return {std::move(result), std::any{}};
+                return {std::move(result), std::monostate{}};
               } else if constexpr (is_rpc_header_pair) {
                 // Returns std::pair<RpcResponseHeader, Any>
                 return {
-                  std::move(result.first), std::any(std::move(result.second))};
+                  std::move(result.first),
+                  ReturnedContext(std::move(result.second))};
               } else if constexpr (is_serializable_value) {
                 // Returns a serializable value
                 ParamMeta result_meta;
@@ -606,19 +688,20 @@ class RpcDispatcher {
                 } else if constexpr (std::is_same_v<DecayR, data::string>) {
                   result_meta.type = ParamType::STRING;
                   result_meta.value.emplace<data::string>(std::move(result));
-                } else if constexpr (std::is_same_v<DecayR, TensorMetadata>) {
+                } else if constexpr (std::is_same_v<DecayR, TensorMeta>) {
                   result_meta.type = ParamType::TENSOR_META;
-                  result_meta.value.emplace<TensorMetadata>(std::move(result));
+                  result_meta.value.emplace<TensorMeta>(std::move(result));
                 } else {  // is_data_vector
                   result_meta.type =
                     get_vector_param_info<typename DecayR::value_type>().type;
                   result_meta.value.emplace<VectorValue>(std::move(result));
                 }
                 response.results.emplace_back(std::move(result_meta));
-                return {std::move(response), std::any{}};
+                return {std::move(response), std::monostate{}};
               } else {
                 // Returns a context object
-                return {std::move(response), std::any(std::move(result))};
+                return {
+                  std::move(response), ReturnedContext(std::move(result))};
               }
             }();
           }
@@ -628,10 +711,16 @@ class RpcDispatcher {
       } catch (const std::exception& e) {
         RpcResponseHeader error_response;
         error_response.session_id = request.session_id;
+        error_response.request_id = request.request_id;
         error_response.status =
           std::make_error_code(std::errc::invalid_argument);
         // In a real application, you would log e.what() here.
-        return {std::move(error_response), std::any{}};
+        // For debugging, pack the error message into the results.
+        ParamMeta error_meta;
+        error_meta.type = ParamType::STRING;
+        error_meta.value.emplace<data::string>(e.what());
+        error_response.results.emplace_back(std::move(error_meta));
+        return {std::move(error_response), std::monostate{}};
       }
     };
   }

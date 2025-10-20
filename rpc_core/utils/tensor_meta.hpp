@@ -29,20 +29,20 @@
 
 namespace eux {
 namespace rpc {
-
+namespace utils {
 // A Cista-serializable representation of DLTensor's metadata.
 // It captures all information from a DLTensor except for the raw data pointer.
-struct TensorMetadata {
+struct TensorMeta {
   auto cista_members() {
     return std::tie(device, ndim, dtype, byte_offset, shape, strides);
   }
 
   // Default constructor
-  TensorMetadata() = default;
+  TensorMeta() = default;
 
   // Constructor from an existing DLTensor.
   // Performs a deep copy of the metadata (shape and strides) to ensure safety.
-  explicit TensorMetadata(const DLTensor& source)
+  explicit TensorMeta(const DLTensor& source)
     : device(source.device),
       ndim(source.ndim),
       dtype(source.dtype),
@@ -50,7 +50,7 @@ struct TensorMetadata {
     if (source.ndim > 0) {
       if (source.shape == nullptr) {
         throw std::runtime_error(
-          "Cannot construct TensorMetadata: source DLTensor shape is null for "
+          "Cannot construct TensorMeta: source DLTensor shape is null for "
           "non-zero dimensions.");
       }
       shape.resize(source.ndim);
@@ -70,7 +70,7 @@ struct TensorMetadata {
           strides[0] = 1;
         } else {
           throw std::runtime_error(
-            "Cannot construct TensorMetadata: source DLTensor strides is null "
+            "Cannot construct TensorMeta: source DLTensor strides is null "
             "for dimensions > 1.");
         }
       }
@@ -85,6 +85,7 @@ struct TensorMetadata {
   cista::offset::vector<int64_t> strides;
 };
 
+}  // namespace utils
 }  // namespace rpc
 }  // namespace eux
 
