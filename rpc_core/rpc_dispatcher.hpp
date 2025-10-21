@@ -32,6 +32,7 @@ limitations under the License.
 
 #include <proxy/proxy.h>
 
+#include "rpc_core/rpc_traits.hpp"
 #include "rpc_core/rpc_types.hpp"
 #include "ucx_context/ucx_context_data.hpp"
 
@@ -39,8 +40,7 @@ namespace eux {
 namespace rpc {
 
 // The set of possible context types that can be returned from an RPC function.
-using ReturnedContext =
-  std::variant<std::monostate, ucxx::UcxBuffer, ucxx::UcxBufferVec>;
+using ReturnedPayload = PayloadVariant;
 
 #if WITH_CISTA_VERSION && WITH_CISTA_INTEGRITY
 constexpr auto const MODE =  // opt. versioning + check sum
@@ -79,111 +79,11 @@ using RpcContextPtr = std::unique_ptr<void, void (*)(void*)>;
 struct ErasedRpcFunctionFacade
   : pro::facade_builder::add_convention<
       pro::operator_dispatch<"()">,
-      std::pair<RpcResponseHeader, ReturnedContext>(
+      std::pair<RpcResponseHeader, ReturnedPayload>(
         RpcRequestHeader&, RpcContextPtr)>::
       support_relocation<pro::constraint_level::trivial>::build {};
 
 using ErasedRpcFunction = pro::proxy<ErasedRpcFunctionFacade>;
-
-// =============================================================================
-// SFINAE Type Traits for C++17 Compatibility
-// =============================================================================
-
-// Checks if a type is a std::pair
-template <typename T>
-struct is_pair : std::false_type {};
-template <typename T1, typename T2>
-struct is_pair<std::pair<T1, T2>> : std::true_type {};
-
-// Checks if a type is RpcResponseHeader
-template <typename T>
-struct is_rpc_response_header : std::false_type {};
-template <>
-struct is_rpc_response_header<RpcResponseHeader> : std::true_type {};
-
-// Checks if a type is cista::strong
-template <typename T>
-struct is_cista_strong : std::false_type {};
-template <typename T, typename Tag>
-struct is_cista_strong<cista::strong<T, Tag>> : std::true_type {};
-
-// Helper to get the underlying type of a cista::strong
-template <typename T>
-struct get_cista_strong_underlying_type;
-
-template <typename T, typename Tag>
-struct get_cista_strong_underlying_type<cista::strong<T, Tag>> {
-  using type = T;
-};
-
-// Helper to safely get the first type of a pair
-template <typename T>
-struct get_pair_first_type {
-  using type = void;
-};
-template <typename T1, typename T2>
-struct get_pair_first_type<std::pair<T1, T2>> {
-  using type = T1;
-};
-
-// C++20 function traits for deducing properties of callables.
-template <typename T>
-struct function_traits;
-
-template <typename R, typename... Args>
-struct function_traits<R (*)(Args...)> {
-  using return_type = R;
-  using args_tuple = std::tuple<Args...>;
-  static constexpr size_t arity = sizeof...(Args);
-};
-
-template <typename R, typename C, typename... Args>
-struct function_traits<R (C::*)(Args...)> {
-  using return_type = R;
-  using class_type = C;
-  using args_tuple = std::tuple<Args...>;
-  static constexpr size_t arity = sizeof...(Args);
-};
-
-template <typename R, typename C, typename... Args>
-struct function_traits<R (C::*)(Args...) const> {
-  using return_type = R;
-  using class_type = C;
-  using args_tuple = std::tuple<Args...>;
-  static constexpr size_t arity = sizeof...(Args);
-};
-
-template <typename Lambda>
-struct function_traits : function_traits<decltype(&Lambda::operator())> {};
-
-// Helper to deduce the input context type from the function signature.
-template <typename T>
-struct is_data_vector : std::false_type {};
-template <typename T>
-struct is_data_vector<data::vector<T>> : std::true_type {};
-
-template <typename Tuple, size_t Index = 0>
-struct context_finder;
-
-template <typename Tuple, size_t Index>
-struct context_finder {
-  using current_element_raw = std::tuple_element_t<Index, Tuple>;
-  using current_element = std::decay_t<current_element_raw>;
-
-  using type = std::conditional_t<
-    !std::is_arithmetic_v<current_element> && !std::is_enum_v<current_element>
-      && !is_cista_strong<current_element>::value
-      && !std::is_same_v<current_element, RpcRequestHeader>
-      && !is_data_vector<current_element>::value
-      && !std::is_same_v<current_element, data::string>
-      && !std::is_same_v<current_element, TensorMeta>,
-    current_element, typename context_finder<Tuple, Index + 1>::type>;
-};
-
-template <typename Tuple>
-struct context_finder<Tuple, std::tuple_size_v<Tuple>> {
-  using type = void;
-};
 
 // Helper for extracting function arguments from the request header and
 // context.
@@ -224,6 +124,9 @@ T extract_arg(RpcRequestHeader& req, Context&& context, size_t& param_idx) {
     }
   } else {
     // It's a context type.
+    static_assert(
+      is_payload_v<DecayedT>,
+      "Function argument is not a serializable type or a valid payload type.");
     static_assert(
       !std::is_void_v<std::decay_t<Context>>,
       "Function expects a context, but none was provided.");
@@ -268,7 +171,7 @@ class RpcDispatcher {
   std::unordered_map<function_id_t, ErasedRpcFunction> functions_;
   data::hash_map<function_id_t, RpcFunctionSignature> signatures_;
 
-  std::pair<RpcResponseHeader, ReturnedContext> dispatch_impl(
+  std::pair<RpcResponseHeader, ReturnedPayload> dispatch_impl(
     cista::byte_buf&& request_buffer, RpcContextPtr context) {
     RpcRequestHeader* request_ptr = nullptr;
     try {
@@ -426,7 +329,7 @@ class RpcDispatcher {
    * @return An `RpcInvokeResult` containing the header and an optional variant
    * of the returned context.
    */
-  RpcInvokeResult<ReturnedContext> dispatch(cista::byte_buf&& request_buffer) {
+  RpcInvokeResult<ReturnedPayload> dispatch(cista::byte_buf&& request_buffer) {
     auto [header, context_variant] = dispatch_impl(
       std::move(request_buffer), RpcContextPtr(nullptr, [](void*) {}));
     if (static_cast<std::error_code>(header.status)) {
@@ -436,7 +339,7 @@ class RpcDispatcher {
   }
 
   template <typename InputData>
-  RpcInvokeResult<ReturnedContext> dispatch(
+  RpcInvokeResult<ReturnedPayload> dispatch(
     cista::byte_buf&& request_buffer, const InputData& input_data) {
     auto [header, context_variant] = dispatch_impl(
       std::move(request_buffer),
@@ -449,7 +352,7 @@ class RpcDispatcher {
   }
 
   template <typename InputData>
-  RpcInvokeResult<ReturnedContext> dispatch_move(
+  RpcInvokeResult<ReturnedPayload> dispatch_move(
     cista::byte_buf&& request_buffer, InputData&& input_data) {
     using DecayedInput = std::decay_t<InputData>;
     DecayedInput owned_input_data(std::forward<InputData>(input_data));
@@ -557,7 +460,7 @@ class RpcDispatcher {
     using Traits = function_traits<std::decay_t<Func>>;
     using ReturnType = typename Traits::return_type;
     using ArgsTuple = typename Traits::args_tuple;
-    using InputContextType = typename context_finder<ArgsTuple>::type;
+    using InputContextType = typename payload_finder<ArgsTuple>::type;
 
     RpcFunctionSignature sig;
     sig.instance_name = instance_name;
@@ -570,7 +473,7 @@ class RpcDispatcher {
     using DecayR = std::decay_t<ReturnType>;
     if constexpr (std::is_void_v<DecayR>) {
       sig.return_type = ParamType::VOID;
-      sig.return_context_type = ContextType::MONOSTATE;
+      sig.return_payload_type = PayloadType::MONOSTATE;
     } else {
       static constexpr bool is_rpc_header_pair =
         is_pair<DecayR>::value
@@ -584,28 +487,28 @@ class RpcDispatcher {
 
       if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
         sig.return_type = ParamType::UNKNOWN;
-        sig.return_context_type = ContextType::MONOSTATE;
+        sig.return_payload_type = PayloadType::MONOSTATE;
       } else if constexpr (is_rpc_header_pair) {
         sig.return_type = ParamType::UNKNOWN;
         using ContextT = std::decay_t<typename DecayR::second_type>;
         if constexpr (std::is_same_v<ContextT, ucxx::UcxBuffer>) {
-          sig.return_context_type = ContextType::UCX_BUFFER;
+          sig.return_payload_type = PayloadType::UCX_BUFFER;
         } else if constexpr (std::is_same_v<ContextT, ucxx::UcxBufferVec>) {
-          sig.return_context_type = ContextType::UCX_BUFFER_VEC;
+          sig.return_payload_type = PayloadType::UCX_BUFFER_VEC;
         } else {
-          sig.return_context_type = ContextType::MONOSTATE;
+          sig.return_payload_type = PayloadType::MONOSTATE;
         }
       } else if constexpr (is_serializable_value) {
         sig.return_type = get_param_type<DecayR>();
-        sig.return_context_type = ContextType::MONOSTATE;
+        sig.return_payload_type = PayloadType::MONOSTATE;
       } else {
         sig.return_type = ParamType::UNKNOWN;
         if constexpr (std::is_same_v<DecayR, ucxx::UcxBuffer>) {
-          sig.return_context_type = ContextType::UCX_BUFFER;
+          sig.return_payload_type = PayloadType::UCX_BUFFER;
         } else if constexpr (std::is_same_v<DecayR, ucxx::UcxBufferVec>) {
-          sig.return_context_type = ContextType::UCX_BUFFER_VEC;
+          sig.return_payload_type = PayloadType::UCX_BUFFER_VEC;
         } else {
-          sig.return_context_type = ContextType::MONOSTATE;
+          sig.return_payload_type = PayloadType::MONOSTATE;
         }
       }
     }
@@ -613,20 +516,20 @@ class RpcDispatcher {
   }
 
   template <typename Func>
-  static std::function<std::pair<RpcResponseHeader, ReturnedContext>(
+  static std::function<std::pair<RpcResponseHeader, ReturnedPayload>(
     RpcRequestHeader&, RpcContextPtr)>
   make_rpc_wrapper(Func&& func) {
     return [func = std::forward<Func>(func)](
              RpcRequestHeader& request, RpcContextPtr context_ptr)
-             -> std::pair<RpcResponseHeader, ReturnedContext> {
+             -> std::pair<RpcResponseHeader, ReturnedPayload> {
       try {
         using Traits = function_traits<std::decay_t<Func>>;
         using ReturnType = typename Traits::return_type;
         using ArgsTuple = typename Traits::args_tuple;
-        using ContextType = typename context_finder<ArgsTuple>::type;
+        using ContextType = typename payload_finder<ArgsTuple>::type;
 
         auto invoke_and_package =
-          [&]() -> std::pair<RpcResponseHeader, ReturnedContext> {
+          [&]() -> std::pair<RpcResponseHeader, ReturnedPayload> {
           auto args = [&]() {
             if constexpr (std::is_void_v<ContextType>) {
               return extract_args_impl<ArgsTuple>(
@@ -659,7 +562,7 @@ class RpcDispatcher {
 
             // Use a constexpr lambda to process the result based on its type.
             // This can sometimes help the compiler with complex template logic.
-            return [&]() -> std::pair<RpcResponseHeader, ReturnedContext> {
+            return [&]() -> std::pair<RpcResponseHeader, ReturnedPayload> {
               static constexpr bool is_rpc_header_pair =
                 is_pair<DecayR>::value
                 && is_rpc_response_header<std::decay_t<
@@ -678,7 +581,7 @@ class RpcDispatcher {
                 // Returns std::pair<RpcResponseHeader, Any>
                 return {
                   std::move(result.first),
-                  ReturnedContext(std::move(result.second))};
+                  ReturnedPayload(std::move(result.second))};
               } else if constexpr (is_serializable_value) {
                 // Returns a serializable value
                 ParamMeta result_meta;
@@ -701,7 +604,7 @@ class RpcDispatcher {
               } else {
                 // Returns a context object
                 return {
-                  std::move(response), ReturnedContext(std::move(result))};
+                  std::move(response), ReturnedPayload(std::move(result))};
               }
             }();
           }

@@ -415,21 +415,21 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
   ASSERT_EQ(tensor_sig.param_types.size(), 1);
   EXPECT_EQ(tensor_sig.param_types[0], ParamType::TENSOR_META);
   EXPECT_EQ(tensor_sig.return_type, ParamType::PRIMITIVE_INT64);
-  EXPECT_EQ(tensor_sig.return_context_type, ContextType::MONOSTATE);
+  EXPECT_EQ(tensor_sig.return_payload_type, PayloadType::MONOSTATE);
 
   // Test signature for 'return_ucx_buffer'
   auto buffer_sig_opt = dispatcher.get_signature(function_id_t{12});
   ASSERT_TRUE(buffer_sig_opt.has_value());
   auto& buffer_sig = buffer_sig_opt.value();
   EXPECT_EQ(buffer_sig.return_type, ParamType::UNKNOWN);
-  EXPECT_EQ(buffer_sig.return_context_type, ContextType::UCX_BUFFER);
+  EXPECT_EQ(buffer_sig.return_payload_type, PayloadType::UCX_BUFFER);
 
   // Test signature for 'return_ucx_buffer_vec'
   auto buffer_vec_sig_opt = dispatcher.get_signature(function_id_t{13});
   ASSERT_TRUE(buffer_vec_sig_opt.has_value());
   auto& buffer_vec_sig = buffer_vec_sig_opt.value();
   EXPECT_EQ(buffer_vec_sig.return_type, ParamType::UNKNOWN);
-  EXPECT_EQ(buffer_vec_sig.return_context_type, ContextType::UCX_BUFFER_VEC);
+  EXPECT_EQ(buffer_vec_sig.return_payload_type, PayloadType::UCX_BUFFER_VEC);
 
   // Test getting all signatures
   auto serialized_sigs = dispatcher.get_all_signatures();
