@@ -206,55 +206,7 @@ class HybridLogicalClock final {
   uint64_t raw_{0};
 };
 
-using event_id_t = cista::strong<uint32_t, struct event_id_tag>;
 using workflow_id_t = cista::strong<uint32_t, struct workflow_id_tag>;
-
-/**
- * @brief Metadata for tracing directed cyclic workflows in DAG-like schedulers.
- */
-struct EventMetadata {
-  event_id_t event_id{};
-  workflow_id_t workflow_id{};
-
-  EventMetadata() = default;
-
-  EventMetadata(event_id_t eid, workflow_id_t wid)
-    : event_id{eid}, workflow_id{wid} {}
-
-  EventMetadata(unsigned int eid, unsigned int wid)
-    : event_id{eid}, workflow_id{wid} {}
-
-  [[nodiscard]] constexpr bool valid() const noexcept {
-    return event_id != event_id_t{};
-  }
-
-  constexpr void clear() noexcept {
-    event_id = event_id_t{};
-    workflow_id = workflow_id_t{};
-  }
-
-  constexpr void assign(
-    event_id_t new_id, workflow_id_t new_workflow_id = {}) noexcept {
-    event_id = new_id;
-    workflow_id = new_workflow_id;
-  }
-
-  [[nodiscard]] constexpr auto cista_members() const noexcept {
-    return std::tie(event_id, workflow_id);
-  }
-};
-
-/**
- * @brief Aggregated temporal metadata propagated through RPC middleware.
- */
-struct RpcTemporalMetadata {
-  HybridLogicalClock clock{};
-  EventMetadata event{};
-
-  [[nodiscard]] constexpr auto cista_members() const noexcept {
-    return std::tie(clock, event);
-  }
-};
 
 }  // namespace utils
 }  // namespace rpc
