@@ -26,6 +26,7 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
+#include "rpc_core/rpc_payload_types.hpp"
 #include "rpc_core/rpc_status.hpp"
 #include "rpc_core/utils/hybrid_logical_clock.hpp"
 #include "rpc_core/utils/tensor_meta.hpp"
@@ -77,15 +78,7 @@ enum class ParamType : uint8_t {
 };
 
 // Describes the type of context object returned by an RPC function.
-enum class PayloadType : uint8_t {
-  MONOSTATE,
-  UCX_BUFFER,
-  UCX_BUFFER_VEC,
-};
-
 // The set of possible payload types that can be part of an RPC call.
-using PayloadVariant =
-  std::variant<std::monostate, ucxx::UcxBuffer, ucxx::UcxBufferVec>;
 
 // --- Nested Variant Definitions to Avoid Cista Bug ---
 // Cista's variant has a bug in its recursive template logic for variants with

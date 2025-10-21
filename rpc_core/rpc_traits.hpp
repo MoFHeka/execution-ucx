@@ -100,16 +100,27 @@ struct function_traits<R (C::*)(Args...) const> {
 template <typename Lambda>
 struct function_traits : function_traits<decltype(&Lambda::operator())> {};
 
-// Helper to check for specific payload types.
-template <typename T, typename... Ts>
-struct is_one_of : std::disjunction<std::is_same<T, Ts>...> {};
+// Helper to check if a type is present in a std::variant.
+template <typename T, typename Variant>
+struct is_in_variant;
 
+template <typename T, typename... Types>
+struct is_in_variant<T, std::variant<Types...>>
+  : std::disjunction<std::is_same<T, Types>...> {};
+
+// Helper to check for specific payload types by deriving from PayloadVariant.
 template <typename T>
-struct is_payload_type
-  : is_one_of<std::decay_t<T>, ucxx::UcxBuffer, ucxx::UcxBufferVec> {};
+struct is_payload_type {
+  static constexpr bool value =
+    !std::is_same_v<std::decay_t<T>, std::monostate>
+    && is_in_variant<std::decay_t<T>, PayloadVariant>::value;
+};
 
 template <typename T>
 constexpr bool is_payload_type_v = is_payload_type<T>::value;
+
+template <typename T>
+constexpr bool is_payload_v = is_payload_type_v<T>;
 
 // Helper to deduce the input context type from the function signature.
 template <typename T>
@@ -118,12 +129,33 @@ template <typename T>
 struct is_data_vector<data::vector<T>> : std::true_type {};
 
 template <typename T>
-constexpr bool is_serializable_v =
-  std::is_arithmetic_v<std::decay_t<T>> || std::is_enum_v<std::decay_t<T>>
-  || is_cista_strong<std::decay_t<T>>::value
-  || std::is_same_v<std::decay_t<T>, data::string>
-  || std::is_same_v<std::decay_t<T>, TensorMeta>
-  || is_data_vector<std::decay_t<T>>::value;
+constexpr ParamType get_param_type() {
+  using DecayedT = std::decay_t<T>;
+
+  if constexpr (
+    is_payload_v<DecayedT> || std::is_same_v<DecayedT, RpcRequestHeader>) {
+    return ParamType::UNKNOWN;  // These are filtered out
+  } else if constexpr (
+    std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>) {
+    return get_primitive_param_info<DecayedT>().type;
+  } else if constexpr (is_cista_strong<DecayedT>::value) {
+    using UnderlyingType =
+      typename get_cista_strong_underlying_type<DecayedT>::type;
+    return get_primitive_param_info<UnderlyingType>().type;
+  } else if constexpr (std::is_same_v<DecayedT, data::string>) {
+    return ParamType::STRING;
+  } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
+    return ParamType::TENSOR_META;
+  } else if constexpr (is_data_vector<DecayedT>::value) {
+    using ElementType = typename DecayedT::value_type;
+    return get_vector_param_info<ElementType>().type;
+  } else {
+    return ParamType::UNKNOWN;
+  }
+}
+
+template <typename T>
+constexpr bool is_serializable_v = get_param_type<T>() != ParamType::UNKNOWN;
 
 template <typename Tuple, size_t Index = 0>
 struct payload_finder;
@@ -142,9 +174,6 @@ template <typename Tuple>
 struct payload_finder<Tuple, std::tuple_size_v<Tuple>> {
   using type = void;
 };
-
-template <typename T>
-constexpr bool is_payload_v = is_payload_type_v<T>;
 
 }  // namespace rpc
 }  // namespace eux

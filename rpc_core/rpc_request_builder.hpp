@@ -42,40 +42,30 @@ void pack_arg(RpcRequestHeader& header, T&& value) {
     "serializable primitive, string, vector, TensorMeta, or a valid payload "
     "type (UcxBuffer, UcxBufferVec).");
 
-  if constexpr (is_payload_v<DecayedT>) {
+  if constexpr (
+    is_payload_v<DecayedT> || std::is_same_v<DecayedT, RpcRequestHeader>) {
     return;
   }
 
   ParamMeta meta;
+  meta.type = get_param_type<DecayedT>();
+
   constexpr bool is_arithmetic_or_enum =
     std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>;
 
-  if constexpr (std::is_same_v<DecayedT, RpcRequestHeader>) {
-    // Ignore RpcRequestHeader arguments as they are part of the structure.
-  } else if constexpr (is_arithmetic_or_enum) {
-    meta.type = get_primitive_param_info<DecayedT>().type;
+  if constexpr (is_arithmetic_or_enum) {
     meta.value.template emplace<PrimitiveValue>(std::forward<T>(value));
-    header.add_param(std::move(meta));
   } else if constexpr (is_cista_strong<DecayedT>::value) {
-    using UnderlyingType =
-      typename get_cista_strong_underlying_type<DecayedT>::type;
-    meta.type = get_primitive_param_info<UnderlyingType>().type;
     meta.value.template emplace<PrimitiveValue>(value.v_);
-    header.add_param(std::move(meta));
   } else if constexpr (std::is_same_v<DecayedT, data::string>) {
-    meta.type = ParamType::STRING;
     meta.value.template emplace<data::string>(std::forward<T>(value));
-    header.add_param(std::move(meta));
   } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
-    meta.type = ParamType::TENSOR_META;
     meta.value.template emplace<TensorMeta>(std::forward<T>(value));
-    header.add_param(std::move(meta));
   } else if constexpr (is_data_vector<DecayedT>::value) {
-    using ElementType = typename DecayedT::value_type;
-    meta.type = get_vector_param_info<ElementType>().type;
     meta.value.template emplace<VectorValue>(std::forward<T>(value));
-    header.add_param(std::move(meta));
   }
+
+  header.add_param(std::move(meta));
 }
 
 template <typename... Args>
@@ -116,12 +106,11 @@ struct PayloadExtractor {
 
 class RpcRequestBuilder {
  public:
-  explicit RpcRequestBuilder(session_id_t session_id)
-    : session_id_(session_id) {}
+  RpcRequestBuilder() = default;
 
   template <typename... Args>
   std::pair<RpcRequestHeader, std::optional<PayloadVariant>> prepare_request(
-    function_id_t function_id, Args&&... args) {
+    function_id_t function_id, session_id_t session_id, Args&&... args) {
     using Extractor = detail::PayloadExtractor<Args...>;
     static_assert(
       Extractor::payload_count <= 1,
@@ -129,8 +118,38 @@ class RpcRequestBuilder {
 
     RpcRequestHeader header;
     header.function_id = function_id;
-    header.session_id = session_id_;
-    header.request_id = request_id_t{request_counter_++};
+    header.session_id = session_id;
+
+    auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
+
+    std::apply(
+      [&header](auto&&... a) {
+        detail::pack_args(header, std::forward<decltype(a)>(a)...);
+      },
+      args_tuple);
+
+    if constexpr (Extractor::payload_count == 1) {
+      auto payload = std::get<Extractor::payload_index>(std::move(args_tuple));
+      return {
+        std::move(header),
+        std::make_optional(PayloadVariant(std::move(payload)))};
+    } else {
+      return {std::move(header), std::nullopt};
+    }
+  }
+
+  template <typename... Args>
+  std::pair<RpcRequestHeader, std::optional<PayloadVariant>> prepare_request(
+    function_id_t function_id, RpcFunctionSignature signature,
+    session_id_t session_id, Args&&... args) {
+    using Extractor = detail::PayloadExtractor<Args...>;
+    static_assert(
+      Extractor::payload_count <= 1,
+      "RPC calls can have at most one payload argument.");
+
+    RpcRequestHeader header;
+    header.function_id = function_id;
+    header.session_id = session_id;
 
     auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
 
@@ -151,8 +170,6 @@ class RpcRequestBuilder {
   }
 
  private:
-  session_id_t session_id_;
-  std::atomic<uint32_t> request_counter_{0};
 };
 
 }  // namespace rpc

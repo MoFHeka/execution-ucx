@@ -413,32 +413,6 @@ class RpcDispatcher {
   }
 
  private:
-  template <typename T>
-  static constexpr ParamType get_param_type() {
-    using DecayedT = std::decay_t<T>;
-    constexpr bool is_arithmetic_or_enum =
-      std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>;
-
-    if constexpr (std::is_same_v<DecayedT, RpcRequestHeader>) {
-      return ParamType::UNKNOWN;  // Should be filtered by caller
-    } else if constexpr (is_arithmetic_or_enum) {
-      return get_primitive_param_info<DecayedT>().type;
-    } else if constexpr (is_cista_strong<DecayedT>::value) {
-      using UnderlyingType =
-        typename get_cista_strong_underlying_type<DecayedT>::type;
-      return get_primitive_param_info<UnderlyingType>().type;
-    } else if constexpr (std::is_same_v<DecayedT, data::string>) {
-      return ParamType::STRING;
-    } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
-      return ParamType::TENSOR_META;
-    } else if constexpr (is_data_vector<DecayedT>::value) {
-      using ElementType = typename DecayedT::value_type;
-      return get_vector_param_info<ElementType>().type;
-    } else {
-      return ParamType::UNKNOWN;  // Context type
-    }
-  }
-
   template <typename Tuple, typename ContextType, size_t Index = 0>
   static void fill_param_types_impl(data::vector<ParamType>& params) {
     if constexpr (Index < std::tuple_size_v<Tuple>) {
@@ -586,7 +560,7 @@ class RpcDispatcher {
                 // Returns a serializable value
                 ParamMeta result_meta;
                 if constexpr (is_arithmetic_or_enum) {
-                  result_meta.type = get_primitive_param_info<DecayR>().type;
+                  result_meta.type = get_param_type<DecayR>();
                   result_meta.value.emplace<PrimitiveValue>(std::move(result));
                 } else if constexpr (std::is_same_v<DecayR, data::string>) {
                   result_meta.type = ParamType::STRING;
@@ -595,8 +569,7 @@ class RpcDispatcher {
                   result_meta.type = ParamType::TENSOR_META;
                   result_meta.value.emplace<TensorMeta>(std::move(result));
                 } else {  // is_data_vector
-                  result_meta.type =
-                    get_vector_param_info<typename DecayR::value_type>().type;
+                  result_meta.type = get_param_type<DecayR>();
                   result_meta.value.emplace<VectorValue>(std::move(result));
                 }
                 response.results.emplace_back(std::move(result_meta));

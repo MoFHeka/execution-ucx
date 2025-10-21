@@ -147,6 +147,40 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithComprehensiveTypes) {
   EXPECT_EQ(buf.size(), 256);
 }
 
+TEST_F(RpcRequestBuilderTest, PrepareRequestWithSignatureValidation) {
+  RpcRequestBuilder builder(session_id_t{888});
+
+  // Create a mock signature.
+  RpcFunctionSignature sig;
+  sig.id = function_id_t{20};
+  sig.param_types.push_back(ParamType::PRIMITIVE_INT32);
+  sig.param_types.push_back(ParamType::STRING);
+  sig.takes_context = true;
+
+  ucxx::DefaultUcxMemoryResourceManager mr;
+  ucxx::UcxBuffer payload(mr, ucx_memory_type_t::HOST, 128);
+
+  // This call should succeed as the types match the signature.
+  auto [req, p] = builder.prepare_request(
+    function_id_t{20}, sig, 123, data::string("test"), std::move(payload));
+
+  EXPECT_EQ(req.function_id.v_, 20);
+  ASSERT_EQ(req.params.size(), 2);
+  EXPECT_EQ(req.get_primitive<int32_t>(0), 123);
+  EXPECT_EQ(req.get_string(1), "test");
+  ASSERT_TRUE(p.has_value());
+
+  // This test demonstrates the assert check. In debug builds, it would fail.
+  // We can't easily test for assert failure in gtest without DEATH tests,
+  // so we document it here.
+  //
+  // RpcFunctionSignature bad_sig;
+  // bad_sig.param_types.push_back(ParamType::PRIMITIVE_FLOAT64);
+  //
+  // builder.prepare_request(function_id_t{21}, bad_sig, 123); // Mismatched
+  // type
+}
+
 /*
 namespace {
 struct InvalidType {};

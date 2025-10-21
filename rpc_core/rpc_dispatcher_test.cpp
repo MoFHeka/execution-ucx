@@ -434,7 +434,8 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
   // Test getting all signatures
   auto serialized_sigs = dispatcher.get_all_signatures();
   auto deserialized_sigs =
-    cista::deserialize<data::vector<RpcFunctionSignature>>(serialized_sigs);
+    cista::deserialize<data::vector<RpcFunctionSignature>, MODE>(
+      serialized_sigs);
 
   ASSERT_NE(deserialized_sigs, nullptr);
   EXPECT_EQ(deserialized_sigs->size(), 5);
@@ -757,7 +758,7 @@ TEST_F(RpcDispatcherTest, EndToEndRpcWithRegistry) {
     ASSERT_NE(serialized_sigs_it, registry.end());
 
     auto deserialized_sigs =
-      cista::deserialize<data::vector<RpcFunctionSignature>>(
+      cista::deserialize<data::vector<RpcFunctionSignature>, MODE>(
         serialized_sigs_it->second);
     ASSERT_NE(deserialized_sigs, nullptr);
 
