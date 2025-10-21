@@ -14,6 +14,7 @@ filegroup(
     name = "rpc_headers",
     srcs = [
         "rpc_dispatcher.hpp",
+        "rpc_payload_types.hpp",
         "rpc_request_builder.hpp",
         "rpc_status.hpp",
         "rpc_traits.hpp",
