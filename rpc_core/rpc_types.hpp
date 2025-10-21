@@ -35,10 +35,7 @@ namespace rpc {
 
 namespace data = cista::offset;
 
-using utils::event_id_t;
-using utils::EventMetadata;
 using utils::HybridLogicalClock;
-using utils::RpcTemporalMetadata;
 using utils::TensorMeta;
 using utils::workflow_id_t;
 
@@ -318,111 +315,39 @@ struct RpcMessageAccessor {
   // --- Temporal metadata helpers
   // -------------------------------------------------
 
-  const utils::HybridLogicalClock& clock() const noexcept {
-    return derived().get_temporal_metadata().clock;
+  void tick_local_hlc() noexcept { derived().get_hlc().tick_local(); }
+
+  void merge_remote_hlc(uint64_t remote_raw_timestamp) noexcept {
+    derived().get_hlc().merge(remote_raw_timestamp);
   }
 
-  utils::HybridLogicalClock& clock() noexcept {
-    return derived().get_temporal_metadata().clock;
+  void merge_remote_hlc(const utils::HybridLogicalClock& remote) noexcept {
+    derived().get_hlc().merge(remote);
   }
 
-  void tick_local_event() noexcept { clock().tick_local(); }
-
-  void merge_remote_clock(uint64_t remote_raw_timestamp) noexcept {
-    clock().merge(remote_raw_timestamp);
+  void clear_workflow_id() noexcept {
+    derived().get_workflow_id() = utils::workflow_id_t{};
   }
 
-  void merge_remote_clock(const utils::HybridLogicalClock& remote) noexcept {
-    clock().merge(remote);
-  }
-
-  const data::string& workflow_id() const noexcept {
-    return derived().get_temporal_metadata().workflow_id;
-  }
-
-  data::string& workflow_id() noexcept {
-    return derived().get_temporal_metadata().workflow_id;
-  }
-
-  const utils::EventMetadata& event() const noexcept {
-    return derived().get_temporal_metadata().event;
-  }
-
-  utils::EventMetadata& event() noexcept {
-    return derived().get_temporal_metadata().event;
-  }
-
-  void clear_event() noexcept {
-    derived().get_temporal_metadata().event.clear();
-  }
-
-  void assign_event(
-    utils::event_id_t id,
-    utils::workflow_id_t workflow_id = utils::workflow_id_t{}) noexcept {
-    derived().get_temporal_metadata().event.assign(id, workflow_id);
+  void assign_workflow_id(utils::workflow_id_t new_workflow_id) noexcept {
+    derived().get_workflow_id() = new_workflow_id;
   }
 };
 
 // RPC request header (contains all non-tensor parameters)
 struct RpcRequestHeader : public RpcMessageAccessor<RpcRequestHeader> {
-  function_id_t function_id;            // Target function identifier
-  session_id_t session_id;              // RPC session identifier
-  request_id_t request_id;              // Unique request identifier
-  data::vector<ParamMeta> params;       // Parameter list
-  utils::RpcTemporalMetadata temporal;  // Temporal metadata for tracing
+  function_id_t function_id;       // Target function identifier
+  session_id_t session_id;         // RPC session identifier
+  request_id_t request_id;         // Unique request identifier
+  data::vector<ParamMeta> params;  // Parameter list
+  utils::HybridLogicalClock hlc{};
+  utils::workflow_id_t workflow_id{};
 
   RpcRequestHeader() = default;
 
-  RpcRequestHeader(
-    function_id_t function_id,
-    session_id_t session_id,
-    request_id_t request_id,
-    const data::vector<ParamMeta>& params,
-    const utils::RpcTemporalMetadata& temporal)
-    : function_id(function_id),
-      session_id(session_id),
-      request_id(request_id),
-      params(params),
-      temporal(temporal) {}
-
-  RpcRequestHeader(
-    uint32_t function_id,
-    uint64_t session_id,
-    uint32_t request_id,
-    const data::vector<ParamMeta>& params,
-    const utils::RpcTemporalMetadata& temporal)
-    : function_id(function_id),
-      session_id(session_id),
-      request_id(request_id),
-      params(params),
-      temporal(temporal) {}
-
-  RpcRequestHeader(
-    function_id_t function_id,
-    session_id_t session_id,
-    request_id_t request_id,
-    data::vector<ParamMeta>&& params,
-    utils::RpcTemporalMetadata&& temporal)
-    : function_id(function_id),
-      session_id(session_id),
-      request_id(request_id),
-      params(std::move(params)),
-      temporal(std::move(temporal)) {}
-
-  RpcRequestHeader(
-    uint32_t function_id,
-    uint64_t session_id,
-    uint32_t request_id,
-    data::vector<ParamMeta>&& params,
-    utils::RpcTemporalMetadata&& temporal)
-    : function_id(function_id),
-      session_id(session_id),
-      request_id(request_id),
-      params(std::move(params)),
-      temporal(std::move(temporal)) {}
-
   auto cista_members() const {
-    return std::tie(function_id, session_id, request_id, params, temporal);
+    return std::tie(
+      function_id, session_id, request_id, params, hlc, workflow_id);
   }
 
   // Add a parameter to the request
@@ -435,73 +360,25 @@ struct RpcRequestHeader : public RpcMessageAccessor<RpcRequestHeader> {
   const data::vector<ParamMeta>& get_params_container() const { return params; }
   data::vector<ParamMeta>& get_params_container() { return params; }
 
-  const utils::RpcTemporalMetadata& get_temporal_metadata() const {
-    return temporal;
-  }
-
-  utils::RpcTemporalMetadata& get_temporal_metadata() { return temporal; }
+  const utils::HybridLogicalClock& get_hlc() const { return hlc; }
+  utils::HybridLogicalClock& get_hlc() { return hlc; }
+  const utils::workflow_id_t& get_workflow_id() const { return workflow_id; }
+  utils::workflow_id_t& get_workflow_id() { return workflow_id; }
 };
 
 // RPC response header
 struct RpcResponseHeader : public RpcMessageAccessor<RpcResponseHeader> {
-  session_id_t session_id;              // RPC session identifier
-  request_id_t request_id;              // Unique request identifier
-  data::vector<ParamMeta> results;      // List of result parameters
-  RpcStatus status{};                   // Response status
-  utils::RpcTemporalMetadata temporal;  // Temporal metadata for tracing
+  session_id_t session_id;          // RPC session identifier
+  request_id_t request_id;          // Unique request identifier
+  data::vector<ParamMeta> results;  // List of result parameters
+  RpcStatus status{};               // Response status
+  utils::HybridLogicalClock hlc{};
+  utils::workflow_id_t workflow_id{};
 
   RpcResponseHeader() = default;
 
-  RpcResponseHeader(
-    session_id_t session_id,
-    request_id_t request_id,
-    const data::vector<ParamMeta>& results,
-    RpcStatus status,
-    const utils::RpcTemporalMetadata& temporal)
-    : session_id(session_id),
-      request_id(request_id),
-      results(results),
-      status(status),
-      temporal(temporal) {}
-
-  RpcResponseHeader(
-    uint64_t session_id,
-    uint32_t request_id,
-    const data::vector<ParamMeta>& results,
-    RpcStatus status,
-    const utils::RpcTemporalMetadata& temporal)
-    : session_id(session_id),
-      request_id(request_id),
-      results(results),
-      status(status),
-      temporal(temporal) {}
-
-  RpcResponseHeader(
-    session_id_t session_id,
-    request_id_t request_id,
-    data::vector<ParamMeta>&& results,
-    RpcStatus status,
-    utils::RpcTemporalMetadata&& temporal)
-    : session_id(session_id),
-      request_id(request_id),
-      results(std::move(results)),
-      status(status),
-      temporal(std::move(temporal)) {}
-
-  RpcResponseHeader(
-    uint64_t session_id,
-    uint32_t request_id,
-    data::vector<ParamMeta>&& results,
-    RpcStatus status,
-    utils::RpcTemporalMetadata&& temporal)
-    : session_id(session_id),
-      request_id(request_id),
-      results(std::move(results)),
-      status(status),
-      temporal(std::move(temporal)) {}
-
   auto cista_members() const {
-    return std::tie(session_id, request_id, results, status, temporal);
+    return std::tie(session_id, request_id, results, status, hlc, workflow_id);
   }
 
   // Add a result to the response
@@ -516,11 +393,10 @@ struct RpcResponseHeader : public RpcMessageAccessor<RpcResponseHeader> {
   }
   data::vector<ParamMeta>& get_params_container() { return results; }
 
-  const utils::RpcTemporalMetadata& get_temporal_metadata() const {
-    return temporal;
-  }
-
-  utils::RpcTemporalMetadata& get_temporal_metadata() { return temporal; }
+  const utils::HybridLogicalClock& get_hlc() const { return hlc; }
+  utils::HybridLogicalClock& get_hlc() { return hlc; }
+  const utils::workflow_id_t& get_workflow_id() const { return workflow_id; }
+  utils::workflow_id_t& get_workflow_id() { return workflow_id; }
 };
 
 }  // namespace rpc

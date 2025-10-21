@@ -36,7 +36,7 @@ namespace rpc {
 
 namespace {
 
-class RpcTemporalMetadataTest : public ::testing::Test {
+class RpcCausalityTest : public ::testing::Test {
  protected:
   static RpcRequestHeader make_request() {
     RpcRequestHeader header;
@@ -67,7 +67,7 @@ struct DataFlowTrace {
   uint64_t clock_raw;        // Hybrid logical clock raw value
   uint64_t physical_ms;      // Physical timestamp in milliseconds
   uint16_t logical_counter;  // Logical counter
-  uint32_t event_id;
+  uint32_t request_id;
   uint32_t workflow_id;
   std::chrono::steady_clock::time_point wall_time;  // Wall clock for ordering
 
@@ -86,11 +86,11 @@ class DistributedGraphRecorder {
     trace.node_name = node_name;
     trace.function_id = header.function_id.v_;
     trace.session_id = header.session_id.v_;
-    trace.clock_raw = header.clock().raw();
-    trace.physical_ms = header.clock().physical_time_ms();
-    trace.logical_counter = header.clock().logical_counter();
-    trace.event_id = header.event().event_id.v_;
-    trace.workflow_id = header.event().workflow_id.v_;
+    trace.clock_raw = header.hlc.raw();
+    trace.physical_ms = header.hlc.physical_time_ms();
+    trace.logical_counter = header.hlc.logical_counter();
+    trace.request_id = header.request_id.v_;
+    trace.workflow_id = header.workflow_id.v_;
     trace.wall_time = std::chrono::steady_clock::now();
 
     // Extract source/dest session info from workflow context
@@ -156,10 +156,10 @@ class DistributedGraphRecorder {
     // Extract source session from temporal metadata or workflow context
     // This is a simplified implementation - in practice, this would be
     // derived from the workflow metadata
-    if (header.event().workflow_id.v_ == 0) {
+    if (header.workflow_id.v_ == 0) {
       return 0;  // Source node
     }
-    return header.event().workflow_id.v_ - 1;  // Parent workflow as source
+    return header.workflow_id.v_ - 1;  // Parent workflow as source
   }
 
   uint32_t extract_dest_session(const RpcRequestHeader& header) const {
@@ -192,47 +192,44 @@ class DistributedGraphRecorder {
   }
 };
 
-TEST_F(RpcTemporalMetadataTest, TemporalMetadataDefaults) {
+TEST_F(RpcCausalityTest, TemporalMetadataDefaults) {
   RpcRequestHeader header;
-  EXPECT_EQ(header.clock().raw(), 0u);
-  EXPECT_EQ(header.event().workflow_id, utils::workflow_id_t{});
-  EXPECT_FALSE(header.event().valid());
+  EXPECT_EQ(header.hlc.raw(), 0u);
+  EXPECT_EQ(header.workflow_id, utils::workflow_id_t{});
 }
 
-TEST_F(RpcTemporalMetadataTest, TickLocalUpdatesClock) {
+TEST_F(RpcCausalityTest, TickLocalUpdatesClock) {
   auto header = make_request();
-  header.tick_local_event();
+  header.tick_local_hlc();
 
-  EXPECT_NE(header.clock().raw(), 0u);
-  EXPECT_LE(header.clock().logical_counter(), 1u);
+  EXPECT_NE(header.hlc.raw(), 0u);
+  EXPECT_LE(header.hlc.logical_counter(), 1u);
 }
 
-TEST_F(RpcTemporalMetadataTest, EventAssignmentAndClear) {
+TEST_F(RpcCausalityTest, EventAssignmentAndClear) {
   RpcRequestHeader header;
-  header.assign_event(utils::event_id_t{42}, utils::workflow_id_t{7});
+  header.workflow_id = utils::workflow_id_t{7};
 
-  EXPECT_TRUE(header.event().valid());
-  EXPECT_EQ(header.event().event_id, utils::event_id_t{42});
-  EXPECT_EQ(header.event().workflow_id, utils::workflow_id_t{7});
+  EXPECT_EQ(header.workflow_id, utils::workflow_id_t{7});
 
-  header.clear_event();
-  EXPECT_FALSE(header.event().valid());
+  header.clear_workflow_id();
+  EXPECT_EQ(header.workflow_id, utils::workflow_id_t{});
 }
 
-TEST_F(RpcTemporalMetadataTest, MergeRemoteClockPropagates) {
+TEST_F(RpcCausalityTest, MergeRemoteClockPropagates) {
   RpcRequestHeader header;
   utils::HybridLogicalClock remote;
   remote.assign(123, 10);
 
   // Set initial clock with some logical counter
-  header.clock().assign(100, 5);  // physical=100, logical=5
+  header.hlc.assign(100, 5);  // physical=100, logical=5
 
-  header.merge_remote_clock(remote);
+  header.merge_remote_hlc(remote);
 
-  EXPECT_GE(header.clock().physical_time_ms(), 123u);
+  EXPECT_GE(header.hlc.physical_time_ms(), 123u);
   // When physical time advances, logical counter is reset to 0 in HLC
   // This is the expected behavior of HLC merge
-  EXPECT_EQ(header.clock().logical_counter(), 0u);
+  EXPECT_EQ(header.hlc.logical_counter(), 0u);
 }
 
 // HLC-based distributed node for proper clock management
@@ -246,11 +243,11 @@ class HLCNode {
     const RpcRequestHeader& incoming_request,
     DistributedGraphRecorder& recorder) {
     // 1. Merge incoming clock into local HLC (receive event)
-    local_hlc_.merge(incoming_request.clock());
+    local_hlc_.merge(incoming_request.hlc);
 
     // 2. Create a copy of incoming request with updated clock for recording
     RpcRequestHeader receive_request = incoming_request;
-    receive_request.clock() = local_hlc_;
+    receive_request.hlc = local_hlc_;
     recorder.record_execution(name_ + "_receive", receive_request);
 
     // 3. Tick local clock for local processing event
@@ -260,12 +257,11 @@ class HLCNode {
     RpcRequestHeader response;
     response.function_id = function_id_t{node_id_};
     response.session_id = incoming_request.session_id;
-    response.assign_event(
-      utils::event_id_t{static_cast<uint32_t>(local_hlc_.raw())},
-      incoming_request.event().workflow_id);
+    response.request_id = request_id_t{static_cast<uint32_t>(local_hlc_.raw())};
+    response.workflow_id = incoming_request.workflow_id;
 
     // 5. Assign current HLC to response clock
-    response.clock() = local_hlc_;
+    response.hlc = local_hlc_;
 
     // 6. Record the response event
     recorder.record_execution(name_ + "_send", response);
@@ -289,7 +285,7 @@ class HLCNode {
   utils::HybridLogicalClock local_hlc_;
 };
 
-TEST_F(RpcTemporalMetadataTest, HLCBasedDistributedForkJoinSimulation) {
+TEST_F(RpcCausalityTest, HLCBasedDistributedForkJoinSimulation) {
   // Create HLC-based distributed nodes for proper clock management
   DistributedGraphRecorder recorder;
 
@@ -309,11 +305,12 @@ TEST_F(RpcTemporalMetadataTest, HLCBasedDistributedForkJoinSimulation) {
     RpcRequestHeader initial_request;
     initial_request.function_id = function_id_t{1};
     initial_request.session_id = session_id_t{1001};
-    initial_request.assign_event(utils::event_id_t{1}, utils::workflow_id_t{0});
+    initial_request.request_id = request_id_t{1};
+    initial_request.workflow_id = utils::workflow_id_t{0};
 
     // Source tick local clock for send event
     uint64_t source_clock = source_node.send_event();
-    initial_request.clock().assign_raw(source_clock);
+    initial_request.hlc.assign_raw(source_clock);
 
     // Record source send event
     recorder.record_execution("Source_send", initial_request);
@@ -324,16 +321,16 @@ TEST_F(RpcTemporalMetadataTest, HLCBasedDistributedForkJoinSimulation) {
     // BranchA receives and processes
     auto branch_a_response =
       branch_a_node.process_request(initial_request, recorder);
-    EXPECT_GT(branch_a_response.clock().raw(), initial_request.clock().raw());
+    EXPECT_GT(branch_a_response.hlc.raw(), initial_request.hlc.raw());
 
     // BranchB receives and processes (parallel)
     auto branch_b_response =
       branch_b_node.process_request(initial_request, recorder);
-    EXPECT_GT(branch_b_response.clock().raw(), initial_request.clock().raw());
+    EXPECT_GT(branch_b_response.hlc.raw(), initial_request.hlc.raw());
 
     // Verify causal ordering: both branches have clocks > source
-    EXPECT_GT(branch_a_response.clock().raw(), source_clock);
-    EXPECT_GT(branch_b_response.clock().raw(), source_clock);
+    EXPECT_GT(branch_a_response.hlc.raw(), source_clock);
+    EXPECT_GT(branch_b_response.hlc.raw(), source_clock);
   });
 
   // Phase 2: Join node waits for both branches
@@ -345,14 +342,14 @@ TEST_F(RpcTemporalMetadataTest, HLCBasedDistributedForkJoinSimulation) {
     RpcRequestHeader branch_a_request;
     branch_a_request.function_id = function_id_t{2};
     branch_a_request.session_id = session_id_t{2001};
-    branch_a_request.assign_event(
-      utils::event_id_t{2}, utils::workflow_id_t{1});
+    branch_a_request.request_id = request_id_t{2};
+    branch_a_request.workflow_id = utils::workflow_id_t{1};
 
     RpcRequestHeader branch_b_request;
     branch_b_request.function_id = function_id_t{3};
     branch_b_request.session_id = session_id_t{2002};
-    branch_b_request.assign_event(
-      utils::event_id_t{3}, utils::workflow_id_t{2});
+    branch_b_request.request_id = request_id_t{3};
+    branch_b_request.workflow_id = utils::workflow_id_t{2};
 
     // Simulate receiving from both branches
     auto join_response_a =
@@ -361,8 +358,8 @@ TEST_F(RpcTemporalMetadataTest, HLCBasedDistributedForkJoinSimulation) {
       join_node.process_request(branch_b_request, recorder);
 
     // Join should have clock > both branches
-    EXPECT_GT(join_response_a.clock().raw(), branch_a_request.clock().raw());
-    EXPECT_GT(join_response_b.clock().raw(), branch_b_request.clock().raw());
+    EXPECT_GT(join_response_a.hlc.raw(), branch_a_request.hlc.raw());
+    EXPECT_GT(join_response_b.hlc.raw(), branch_b_request.hlc.raw());
   });
 
   // Phase 3: Sink node processes final result
@@ -373,12 +370,13 @@ TEST_F(RpcTemporalMetadataTest, HLCBasedDistributedForkJoinSimulation) {
     RpcRequestHeader join_request;
     join_request.function_id = function_id_t{4};
     join_request.session_id = session_id_t{3001};
-    join_request.assign_event(utils::event_id_t{4}, utils::workflow_id_t{3});
+    join_request.request_id = request_id_t{4};
+    join_request.workflow_id = utils::workflow_id_t{3};
 
     auto sink_response = sink_node.process_request(join_request, recorder);
 
     // Sink should have clock > join
-    EXPECT_GT(sink_response.clock().raw(), join_request.clock().raw());
+    EXPECT_GT(sink_response.hlc.raw(), join_request.hlc.raw());
   });
 
   // Wait for all executions to complete
@@ -469,7 +467,7 @@ TEST_F(RpcTemporalMetadataTest, HLCBasedDistributedForkJoinSimulation) {
   }
 }
 
-TEST_F(RpcTemporalMetadataTest, HLCBasicCausalOrdering) {
+TEST_F(RpcCausalityTest, HLCBasicCausalOrdering) {
   // Test basic HLC causal ordering without complex graph
   DistributedGraphRecorder recorder;
 
@@ -481,18 +479,19 @@ TEST_F(RpcTemporalMetadataTest, HLCBasicCausalOrdering) {
   RpcRequestHeader request;
   request.function_id = function_id_t{1};
   request.session_id = session_id_t{1001};
-  request.assign_event(utils::event_id_t{1}, utils::workflow_id_t{0});
+  request.request_id = request_id_t{1};
+  request.workflow_id = utils::workflow_id_t{0};
 
   // NodeA ticks local clock for send event
   uint64_t send_clock = node_a.send_event();
-  request.clock().assign_raw(send_clock);
+  request.hlc.assign_raw(send_clock);
   recorder.record_execution("NodeA_send", request);
 
   // NodeB receives and processes
   auto response = node_b.process_request(request, recorder);
 
   // Verify causal ordering: NodeB clock > NodeA send clock
-  EXPECT_GT(response.clock().raw(), send_clock)
+  EXPECT_GT(response.hlc.raw(), send_clock)
     << "NodeB clock should be greater than NodeA send clock for causal "
        "ordering";
 

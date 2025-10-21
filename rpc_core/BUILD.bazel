@@ -81,9 +81,9 @@ cc_test(
 )
 
 cc_test(
-    name = "rpc_temporal_metadata_test",
+    name = "rpc_causality_test",
     size = "small",
-    srcs = ["rpc_temporal_metadata_test.cpp"],
+    srcs = ["rpc_causality_test.cpp"],
     copts = ["-std=c++20"],
     deps = [
         ":hybrid_logical_clock_lib",
