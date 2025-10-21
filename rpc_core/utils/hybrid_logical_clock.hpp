@@ -71,20 +71,9 @@ class HybridLogicalClock final {
   void tick_local() noexcept { tick_local(current_physical_time_ms()); }
 
   void tick_local(uint64_t observed_physical_ms) noexcept {
-    const uint64_t current_raw = raw_;
-    const uint64_t current_physical = current_raw >> kLogicalBits;
-    const uint64_t advance_mask =
-      static_cast<uint64_t>(observed_physical_ms > current_physical);
-
-    const uint64_t physical_part = (advance_mask * observed_physical_ms
-                                    + (1ULL - advance_mask) * current_physical)
-                                   << kLogicalBits;
-
-    const uint64_t logical_base =
-      advance_mask * 0U
-      + (1ULL - advance_mask)
-          * static_cast<uint64_t>(current_raw & kLogicalMask);
-    raw_ = physical_part | bump_logical(logical_base);
+    // A local event is equivalent to receiving a message from our past self.
+    // The logic is unified by deferring to the merge function.
+    merge(raw_, observed_physical_ms);
   }
 
   void merge(HybridLogicalClock remote) noexcept { merge(remote.raw_); }
@@ -96,16 +85,10 @@ class HybridLogicalClock final {
   // Merge remote HLC (remote_raw) and observed physical time into the local
   // clock.
   void merge(uint64_t remote_raw, uint64_t observed_physical_ms) noexcept {
-    // Extract fields from current and remote HLC
-    const uint64_t local_raw = raw_;
-    const uint64_t local_physical = local_raw >> kLogicalBits;
-    const uint64_t local_logical = local_raw & kLogicalMask;
-
+    const uint64_t local_physical = raw_ >> kLogicalBits;
     const uint64_t remote_physical = remote_raw >> kLogicalBits;
-    const uint64_t remote_logical = remote_raw & kLogicalMask;
 
-    // Fast path: if our wall clock time is max, prefer to early-out with
-    // logical=0
+// Fast path: The most common case is that the wall clock is ahead.
 #if defined(__GNUC__) || defined(__clang__)
     if (__builtin_expect(
           observed_physical_ms > local_physical
@@ -116,27 +99,30 @@ class HybridLogicalClock final {
       observed_physical_ms > local_physical
       && observed_physical_ms > remote_physical) {
 #endif
-      raw_ = (observed_physical_ms << kLogicalBits);  // logical is 0
+      // Physical time has advanced past both clocks. Reset logical time.
+      raw_ = observed_physical_ms << kLogicalBits;
       return;
     }
 
-    // Otherwise, need to determine which clock(s) are max, and merge logical
-    // counters Compute the maximum physical timestamp (most often, this is
-    // observed_physical_ms)
+    // Slower path: Timestamps are close or equal, logical counters matter.
     const uint64_t max_physical =
       std::max({observed_physical_ms, local_physical, remote_physical});
-    const bool local_is_max = local_physical == max_physical;
-    const bool remote_is_max = remote_physical == max_physical;
 
-    // If both are max, take max(logical); else use the logical from the max
-    // one.
-    const uint64_t candidate_logical =
-      (local_is_max && remote_is_max)
-        ? std::max(local_logical, remote_logical)
-        : (local_is_max ? local_logical : remote_logical);
+    uint64_t next_logical = 0;
+    if (max_physical == local_physical && max_physical == remote_physical) {
+      const uint64_t local_logical = raw_ & kLogicalMask;
+      const uint64_t remote_logical = remote_raw & kLogicalMask;
+      next_logical = bump_logical(std::max(local_logical, remote_logical));
+    } else if (max_physical == local_physical) {
+      const uint64_t local_logical = raw_ & kLogicalMask;
+      next_logical = bump_logical(local_logical);
+    } else if (max_physical == remote_physical) {
+      const uint64_t remote_logical = remote_raw & kLogicalMask;
+      next_logical = bump_logical(remote_logical);
+    }
+    // else: max_physical is from observed_physical_ms, next_logical remains 0.
 
-    const uint64_t merged_logical = bump_logical(candidate_logical);
-    raw_ = (max_physical << kLogicalBits) | merged_logical;
+    raw_ = (max_physical << kLogicalBits) | next_logical;
   }
 
   void assign(uint64_t physical_ms, uint16_t logical) noexcept {

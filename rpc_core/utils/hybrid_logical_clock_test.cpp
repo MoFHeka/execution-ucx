@@ -51,7 +51,7 @@ TEST_F(HybridLogicalClockTest, TickLocalAdvancesWhenPhysicalIncreases) {
   clock.tick_local(next_physical);
 
   EXPECT_EQ(clock.physical_time_ms(), next_physical);
-  EXPECT_EQ(clock.logical_counter(), 1u);
+  EXPECT_EQ(clock.logical_counter(), 0u);
 }
 
 TEST_F(HybridLogicalClockTest, TickLocalIncrementsLogicalWhenPhysicalStalled) {
@@ -151,7 +151,7 @@ TEST_F(HybridLogicalClockTest, MergeWithLowerObservedPhysicalPrefersObserved) {
   local.merge(remote.raw(), kBasePhysical + 20);
 
   EXPECT_EQ(local.physical_time_ms(), kBasePhysical + 20);
-  EXPECT_EQ(local.logical_counter(), 1u);
+  EXPECT_EQ(local.logical_counter(), 0u);
 }
 
 }  // namespace

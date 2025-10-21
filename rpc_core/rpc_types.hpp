@@ -24,6 +24,7 @@ limitations under the License.
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "rpc_core/rpc_status.hpp"
 #include "rpc_core/utils/hybrid_logical_clock.hpp"
@@ -76,11 +77,15 @@ enum class ParamType : uint8_t {
 };
 
 // Describes the type of context object returned by an RPC function.
-enum class ContextType : uint8_t {
+enum class PayloadType : uint8_t {
   MONOSTATE,
   UCX_BUFFER,
   UCX_BUFFER_VEC,
 };
+
+// The set of possible payload types that can be part of an RPC call.
+using PayloadVariant =
+  std::variant<std::monostate, ucxx::UcxBuffer, ucxx::UcxBufferVec>;
 
 // --- Nested Variant Definitions to Avoid Cista Bug ---
 // Cista's variant has a bug in its recursive template logic for variants with
@@ -144,7 +149,7 @@ struct RpcFunctionSignature {
   data::string function_name;
   data::vector<ParamType> param_types;
   ParamType return_type;
-  ContextType return_context_type;
+  PayloadType return_payload_type;
   bool takes_context;
 
   auto cista_members() const {
@@ -154,7 +159,7 @@ struct RpcFunctionSignature {
       function_name,
       param_types,
       return_type,
-      return_context_type,
+      return_payload_type,
       takes_context);
   }
 };

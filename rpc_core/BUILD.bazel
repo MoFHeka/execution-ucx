@@ -14,7 +14,9 @@ filegroup(
     name = "rpc_headers",
     srcs = [
         "rpc_dispatcher.hpp",
+        "rpc_request_builder.hpp",
         "rpc_status.hpp",
+        "rpc_traits.hpp",
         "rpc_types.hpp",
     ],
 )
@@ -73,6 +75,17 @@ cc_test(
     name = "rpc_dispatcher_test",
     size = "small",
     srcs = ["rpc_dispatcher_test.cpp"],
+    copts = ["-std=c++20"],
+    deps = [
+        ":rpc_headers_lib",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "rpc_request_builder_test",
+    size = "small",
+    srcs = ["rpc_request_builder_test.cpp"],
     copts = ["-std=c++20"],
     deps = [
         ":rpc_headers_lib",
