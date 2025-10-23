@@ -87,39 +87,19 @@ enum class ParamType : uint8_t {
 
 // Variant for all primitive types
 using PrimitiveValue = data::variant<
-  bool,
-  int8_t,
-  int16_t,
-  int32_t,
-  int64_t,
-  uint8_t,
-  uint16_t,
-  uint32_t,
-  uint64_t,
-  float,
-  double>;
+  bool, int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t,
+  uint64_t, float, double>;
 
 // Variant for all vector-of-primitive types
 using VectorValue = data::variant<
-  data::vector<bool>,
-  data::vector<int8_t>,
-  data::vector<int16_t>,
-  data::vector<int32_t>,
-  data::vector<int64_t>,
-  data::vector<uint8_t>,
-  data::vector<uint16_t>,
-  data::vector<uint32_t>,
-  data::vector<uint64_t>,
-  data::vector<float>,
-  data::vector<double>>;
+  data::vector<bool>, data::vector<int8_t>, data::vector<int16_t>,
+  data::vector<int32_t>, data::vector<int64_t>, data::vector<uint8_t>,
+  data::vector<uint16_t>, data::vector<uint32_t>, data::vector<uint64_t>,
+  data::vector<float>, data::vector<double>>;
 
 // Top-level variant for parameter values
 using ParamValue = data::variant<
-  PrimitiveValue,
-  VectorValue,
-  data::string,
-  std::nullptr_t,
-  TensorMeta>;
+  PrimitiveValue, VectorValue, data::string, std::nullptr_t, TensorMeta>;
 
 // Optimized parameter metadata for RPC header
 struct ParamMeta {
@@ -141,19 +121,14 @@ struct RpcFunctionSignature {
   function_id_t id;
   data::string function_name;
   data::vector<ParamType> param_types;
-  ParamType return_type;
+  data::vector<ParamType> return_types;
   PayloadType return_payload_type;
   bool takes_context;
 
   auto cista_members() const {
     return std::tie(
-      instance_name,
-      id,
-      function_name,
-      param_types,
-      return_type,
-      return_payload_type,
-      takes_context);
+      instance_name, id, function_name, param_types, return_types,
+      return_payload_type, takes_context);
   }
 };
 

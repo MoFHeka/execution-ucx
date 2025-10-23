@@ -153,7 +153,8 @@ class RpcCategoryRegistry {
   RpcCategoryRegistry(const RpcCategoryRegistry&) = delete;
   RpcCategoryRegistry& operator=(const RpcCategoryRegistry&) = delete;
 
-  data::hash_map<std::string_view, const std::error_category*> categories_;
+  cista::raw::hash_map<std::string_view, const std::error_category*>
+    categories_;
 };
 
 // Custom status structure for serialization, compatible with std::error_code.

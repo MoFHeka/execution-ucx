@@ -32,36 +32,37 @@ namespace rpc {
 class RpcRequestBuilderTest : public ::testing::Test {};
 
 TEST_F(RpcRequestBuilderTest, PrepareRequestSimple) {
-  RpcRequestBuilder client(session_id_t{123});
+  RpcRequestBuilder client;
 
-  auto [request, payload] = client.prepare_request(function_id_t{1}, 5, 10);
+  auto request = client.prepare_request(
+    function_id_t{1}, session_id_t{123}, request_id_t{1001}, 5, 10);
 
   EXPECT_EQ(request.function_id.v_, 1);
   EXPECT_EQ(request.session_id.v_, 123);
-  EXPECT_EQ(request.request_id.v_, 0);  // First request
+  ASSERT_EQ(request.request_id.v_, 1001);
   ASSERT_EQ(request.params.size(), 2);
 
   EXPECT_EQ(request.get_primitive<int>(0), 5);
   EXPECT_EQ(request.get_primitive<int>(1), 10);
-  EXPECT_FALSE(payload.has_value());
 
-  auto [request2, payload2] = client.prepare_request(function_id_t{2});
-  EXPECT_EQ(request2.request_id.v_, 1);  // Second request
-  EXPECT_FALSE(payload2.has_value());
+  auto request2 = client.prepare_request(
+    function_id_t{2}, session_id_t{123}, request_id_t{1002});
+  EXPECT_EQ(request2.request_id.v_, 1002);
 }
 
 TEST_F(RpcRequestBuilderTest, PrepareRequestWithPayload) {
-  RpcRequestBuilder client(session_id_t{456});
+  RpcRequestBuilder client;
   data::string test_string = "hello";
   ucxx::DefaultUcxMemoryResourceManager mr;
   ucxx::UcxBufferVec payload(mr, ucx_memory_type_t::HOST, {10, 20});
 
   auto [request, returned_payload] = client.prepare_request(
-    function_id_t{3}, 42, test_string, std::move(payload));
+    function_id_t{3}, session_id_t{456}, request_id_t{1003}, 42, test_string,
+    std::move(payload));
 
   EXPECT_EQ(request.function_id.v_, 3);
   EXPECT_EQ(request.session_id.v_, 456);
-  EXPECT_EQ(request.request_id.v_, 0);
+  EXPECT_EQ(request.request_id.v_, 1003);
 
   // Payload argument is not serialized
   ASSERT_EQ(request.params.size(), 2);
@@ -69,16 +70,15 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithPayload) {
   EXPECT_EQ(request.get_primitive<int>(0), 42);
   EXPECT_EQ(request.get_string(1), test_string);
 
-  ASSERT_TRUE(returned_payload.has_value());
-  ASSERT_TRUE(
-    std::holds_alternative<ucxx::UcxBufferVec>(returned_payload.value()));
-  auto& casted_payload = std::get<ucxx::UcxBufferVec>(returned_payload.value());
+  ASSERT_FALSE(std::holds_alternative<std::monostate>(returned_payload));
+  ASSERT_TRUE(std::holds_alternative<ucxx::UcxBufferVec>(returned_payload));
+  auto& casted_payload = std::get<ucxx::UcxBufferVec>(returned_payload);
   EXPECT_EQ(casted_payload.size(), 2);
   EXPECT_EQ(casted_payload[0].size, 10);
 }
 
 TEST_F(RpcRequestBuilderTest, PrepareRequestWithMovedPayload) {
-  RpcRequestBuilder client(session_id_t{101});
+  RpcRequestBuilder client;
   ucxx::DefaultUcxMemoryResourceManager mr;
   auto payload_ptr =
     std::make_unique<ucxx::UcxBuffer>(mr, ucx_memory_type_t::HOST, 128);
@@ -87,21 +87,20 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithMovedPayload) {
   // We'll test moving a valid one instead.
   ucxx::UcxBuffer payload(mr, ucx_memory_type_t::HOST, 123);
 
-  auto [request, returned_payload] =
-    client.prepare_request(function_id_t{5}, 1, std::move(payload), 2);
+  auto [request, returned_payload] = client.prepare_request(
+    function_id_t{5}, session_id_t{101}, request_id_t{1004}, 1,
+    std::move(payload), 2);
 
-  ASSERT_TRUE(returned_payload.has_value());
-  ASSERT_TRUE(
-    std::holds_alternative<ucxx::UcxBuffer>(returned_payload.value()));
-  auto moved_payload =
-    std::get<ucxx::UcxBuffer>(std::move(returned_payload.value()));
+  ASSERT_FALSE(std::holds_alternative<std::monostate>(returned_payload));
+  ASSERT_TRUE(std::holds_alternative<ucxx::UcxBuffer>(returned_payload));
+  auto moved_payload = std::get<ucxx::UcxBuffer>(std::move(returned_payload));
   EXPECT_EQ(moved_payload.size(), 123);
   // The original payload should be empty after being moved from.
   EXPECT_EQ(payload.size(), 0);
 }
 
 TEST_F(RpcRequestBuilderTest, PrepareRequestWithComprehensiveTypes) {
-  RpcRequestBuilder builder(session_id_t{777});
+  RpcRequestBuilder builder;
   ucxx::DefaultUcxMemoryResourceManager mr;
 
   // Types to test
@@ -116,13 +115,14 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithComprehensiveTypes) {
   ucxx::UcxBuffer val_payload(mr, ucx_memory_type_t::HOST, 256);
 
   auto [req, payload] = builder.prepare_request(
-    function_id_t{10}, val_bool, val_int8, val_uint64, val_double, val_strong,
-    val_vec, val_tensor, std::move(val_payload));
+    function_id_t{10}, session_id_t{777}, request_id_t{1005}, val_bool,
+    val_int8, val_uint64, val_double, val_strong, val_vec, val_tensor,
+    std::move(val_payload));
 
   // Verify header
   EXPECT_EQ(req.function_id.v_, 10);
   EXPECT_EQ(req.session_id.v_, 777);
-  EXPECT_EQ(req.request_id.v_, 0);
+  EXPECT_EQ(req.request_id.v_, 1005);
   ASSERT_EQ(req.params.size(), 7);
 
   // Verify params
@@ -141,14 +141,14 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithComprehensiveTypes) {
   EXPECT_EQ(tensor.ndim, 2);
 
   // Verify payload
-  ASSERT_TRUE(payload.has_value());
-  ASSERT_TRUE(std::holds_alternative<ucxx::UcxBuffer>(payload.value()));
-  auto& buf = std::get<ucxx::UcxBuffer>(payload.value());
+  ASSERT_FALSE(std::holds_alternative<std::monostate>(payload));
+  ASSERT_TRUE(std::holds_alternative<ucxx::UcxBuffer>(payload));
+  auto& buf = std::get<ucxx::UcxBuffer>(payload);
   EXPECT_EQ(buf.size(), 256);
 }
 
 TEST_F(RpcRequestBuilderTest, PrepareRequestWithSignatureValidation) {
-  RpcRequestBuilder builder(session_id_t{888});
+  RpcRequestBuilder builder;
 
   // Create a mock signature.
   RpcFunctionSignature sig;
@@ -162,13 +162,15 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithSignatureValidation) {
 
   // This call should succeed as the types match the signature.
   auto [req, p] = builder.prepare_request(
-    function_id_t{20}, sig, 123, data::string("test"), std::move(payload));
+    function_id_t{20}, sig, session_id_t{888}, request_id_t{1006}, 123, "test",
+    std::move(payload));
 
   EXPECT_EQ(req.function_id.v_, 20);
+  EXPECT_EQ(req.request_id.v_, 1006);
   ASSERT_EQ(req.params.size(), 2);
   EXPECT_EQ(req.get_primitive<int32_t>(0), 123);
   EXPECT_EQ(req.get_string(1), "test");
-  ASSERT_TRUE(p.has_value());
+  ASSERT_FALSE(std::holds_alternative<std::monostate>(p));
 
   // This test demonstrates the assert check. In debug builds, it would fail.
   // We can't easily test for assert failure in gtest without DEATH tests,
