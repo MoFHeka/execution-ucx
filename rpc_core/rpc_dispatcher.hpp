@@ -32,6 +32,7 @@ limitations under the License.
 
 #include <proxy/proxy.h>
 
+#include "rpc_core/rpc_response_builder.hpp"
 #include "rpc_core/rpc_traits.hpp"
 #include "rpc_core/rpc_types.hpp"
 #include "ucx_context/ucx_context_data.hpp"
@@ -80,7 +81,7 @@ struct ErasedRpcFunctionFacade
   : pro::facade_builder::add_convention<
       pro::operator_dispatch<"()">,
       std::pair<RpcResponseHeader, ReturnedPayload>(
-        RpcRequestHeader&, RpcContextPtr)>::
+        const RpcRequestHeader&, RpcContextPtr, const RpcResponseBuilder&)>::
       support_relocation<pro::constraint_level::trivial>::build {};
 
 using ErasedRpcFunction = pro::proxy<ErasedRpcFunctionFacade>;
@@ -88,13 +89,23 @@ using ErasedRpcFunction = pro::proxy<ErasedRpcFunctionFacade>;
 // Helper for extracting function arguments from the request header and
 // context.
 template <typename T, typename Context>
-T extract_arg(RpcRequestHeader& req, Context&& context, size_t& param_idx) {
+T extract_arg(
+  const RpcRequestHeader& req, Context&& context,
+  const RpcResponseBuilder& builder, size_t& param_idx) {
   using DecayedT = std::decay_t<T>;
   static constexpr bool is_arithmetic_or_enum =
     std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>;
 
   if constexpr (std::is_same_v<DecayedT, RpcRequestHeader>) {
     return req;
+  } else if constexpr (std::is_same_v<
+                         DecayedT, std::remove_reference_t<std::remove_const_t<
+                                     RpcResponseBuilder>>>) {
+    static_assert(
+      std::is_lvalue_reference_v<T>
+        && std::is_const_v<std::remove_reference_t<T>>,
+      "RpcResponseBuilder must be passed as const&");
+    return builder;
   } else if constexpr (is_arithmetic_or_enum) {
     return req.get_primitive<DecayedT>(param_idx++);
   } else if constexpr (is_cista_strong<DecayedT>::value) {
@@ -104,24 +115,18 @@ T extract_arg(RpcRequestHeader& req, Context&& context, size_t& param_idx) {
   } else if constexpr (std::is_same_v<DecayedT, data::string>) {
     return req.get_string(param_idx++);
   } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
-    if constexpr (std::is_lvalue_reference_v<T>) {
-      return req.get_tensor(param_idx++);
-    } else {
-      return req.move_tensor(param_idx++);
-    }
+    static_assert(
+      std::is_lvalue_reference_v<T>,
+      "TensorMeta must be passed by lvalue reference (e.g., const "
+      "TensorMeta&) since RpcRequestHeader is const.");
+    return req.get_tensor(param_idx++);
   } else if constexpr (is_data_vector<DecayedT>::value) {
+    static_assert(
+      std::is_lvalue_reference_v<T>,
+      "cista::vector must be passed by lvalue reference (e.g., const "
+      "cista::vector<T>&) since RpcRequestHeader is const.");
     using ElementType = typename DecayedT::value_type;
-    // The ternary operator was causing a -Wreturn-local-addr warning because
-    // the two branches have different return types (value vs. reference),
-    // forcing the reference to be materialized into a temporary.
-    // Using if constexpr solves this by compiling only one branch.
-    if constexpr (!std::is_lvalue_reference_v<T>) {
-      // For value and rvalue reference types, move the vector.
-      return req.template move_vector<ElementType>(param_idx++);
-    } else {
-      // For lvalue reference types, return a reference to avoid copies.
-      return req.template get_vector<ElementType>(param_idx++);
-    }
+    return req.template get_vector<ElementType>(param_idx++);
   } else {
     // It's a context type.
     static_assert(
@@ -138,13 +143,19 @@ T extract_arg(RpcRequestHeader& req, Context&& context, size_t& param_idx) {
   }
 }
 
+template <typename T>
+struct is_std_tuple : std::false_type {};
+template <typename... Args>
+struct is_std_tuple<std::tuple<Args...>> : std::true_type {};
+
 template <typename ArgsTuple, typename Context, size_t... Is>
 auto extract_args_impl(
-  RpcRequestHeader& req, Context&& context, std::index_sequence<Is...>) {
+  const RpcRequestHeader& req, Context&& context,
+  const RpcResponseBuilder& builder, std::index_sequence<Is...>) {
   [[maybe_unused]] size_t param_idx = 0;
   return std::tuple<std::tuple_element_t<Is, ArgsTuple>...>{
     extract_arg<std::tuple_element_t<Is, ArgsTuple>>(
-      req, std::forward<Context>(context), param_idx)...};
+      req, std::forward<Context>(context), builder, param_idx)...};
 }
 
 /**
@@ -169,23 +180,38 @@ class RpcDispatcher {
  private:
   data::string instance_name_;
   std::unordered_map<function_id_t, ErasedRpcFunction> functions_;
-  data::hash_map<function_id_t, RpcFunctionSignature> signatures_;
+  cista::raw::hash_map<function_id_t, RpcFunctionSignature> signatures_;
+
+  std::pair<RpcResponseHeader, ReturnedPayload> invoke_function(
+    const RpcRequestHeader& request, RpcContextPtr context,
+    const RpcResponseBuilder& builder) {
+    try {
+      auto it = functions_.find(request.function_id);
+      if (it == functions_.end()) {
+        throw std::runtime_error("Function not found");
+      }
+      return (*it->second)(request, std::move(context), builder);
+    } catch (const std::exception& e) {
+      RpcResponseHeader error_response;
+      error_response.session_id = request.session_id;
+      error_response.request_id = request.request_id;
+      error_response.status = std::make_error_code(std::errc::invalid_argument);
+      return {std::move(error_response), std::monostate{}};
+    }
+  }
 
   std::pair<RpcResponseHeader, ReturnedPayload> dispatch_impl(
     cista::byte_buf&& request_buffer, RpcContextPtr context) {
-    RpcRequestHeader* request_ptr = nullptr;
+    const RpcRequestHeader* request_ptr = nullptr;
     try {
-      request_ptr = cista::deserialize<RpcRequestHeader, MODE>(request_buffer);
+      request_ptr =
+        cista::deserialize<const RpcRequestHeader, MODE>(request_buffer);
       if (!request_ptr) {
         throw std::runtime_error("Failed to deserialize request");
       }
 
-      auto it = functions_.find(request_ptr->function_id);
-      if (it == functions_.end()) {
-        throw std::runtime_error("Function not found");
-      }
-
-      return (*it->second)(*request_ptr, std::move(context));
+      RpcResponseBuilder builder;
+      return invoke_function(*request_ptr, std::move(context), builder);
     } catch (const std::exception& e) {
       RpcResponseHeader error_response;
       if (request_ptr) {
@@ -246,12 +272,19 @@ class RpcDispatcher {
       std::move(request_buffer),
       RpcContextPtr(&input_data, [](void*) { /* non-owning */ }));
 
-    if (static_cast<std::error_code>(header.status)) {
-      return {std::move(header), std::nullopt};
-    }
+    return build_rpc_result<ReturnContextT>(
+      std::move(header), std::move(context_variant));
+  }
 
-    return {
-      std::move(header), std::get<ReturnContextT>(std::move(context_variant))};
+  template <typename ReturnContextT, typename InputData>
+  RpcInvokeResult<ReturnContextT> dispatch(
+    const RpcRequestHeader& request_header, InputData& input_data,
+    const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
+    auto [header, context_variant] = invoke_function(
+      request_header, RpcContextPtr(&input_data, [](void*) {}), builder);
+
+    return build_rpc_result<ReturnContextT>(
+      std::move(header), std::move(context_variant));
   }
 
   /**
@@ -287,11 +320,24 @@ class RpcDispatcher {
     auto [header, context_variant] =
       dispatch_impl(std::move(request_buffer), std::move(non_owning_ptr));
 
-    if (static_cast<std::error_code>(header.status)) {
-      return {std::move(header), std::nullopt};
-    }
-    return {
-      std::move(header), std::get<ReturnContextT>(std::move(context_variant))};
+    return build_rpc_result<ReturnContextT>(
+      std::move(header), std::move(context_variant));
+  }
+
+  template <typename ReturnContextT, typename InputData>
+  RpcInvokeResult<ReturnContextT> dispatch_move(
+    const RpcRequestHeader& request_header, InputData&& input_data,
+    const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
+    using DecayedInput = std::decay_t<InputData>;
+    DecayedInput owned_input_data(std::forward<InputData>(input_data));
+
+    RpcContextPtr non_owning_ptr(&owned_input_data, [](void*) {});
+
+    auto [header, context_variant] =
+      invoke_function(request_header, std::move(non_owning_ptr), builder);
+
+    return build_rpc_result<ReturnContextT>(
+      std::move(header), std::move(context_variant));
   }
 
   /**
@@ -309,11 +355,19 @@ class RpcDispatcher {
     auto [header, context_variant] = dispatch_impl(
       std::move(request_buffer), RpcContextPtr(nullptr, [](void*) {}));
 
-    if (static_cast<std::error_code>(header.status)) {
-      return {std::move(header), std::nullopt};
-    }
-    return {
-      std::move(header), std::get<ReturnContextT>(std::move(context_variant))};
+    return build_rpc_result<ReturnContextT>(
+      std::move(header), std::move(context_variant));
+  }
+
+  template <typename ReturnContextT>
+  RpcInvokeResult<ReturnContextT> dispatch(
+    const RpcRequestHeader& request_header,
+    const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
+    auto [header, context_variant] = invoke_function(
+      request_header, RpcContextPtr(nullptr, [](void*) {}), builder);
+
+    return build_rpc_result<ReturnContextT>(
+      std::move(header), std::move(context_variant));
   }
 
   /**
@@ -338,6 +392,17 @@ class RpcDispatcher {
     return {std::move(header), std::move(context_variant)};
   }
 
+  RpcInvokeResult<ReturnedPayload> dispatch(
+    const RpcRequestHeader& request_header,
+    const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
+    auto [header, context_variant] = invoke_function(
+      request_header, RpcContextPtr(nullptr, [](void*) {}), builder);
+    if (static_cast<std::error_code>(header.status)) {
+      return {std::move(header), std::nullopt};
+    }
+    return {std::move(header), std::move(context_variant)};
+  }
+
   template <typename InputData>
   RpcInvokeResult<ReturnedPayload> dispatch(
     cista::byte_buf&& request_buffer, const InputData& input_data) {
@@ -352,6 +417,20 @@ class RpcDispatcher {
   }
 
   template <typename InputData>
+  RpcInvokeResult<ReturnedPayload> dispatch(
+    const RpcRequestHeader& request_header, const InputData& input_data,
+    const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
+    auto [header, context_variant] = invoke_function(
+      request_header,
+      RpcContextPtr(const_cast<InputData*>(&input_data), [](void*) {}),
+      builder);
+    if (static_cast<std::error_code>(header.status)) {
+      return {std::move(header), std::nullopt};
+    }
+    return {std::move(header), std::move(context_variant)};
+  }
+
+  template <typename InputData>
   RpcInvokeResult<ReturnedPayload> dispatch_move(
     cista::byte_buf&& request_buffer, InputData&& input_data) {
     using DecayedInput = std::decay_t<InputData>;
@@ -359,6 +438,21 @@ class RpcDispatcher {
     RpcContextPtr non_owning_ptr(&owned_input_data, [](void*) {});
     auto [header, context_variant] =
       dispatch_impl(std::move(request_buffer), std::move(non_owning_ptr));
+    if (static_cast<std::error_code>(header.status)) {
+      return {std::move(header), std::nullopt};
+    }
+    return {std::move(header), std::move(context_variant)};
+  }
+
+  template <typename InputData>
+  RpcInvokeResult<ReturnedPayload> dispatch_move(
+    const RpcRequestHeader& request_header, InputData&& input_data,
+    const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
+    using DecayedInput = std::decay_t<InputData>;
+    DecayedInput owned_input_data(std::forward<InputData>(input_data));
+    RpcContextPtr non_owning_ptr(&owned_input_data, [](void*) {});
+    auto [header, context_variant] =
+      invoke_function(request_header, std::move(non_owning_ptr), builder);
     if (static_cast<std::error_code>(header.status)) {
       return {std::move(header), std::nullopt};
     }
@@ -413,17 +507,44 @@ class RpcDispatcher {
   }
 
  private:
+  template <typename ReturnContextT>
+  RpcInvokeResult<ReturnContextT> build_rpc_result(
+    RpcResponseHeader&& header, ReturnedPayload&& context_variant) {
+    if (static_cast<std::error_code>(header.status)) {
+      return {std::move(header), std::nullopt};
+    }
+
+    if constexpr (std::is_same_v<ReturnContextT, std::monostate>) {
+      if (std::holds_alternative<std::monostate>(context_variant)) {
+        return {std::move(header), std::nullopt};
+      }
+    }
+
+    return {
+      std::move(header), std::get<ReturnContextT>(std::move(context_variant))};
+  }
+
   template <typename Tuple, typename ContextType, size_t Index = 0>
   static void fill_param_types_impl(data::vector<ParamType>& params) {
     if constexpr (Index < std::tuple_size_v<Tuple>) {
       using T = std::tuple_element_t<Index, Tuple>;
       using DecayedT = std::decay_t<T>;
-      if constexpr (
-        !std::is_same_v<DecayedT, ContextType>
-        && !std::is_same_v<DecayedT, RpcRequestHeader>) {
+      if constexpr (get_param_type<DecayedT>() != ParamType::UNKNOWN) {
         params.push_back(get_param_type<T>());
       }
       fill_param_types_impl<Tuple, ContextType, Index + 1>(params);
+    }
+  }
+
+  template <typename Tuple, size_t Index = 0>
+  static void fill_return_types_impl(data::vector<ParamType>& return_types) {
+    if constexpr (Index < std::tuple_size_v<Tuple>) {
+      using T = std::tuple_element_t<Index, Tuple>;
+      using DecayedT = std::decay_t<T>;
+      if constexpr (get_param_type<DecayedT>() != ParamType::UNKNOWN) {
+        return_types.push_back(get_param_type<T>());
+      }
+      fill_return_types_impl<Tuple, Index + 1>(return_types);
     }
   }
 
@@ -446,44 +567,36 @@ class RpcDispatcher {
 
     using DecayR = std::decay_t<ReturnType>;
     if constexpr (std::is_void_v<DecayR>) {
-      sig.return_type = ParamType::VOID;
       sig.return_payload_type = PayloadType::MONOSTATE;
-    } else {
-      static constexpr bool is_rpc_header_pair =
-        is_pair<DecayR>::value
-        && is_rpc_response_header<
-          std::decay_t<typename get_pair_first_type<DecayR>::type>>::value;
-      static constexpr bool is_arithmetic_or_enum =
-        std::is_arithmetic_v<DecayR> || std::is_enum_v<DecayR>;
-      static constexpr bool is_serializable_value =
-        is_arithmetic_or_enum || std::is_same_v<DecayR, data::string>
-        || std::is_same_v<DecayR, TensorMeta> || is_data_vector<DecayR>::value;
-
-      if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
-        sig.return_type = ParamType::UNKNOWN;
-        sig.return_payload_type = PayloadType::MONOSTATE;
-      } else if constexpr (is_rpc_header_pair) {
-        sig.return_type = ParamType::UNKNOWN;
-        using ContextT = std::decay_t<typename DecayR::second_type>;
-        if constexpr (std::is_same_v<ContextT, ucxx::UcxBuffer>) {
-          sig.return_payload_type = PayloadType::UCX_BUFFER;
-        } else if constexpr (std::is_same_v<ContextT, ucxx::UcxBufferVec>) {
-          sig.return_payload_type = PayloadType::UCX_BUFFER_VEC;
-        } else {
-          sig.return_payload_type = PayloadType::MONOSTATE;
-        }
-      } else if constexpr (is_serializable_value) {
-        sig.return_type = get_param_type<DecayR>();
-        sig.return_payload_type = PayloadType::MONOSTATE;
+    } else if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
+      sig.return_payload_type = PayloadType::MONOSTATE;
+    } else if constexpr (
+      is_pair<DecayR>::value
+      && std::is_same_v<
+        std::decay_t<typename get_pair_first_type<DecayR>::type>,
+        RpcResponseHeader>) {
+      using PayloadT = std::decay_t<typename DecayR::second_type>;
+      if constexpr (is_payload_v<PayloadT>) {
+        sig.return_payload_type = get_payload_type<PayloadT>();
       } else {
-        sig.return_type = ParamType::UNKNOWN;
-        if constexpr (std::is_same_v<DecayR, ucxx::UcxBuffer>) {
-          sig.return_payload_type = PayloadType::UCX_BUFFER;
-        } else if constexpr (std::is_same_v<DecayR, ucxx::UcxBufferVec>) {
-          sig.return_payload_type = PayloadType::UCX_BUFFER_VEC;
-        } else {
-          sig.return_payload_type = PayloadType::MONOSTATE;
+        sig.return_payload_type = PayloadType::MONOSTATE;
+      }
+    } else if constexpr (is_std_tuple<DecayR>::value) {
+      fill_return_types_impl<DecayR>(sig.return_types);
+      using PayloadT = typename payload_finder<DecayR>::type;
+      if constexpr (!std::is_void_v<PayloadT>) {
+        sig.return_payload_type = get_payload_type<PayloadT>();
+      } else {
+        sig.return_payload_type = PayloadType::MONOSTATE;
+      }
+    } else {
+      if (is_payload_v<DecayR>) {
+        sig.return_payload_type = get_payload_type<DecayR>();
+      } else {
+        if (get_param_type<DecayR>() != ParamType::UNKNOWN) {
+          sig.return_types.push_back(get_param_type<DecayR>());
         }
+        sig.return_payload_type = PayloadType::MONOSTATE;
       }
     }
     return sig;
@@ -491,10 +604,11 @@ class RpcDispatcher {
 
   template <typename Func>
   static std::function<std::pair<RpcResponseHeader, ReturnedPayload>(
-    RpcRequestHeader&, RpcContextPtr)>
+    const RpcRequestHeader&, RpcContextPtr, const RpcResponseBuilder&)>
   make_rpc_wrapper(Func&& func) {
     return [func = std::forward<Func>(func)](
-             RpcRequestHeader& request, RpcContextPtr context_ptr)
+             const RpcRequestHeader& request, RpcContextPtr context_ptr,
+             const RpcResponseBuilder& builder)
              -> std::pair<RpcResponseHeader, ReturnedPayload> {
       try {
         using Traits = function_traits<std::decay_t<Func>>;
@@ -507,7 +621,7 @@ class RpcDispatcher {
           auto args = [&]() {
             if constexpr (std::is_void_v<ContextType>) {
               return extract_args_impl<ArgsTuple>(
-                request, static_cast<void*>(nullptr),
+                request, static_cast<void*>(nullptr), builder,
                 std::make_index_sequence<Traits::arity>{});
             } else {
               auto* typed_context =
@@ -516,70 +630,63 @@ class RpcDispatcher {
                 throw std::runtime_error("Context required but not provided.");
               }
               return extract_args_impl<ArgsTuple>(
-                request, typed_context,
+                request, typed_context, builder,
                 std::make_index_sequence<Traits::arity>{});
             }
           }();
 
-          RpcResponseHeader response;
-          response.session_id = request.session_id;
-          response.request_id = request.request_id;
-
           if constexpr (std::is_void_v<ReturnType>) {
             // Case: Function returns void
             std::apply(func, std::move(args));
-            return {std::move(response), std::monostate{}};
+            auto header =
+              builder.prepare_response(request.session_id, request.request_id);
+            return {std::move(header), std::monostate{}};
           } else {
             // Case: Function returns a value
             auto result = std::apply(func, std::move(args));
             using DecayR = std::decay_t<decltype(result)>;
 
-            // Use a constexpr lambda to process the result based on its type.
-            // This can sometimes help the compiler with complex template logic.
-            return [&]() -> std::pair<RpcResponseHeader, ReturnedPayload> {
-              static constexpr bool is_rpc_header_pair =
-                is_pair<DecayR>::value
-                && is_rpc_response_header<std::decay_t<
-                  typename get_pair_first_type<DecayR>::type>>::value;
-              static constexpr bool is_arithmetic_or_enum =
-                std::is_arithmetic_v<DecayR> || std::is_enum_v<DecayR>;
-              static constexpr bool is_serializable_value =
-                is_arithmetic_or_enum || std::is_same_v<DecayR, data::string>
-                || std::is_same_v<DecayR, TensorMeta>
-                || is_data_vector<DecayR>::value;
+            // Manual mode: User returns a pre-built response header.
+            static constexpr bool is_header_pair =
+              is_pair<DecayR>::value
+              && std::is_same_v<
+                std::decay_t<typename get_pair_first_type<DecayR>::type>,
+                RpcResponseHeader>;
 
-              if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
-                // Returns RpcResponseHeader directly
-                return {std::move(result), std::monostate{}};
-              } else if constexpr (is_rpc_header_pair) {
-                // Returns std::pair<RpcResponseHeader, Any>
-                return {
-                  std::move(result.first),
-                  ReturnedPayload(std::move(result.second))};
-              } else if constexpr (is_serializable_value) {
-                // Returns a serializable value
-                ParamMeta result_meta;
-                if constexpr (is_arithmetic_or_enum) {
-                  result_meta.type = get_param_type<DecayR>();
-                  result_meta.value.emplace<PrimitiveValue>(std::move(result));
-                } else if constexpr (std::is_same_v<DecayR, data::string>) {
-                  result_meta.type = ParamType::STRING;
-                  result_meta.value.emplace<data::string>(std::move(result));
-                } else if constexpr (std::is_same_v<DecayR, TensorMeta>) {
-                  result_meta.type = ParamType::TENSOR_META;
-                  result_meta.value.emplace<TensorMeta>(std::move(result));
-                } else {  // is_data_vector
-                  result_meta.type = get_param_type<DecayR>();
-                  result_meta.value.emplace<VectorValue>(std::move(result));
+            if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
+              return {std::move(result), std::monostate{}};
+            } else if constexpr (is_header_pair) {
+              return {
+                std::move(result.first),
+                ReturnedPayload(std::move(result.second))};
+            } else {
+              // Automatic mode: Build response from the function's return
+              // value.
+              auto builder_result = [&]() {
+                if constexpr (is_std_tuple<DecayR>::value) {
+                  return std::apply(
+                    [&](auto&&... results) {
+                      return builder.prepare_response(
+                        request.session_id, request.request_id,
+                        std::forward<decltype(results)>(results)...);
+                    },
+                    std::move(result));
+                } else {
+                  return builder.prepare_response(
+                    request.session_id, request.request_id, std::move(result));
                 }
-                response.results.emplace_back(std::move(result_meta));
-                return {std::move(response), std::monostate{}};
+              }();
+
+              if constexpr (std::is_same_v<
+                              std::decay_t<decltype(builder_result)>,
+                              RpcResponseHeader>) {
+                return {std::move(builder_result), std::monostate{}};
               } else {
-                // Returns a context object
                 return {
-                  std::move(response), ReturnedPayload(std::move(result))};
+                  std::move(builder_result.first),
+                  std::move(builder_result.second)};
               }
-            }();
+            }
           }
         };
 

@@ -15,10 +15,9 @@
 
 #pragma once
 
-#ifndef RPC_CORE_RPC_REQUEST_BUILDER_HPP_
-#define RPC_CORE_RPC_REQUEST_BUILDER_HPP_
+#ifndef RPC_CORE_RPC_RESPONSE_BUILDER_HPP_
+#define RPC_CORE_RPC_RESPONSE_BUILDER_HPP_
 
-#include <atomic>
 #include <optional>
 #include <tuple>
 #include <utility>
@@ -33,17 +32,17 @@ namespace rpc {
 namespace detail {
 
 template <typename T>
-void pack_arg(RpcRequestHeader& header, T&& value) {
+void pack_result(RpcResponseHeader& header, T&& value) {
   using DecayedT = std::decay_t<T>;
   static_assert(
     is_serializable_v<DecayedT> || is_payload_v<DecayedT>
-      || std::is_same_v<DecayedT, RpcRequestHeader>,
-    "Unsupported argument type passed to prepare_request. Must be a "
+      || std::is_same_v<DecayedT, RpcResponseHeader>,
+    "Unsupported argument type passed to prepare_response. Must be a "
     "serializable primitive, string, vector, TensorMeta, or a valid payload "
     "type (UcxBuffer, UcxBufferVec).");
 
   if constexpr (
-    is_payload_v<DecayedT> || std::is_same_v<DecayedT, RpcRequestHeader>) {
+    is_payload_v<DecayedT> || std::is_same_v<DecayedT, RpcResponseHeader>) {
     return;
   }
 
@@ -74,15 +73,14 @@ void pack_arg(RpcRequestHeader& header, T&& value) {
     meta.value.template emplace<VectorValue>(std::move(cista_vec));
   }
 
-  header.add_param(std::move(meta));
+  header.add_result(std::move(meta));
 }
 
 template <typename... Args>
-void pack_args(RpcRequestHeader& header, Args&&... args) {
-  (pack_arg(header, std::forward<Args>(args)), ...);
+void pack_results(RpcResponseHeader& header, Args&&... args) {
+  (pack_result(header, std::forward<Args>(args)), ...);
 }
 
-// Finds the index and count of context types in a type pack.
 template <size_t I, typename... Ts>
 struct payload_finder_impl;
 
@@ -113,52 +111,19 @@ struct PayloadExtractor {
 
 }  // namespace detail
 
-class RpcRequestBuilder {
+class RpcResponseBuilder {
  public:
-  RpcRequestBuilder() = default;
+  RpcResponseBuilder() = default;
 
   template <typename... Args>
-  auto prepare_request(
-    function_id_t function_id, session_id_t session_id, request_id_t request_id,
-    Args&&... args) const {
-    using Extractor = detail::PayloadExtractor<Args...>;
-    static_assert(
-      Extractor::payload_count <= 1,
-      "RPC calls can have at most one payload argument.");
-
-    RpcRequestHeader header;
-    header.function_id = function_id;
-    header.session_id = session_id;
-    header.request_id = request_id;
-
-    auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
-
-    std::apply(
-      [&header](auto&&... a) {
-        detail::pack_args(header, std::forward<decltype(a)>(a)...);
-      },
-      args_tuple);
-
-    if constexpr (Extractor::payload_count == 1) {
-      auto payload = std::get<Extractor::payload_index>(std::move(args_tuple));
-      return std::make_pair(
-        std::move(header), PayloadVariant(std::move(payload)));
-    } else {
-      return header;
-    }
-  }
-
-  template <typename... Args>
-  auto prepare_request(
-    function_id_t function_id, RpcFunctionSignature signature,
+  auto prepare_response(
     session_id_t session_id, request_id_t request_id, Args&&... args) const {
     using Extractor = detail::PayloadExtractor<Args...>;
     static_assert(
       Extractor::payload_count <= 1,
-      "RPC calls can have at most one payload argument.");
+      "RPC responses can have at most one payload argument.");
 
-    RpcRequestHeader header;
-    header.function_id = function_id;
+    RpcResponseHeader header;
     header.session_id = session_id;
     header.request_id = request_id;
 
@@ -166,7 +131,7 @@ class RpcRequestBuilder {
 
     std::apply(
       [&header](auto&&... a) {
-        detail::pack_args(header, std::forward<decltype(a)>(a)...);
+        detail::pack_results(header, std::forward<decltype(a)>(a)...);
       },
       args_tuple);
 
@@ -178,12 +143,9 @@ class RpcRequestBuilder {
       return header;
     }
   }
-
- private:
-  mutable std::atomic<uint32_t> request_counter_{0};
 };
 
 }  // namespace rpc
 }  // namespace eux
 
-#endif  // RPC_CORE_RPC_REQUEST_BUILDER_HPP_
+#endif  // RPC_CORE_RPC_RESPONSE_BUILDER_HPP_

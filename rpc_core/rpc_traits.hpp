@@ -22,12 +22,15 @@
 
 #include <tuple>
 #include <type_traits>
+#include <vector>
 
 #include "rpc_core/rpc_types.hpp"
 #include "ucx_context/ucx_context_data.hpp"
 
 namespace eux {
 namespace rpc {
+
+class RpcResponseBuilder;
 
 // =============================================================================
 // SFINAE Type Traits for C++17 Compatibility
@@ -38,12 +41,6 @@ template <typename T>
 struct is_pair : std::false_type {};
 template <typename T1, typename T2>
 struct is_pair<std::pair<T1, T2>> : std::true_type {};
-
-// Checks if a type is RpcResponseHeader
-template <typename T>
-struct is_rpc_response_header : std::false_type {};
-template <>
-struct is_rpc_response_header<RpcResponseHeader> : std::true_type {};
 
 // Checks if a type is cista::strong
 template <typename T>
@@ -122,6 +119,18 @@ constexpr bool is_payload_type_v = is_payload_type<T>::value;
 template <typename T>
 constexpr bool is_payload_v = is_payload_type_v<T>;
 
+template <typename T>
+constexpr PayloadType get_payload_type() {
+  using DecayedT = std::decay_t<T>;
+  if constexpr (std::is_same_v<DecayedT, ucxx::UcxBuffer>) {
+    return PayloadType::UCX_BUFFER;
+  } else if constexpr (std::is_same_v<DecayedT, ucxx::UcxBufferVec>) {
+    return PayloadType::UCX_BUFFER_VEC;
+  } else {
+    return PayloadType::MONOSTATE;
+  }
+}
+
 // Helper to deduce the input context type from the function signature.
 template <typename T>
 struct is_data_vector : std::false_type {};
@@ -129,12 +138,17 @@ template <typename T>
 struct is_data_vector<data::vector<T>> : std::true_type {};
 
 template <typename T>
+struct is_std_vector : std::false_type {};
+template <typename T, typename A>
+struct is_std_vector<std::vector<T, A>> : std::true_type {};
+
+template <typename T>
 constexpr ParamType get_param_type() {
   using DecayedT = std::decay_t<T>;
 
-  if constexpr (
-    is_payload_v<DecayedT> || std::is_same_v<DecayedT, RpcRequestHeader>) {
-    return ParamType::UNKNOWN;  // These are filtered out
+  // Payloads are handled separately and not serialized as parameters.
+  if constexpr (is_payload_v<DecayedT>) {
+    return ParamType::UNKNOWN;
   } else if constexpr (
     std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>) {
     return get_primitive_param_info<DecayedT>().type;
@@ -142,14 +156,21 @@ constexpr ParamType get_param_type() {
     using UnderlyingType =
       typename get_cista_strong_underlying_type<DecayedT>::type;
     return get_primitive_param_info<UnderlyingType>().type;
-  } else if constexpr (std::is_same_v<DecayedT, data::string>) {
+  } else if constexpr (
+    std::is_same_v<DecayedT, data::string>
+    || std::is_same_v<DecayedT, std::string>
+    || std::is_same_v<DecayedT, std::string_view>
+    || std::is_same_v<DecayedT, const char*>) {
     return ParamType::STRING;
   } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
     return ParamType::TENSOR_META;
-  } else if constexpr (is_data_vector<DecayedT>::value) {
+  } else if constexpr (
+    is_data_vector<DecayedT>::value || is_std_vector<DecayedT>::value) {
     using ElementType = typename DecayedT::value_type;
     return get_vector_param_info<ElementType>().type;
   } else {
+    // Types like RpcRequestHeader, RpcResponseBuilder, and any other
+    // unsupported types will fall through to here.
     return ParamType::UNKNOWN;
   }
 }
@@ -166,7 +187,8 @@ struct payload_finder {
   using current_element = std::decay_t<current_element_raw>;
 
   using type = std::conditional_t<
-    is_payload_type_v<current_element>, current_element,
+    is_payload_type_v<current_element>,
+    current_element,
     typename payload_finder<Tuple, Index + 1>::type>;
 };
 
