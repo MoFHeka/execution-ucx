@@ -125,17 +125,17 @@ inline std::error_code make_error_code(RpcErrc e) noexcept {
  */
 class RpcCategoryRegistry {
  public:
-  static RpcCategoryRegistry& get_instance() {
+  static RpcCategoryRegistry& GetInstance() {
     static RpcCategoryRegistry instance;
     return instance;
   }
 
-  void register_category(const std::error_category& category) {
+  void RegisterCategory(const std::error_category& category) {
     // Use string_view to avoid creating a string copy for lookup.
     categories_[std::string_view(category.name())] = &category;
   }
 
-  const std::error_category* find_category(std::string_view name) const {
+  const std::error_category* FindCategory(std::string_view name) const {
     auto it = categories_.find(name);
     if (it != categories_.end()) {
       return it->second;
@@ -146,8 +146,8 @@ class RpcCategoryRegistry {
  private:
   RpcCategoryRegistry() {
     // Pre-register the essential categories.
-    register_category(std::generic_category());
-    register_category(rpc_error_category());
+    RegisterCategory(std::generic_category());
+    RegisterCategory(rpc_error_category());
   }
   ~RpcCategoryRegistry() = default;
   RpcCategoryRegistry(const RpcCategoryRegistry&) = delete;
@@ -175,11 +175,11 @@ struct RpcStatus {
 
   // Conversion to std::error_code.
   operator std::error_code() const {
-    auto& registry = RpcCategoryRegistry::get_instance();
+    auto& registry = RpcCategoryRegistry::GetInstance();
     // Use string_view to avoid allocation during lookup.
     std::string_view category_name_sv(
       category_name.data(), category_name.size());
-    if (const auto* category = registry.find_category(category_name_sv)) {
+    if (const auto* category = registry.FindCategory(category_name_sv)) {
       return {value, *category};
     }
     // Fallback to generic category for unknown categories.

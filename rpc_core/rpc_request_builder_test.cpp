@@ -34,7 +34,7 @@ class RpcRequestBuilderTest : public ::testing::Test {};
 TEST_F(RpcRequestBuilderTest, PrepareRequestSimple) {
   RpcRequestBuilder client;
 
-  auto request = client.prepare_request(
+  auto request = client.PrepareRequest(
     function_id_t{1}, session_id_t{123}, request_id_t{1001}, 5, 10);
 
   EXPECT_EQ(request.function_id.v_, 1);
@@ -42,10 +42,10 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestSimple) {
   ASSERT_EQ(request.request_id.v_, 1001);
   ASSERT_EQ(request.params.size(), 2);
 
-  EXPECT_EQ(request.get_primitive<int>(0), 5);
-  EXPECT_EQ(request.get_primitive<int>(1), 10);
+  EXPECT_EQ(request.GetPrimitive<int>(0), 5);
+  EXPECT_EQ(request.GetPrimitive<int>(1), 10);
 
-  auto request2 = client.prepare_request(
+  auto request2 = client.PrepareRequest(
     function_id_t{2}, session_id_t{123}, request_id_t{1002});
   EXPECT_EQ(request2.request_id.v_, 1002);
 }
@@ -56,7 +56,7 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithPayload) {
   ucxx::DefaultUcxMemoryResourceManager mr;
   ucxx::UcxBufferVec payload(mr, ucx_memory_type_t::HOST, {10, 20});
 
-  auto [request, returned_payload] = client.prepare_request(
+  auto [request, returned_payload] = client.PrepareRequest(
     function_id_t{3}, session_id_t{456}, request_id_t{1003}, 42, test_string,
     std::move(payload));
 
@@ -67,8 +67,8 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithPayload) {
   // Payload argument is not serialized
   ASSERT_EQ(request.params.size(), 2);
 
-  EXPECT_EQ(request.get_primitive<int>(0), 42);
-  EXPECT_EQ(request.get_string(1), test_string);
+  EXPECT_EQ(request.GetPrimitive<int>(0), 42);
+  EXPECT_EQ(request.GetString(1), test_string);
 
   ASSERT_FALSE(std::holds_alternative<std::monostate>(returned_payload));
   ASSERT_TRUE(std::holds_alternative<ucxx::UcxBufferVec>(returned_payload));
@@ -87,7 +87,7 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithMovedPayload) {
   // We'll test moving a valid one instead.
   ucxx::UcxBuffer payload(mr, ucx_memory_type_t::HOST, 123);
 
-  auto [request, returned_payload] = client.prepare_request(
+  auto [request, returned_payload] = client.PrepareRequest(
     function_id_t{5}, session_id_t{101}, request_id_t{1004}, 1,
     std::move(payload), 2);
 
@@ -114,7 +114,7 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithComprehensiveTypes) {
   val_tensor.ndim = 2;
   ucxx::UcxBuffer val_payload(mr, ucx_memory_type_t::HOST, 256);
 
-  auto [req, payload] = builder.prepare_request(
+  auto [req, payload] = builder.PrepareRequest(
     function_id_t{10}, session_id_t{777}, request_id_t{1005}, val_bool,
     val_int8, val_uint64, val_double, val_strong, val_vec, val_tensor,
     std::move(val_payload));
@@ -126,18 +126,18 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithComprehensiveTypes) {
   ASSERT_EQ(req.params.size(), 7);
 
   // Verify params
-  EXPECT_EQ(req.get_primitive<bool>(0), val_bool);
-  EXPECT_EQ(req.get_primitive<int8_t>(1), val_int8);
-  EXPECT_EQ(req.get_primitive<uint64_t>(2), val_uint64);
-  EXPECT_EQ(req.get_primitive<double>(3), val_double);
-  EXPECT_EQ(req.get_primitive<uint32_t>(4), val_strong.v_);
+  EXPECT_EQ(req.GetPrimitive<bool>(0), val_bool);
+  EXPECT_EQ(req.GetPrimitive<int8_t>(1), val_int8);
+  EXPECT_EQ(req.GetPrimitive<uint64_t>(2), val_uint64);
+  EXPECT_EQ(req.GetPrimitive<double>(3), val_double);
+  EXPECT_EQ(req.GetPrimitive<uint32_t>(4), val_strong.v_);
 
-  const auto& vec = req.get_vector<int16_t>(5);
+  const auto& vec = req.GetVector<int16_t>(5);
   ASSERT_EQ(vec.size(), 3);
   EXPECT_EQ(vec[0], -100);
   EXPECT_EQ(vec[2], -300);
 
-  const auto& tensor = req.get_tensor(6);
+  const auto& tensor = req.GetTensor(6);
   EXPECT_EQ(tensor.ndim, 2);
 
   // Verify payload
@@ -161,15 +161,15 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithSignatureValidation) {
   ucxx::UcxBuffer payload(mr, ucx_memory_type_t::HOST, 128);
 
   // This call should succeed as the types match the signature.
-  auto [req, p] = builder.prepare_request(
+  auto [req, p] = builder.PrepareRequest(
     function_id_t{20}, sig, session_id_t{888}, request_id_t{1006}, 123, "test",
     std::move(payload));
 
   EXPECT_EQ(req.function_id.v_, 20);
   EXPECT_EQ(req.request_id.v_, 1006);
   ASSERT_EQ(req.params.size(), 2);
-  EXPECT_EQ(req.get_primitive<int32_t>(0), 123);
-  EXPECT_EQ(req.get_string(1), "test");
+  EXPECT_EQ(req.GetPrimitive<int32_t>(0), 123);
+  EXPECT_EQ(req.GetString(1), "test");
   ASSERT_FALSE(std::holds_alternative<std::monostate>(p));
 
   // This test demonstrates the assert check. In debug builds, it would fail.
@@ -179,7 +179,7 @@ TEST_F(RpcRequestBuilderTest, PrepareRequestWithSignatureValidation) {
   // RpcFunctionSignature bad_sig;
   // bad_sig.param_types.push_back(ParamType::PRIMITIVE_FLOAT64);
   //
-  // builder.prepare_request(function_id_t{21}, bad_sig, 123); // Mismatched
+  // builder.PrepareRequest(function_id_t{21}, bad_sig, 123); // Mismatched
   // type
 }
 
@@ -192,7 +192,7 @@ TEST_F(RpcRequestBuilderTest, FailsToCompileWithInvalidType) {
   RpcRequestBuilder builder(session_id_t{888});
   InvalidType invalid_arg;
   // This line should fail to compile due to the static_assert in pack_arg.
-  builder.prepare_request(function_id_t{11}, invalid_arg);
+  builder.PrepareRequest(function_id_t{11}, invalid_arg);
 }
 */
 

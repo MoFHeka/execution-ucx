@@ -167,21 +167,21 @@ RpcResponseHeader custom_response_header_fn(session_id_t session_id) {
 // =============================================================================
 
 TEST_F(RpcDispatcherTest, Registration) {
-  dispatcher.register_function(function_id_t{1}, &add);
-  EXPECT_TRUE(dispatcher.is_registered(function_id_t{1}));
-  EXPECT_FALSE(dispatcher.is_registered(function_id_t{2}));
-  EXPECT_EQ(dispatcher.function_count(), 1);
+  dispatcher.RegisterFunction(function_id_t{1}, &add);
+  EXPECT_TRUE(dispatcher.IsRegistered(function_id_t{1}));
+  EXPECT_FALSE(dispatcher.IsRegistered(function_id_t{2}));
+  EXPECT_EQ(dispatcher.FunctionCount(), 1);
 
   MyService service;
-  dispatcher.register_function(function_id_t{2}, [&service](int a, int b) {
+  dispatcher.RegisterFunction(function_id_t{2}, [&service](int a, int b) {
     return service.multiply(a, b);
   });
-  EXPECT_TRUE(dispatcher.is_registered(function_id_t{2}));
-  EXPECT_EQ(dispatcher.function_count(), 2);
+  EXPECT_TRUE(dispatcher.IsRegistered(function_id_t{2}));
+  EXPECT_EQ(dispatcher.FunctionCount(), 2);
 }
 
 TEST_F(RpcDispatcherTest, DispatchSimpleFunction) {
-  dispatcher.register_function(function_id_t{1}, &add);
+  dispatcher.RegisterFunction(function_id_t{1}, &add);
 
   RpcRequestHeader request{};
   request.function_id = function_id_t{1};
@@ -190,26 +190,26 @@ TEST_F(RpcDispatcherTest, DispatchSimpleFunction) {
   ParamMeta p1{};
   p1.type = ParamType::PRIMITIVE_INT32;
   p1.value.emplace<PrimitiveValue>(5);
-  request.add_param(std::move(p1));
+  request.AddParam(std::move(p1));
 
   ParamMeta p2{};
   p2.type = ParamType::PRIMITIVE_INT32;
   p2.value.emplace<PrimitiveValue>(10);
-  request.add_param(std::move(p2));
+  request.AddParam(std::move(p2));
 
   auto request_buffer = cista::serialize(request);
   auto response_pair =
-    dispatcher.dispatch<std::monostate>(std::move(request_buffer));
+    dispatcher.Dispatch<std::monostate>(std::move(request_buffer));
   auto& response_header = response_pair.header;
 
   EXPECT_EQ(response_header.session_id.v_, 100);
   ASSERT_EQ(response_header.results.size(), 1);
   EXPECT_EQ(response_header.results[0].type, ParamType::PRIMITIVE_INT32);
-  EXPECT_EQ(response_header.get_primitive<int32_t>(0), 15);
+  EXPECT_EQ(response_header.GetPrimitive<int32_t>(0), 15);
 }
 
 TEST_F(RpcDispatcherTest, DispatchSimpleFunctionWithHeader) {
-  dispatcher.register_function(function_id_t{1}, &add);
+  dispatcher.RegisterFunction(function_id_t{1}, &add);
 
   RpcRequestHeader request{};
   request.function_id = function_id_t{1};
@@ -218,24 +218,24 @@ TEST_F(RpcDispatcherTest, DispatchSimpleFunctionWithHeader) {
   ParamMeta p1{};
   p1.type = ParamType::PRIMITIVE_INT32;
   p1.value.emplace<PrimitiveValue>(5);
-  request.add_param(std::move(p1));
+  request.AddParam(std::move(p1));
 
   ParamMeta p2{};
   p2.type = ParamType::PRIMITIVE_INT32;
   p2.value.emplace<PrimitiveValue>(10);
-  request.add_param(std::move(p2));
+  request.AddParam(std::move(p2));
 
-  auto response_pair = dispatcher.dispatch<std::monostate>(request);
+  auto response_pair = dispatcher.Dispatch<std::monostate>(request);
   auto& response_header = response_pair.header;
 
   EXPECT_EQ(response_header.session_id.v_, 100);
   ASSERT_EQ(response_header.results.size(), 1);
   EXPECT_EQ(response_header.results[0].type, ParamType::PRIMITIVE_INT32);
-  EXPECT_EQ(response_header.get_primitive<int32_t>(0), 15);
+  EXPECT_EQ(response_header.GetPrimitive<int32_t>(0), 15);
 }
 
 TEST_F(RpcDispatcherTest, DispatchVoidFunction) {
-  dispatcher.register_function(function_id_t{2}, &no_op);
+  dispatcher.RegisterFunction(function_id_t{2}, &no_op);
 
   RpcRequestHeader request{};
   request.function_id = function_id_t{2};
@@ -243,7 +243,7 @@ TEST_F(RpcDispatcherTest, DispatchVoidFunction) {
 
   auto request_buffer = cista::serialize(request);
   auto response_pair =
-    dispatcher.dispatch<std::monostate>(std::move(request_buffer));
+    dispatcher.Dispatch<std::monostate>(std::move(request_buffer));
   auto& response_header = response_pair.header;
 
   EXPECT_EQ(response_header.session_id.v_, 101);
@@ -252,7 +252,7 @@ TEST_F(RpcDispatcherTest, DispatchVoidFunction) {
 }
 
 TEST_F(RpcDispatcherTest, DispatchStringFunction) {
-  dispatcher.register_function(function_id_t{3}, &concat);
+  dispatcher.RegisterFunction(function_id_t{3}, &concat);
 
   RpcRequestHeader request{};
   request.function_id = function_id_t{3};
@@ -261,25 +261,25 @@ TEST_F(RpcDispatcherTest, DispatchStringFunction) {
   ParamMeta p1{};
   p1.type = ParamType::STRING;
   p1.value.emplace<data::string>("hello ");
-  request.add_param(std::move(p1));
+  request.AddParam(std::move(p1));
 
   ParamMeta p2{};
   p2.type = ParamType::STRING;
   p2.value.emplace<data::string>("world");
-  request.add_param(std::move(p2));
+  request.AddParam(std::move(p2));
 
   auto request_buffer = cista::serialize(request);
   auto response_pair =
-    dispatcher.dispatch<std::monostate>(std::move(request_buffer));
+    dispatcher.Dispatch<std::monostate>(std::move(request_buffer));
   auto& response_header = response_pair.header;
 
   ASSERT_EQ(response_header.results.size(), 1);
   EXPECT_EQ(response_header.results[0].type, ParamType::STRING);
-  EXPECT_EQ(response_header.get_string(0), data::string("hello world"));
+  EXPECT_EQ(response_header.GetString(0), data::string("hello world"));
 }
 
 TEST_F(RpcDispatcherTest, DispatchVectorFunction) {
-  dispatcher.register_function(function_id_t{4}, &sum_vec);
+  dispatcher.RegisterFunction(function_id_t{4}, &sum_vec);
 
   RpcRequestHeader request{};
   request.function_id = function_id_t{4};
@@ -293,21 +293,21 @@ TEST_F(RpcDispatcherTest, DispatchVectorFunction) {
   ParamMeta p{};
   p.type = ParamType::VECTOR_INT32;
   p.value.emplace<VectorValue>(std::move(v));
-  request.add_param(std::move(p));
+  request.AddParam(std::move(p));
 
   auto request_buffer = cista::serialize(request);
   auto response_pair =
-    dispatcher.dispatch<std::monostate>(std::move(request_buffer));
+    dispatcher.Dispatch<std::monostate>(std::move(request_buffer));
   auto& response_header = response_pair.header;
 
   ASSERT_EQ(response_header.results.size(), 1);
   EXPECT_EQ(response_header.results[0].type, ParamType::PRIMITIVE_INT32);
-  EXPECT_EQ(response_header.get_primitive<int32_t>(0), 60);
+  EXPECT_EQ(response_header.GetPrimitive<int32_t>(0), 60);
 }
 
 TEST_F(RpcDispatcherTest, DispatchMemberFunction) {
   MyService service;
-  dispatcher.register_function(function_id_t{5}, [&service](int a, int b) {
+  dispatcher.RegisterFunction(function_id_t{5}, [&service](int a, int b) {
     return service.multiply(a, b);
   });
 
@@ -318,24 +318,24 @@ TEST_F(RpcDispatcherTest, DispatchMemberFunction) {
   ParamMeta p1{};
   p1.type = ParamType::PRIMITIVE_INT32;
   p1.value.emplace<PrimitiveValue>(6);
-  request.add_param(std::move(p1));
+  request.AddParam(std::move(p1));
 
   ParamMeta p2{};
   p2.type = ParamType::PRIMITIVE_INT32;
   p2.value.emplace<PrimitiveValue>(7);
-  request.add_param(std::move(p2));
+  request.AddParam(std::move(p2));
 
   auto request_buffer = cista::serialize(request);
   auto response_pair =
-    dispatcher.dispatch<std::monostate>(std::move(request_buffer));
+    dispatcher.Dispatch<std::monostate>(std::move(request_buffer));
   auto& response_header = response_pair.header;
 
   ASSERT_EQ(response_header.results.size(), 1);
-  EXPECT_EQ(response_header.get_primitive<int32_t>(0), 42);
+  EXPECT_EQ(response_header.GetPrimitive<int32_t>(0), 42);
 }
 
 TEST_F(RpcDispatcherTest, DispatchReturnRpcResponseHeader) {
-  dispatcher.register_function(function_id_t{8}, &custom_response_header_fn);
+  dispatcher.RegisterFunction(function_id_t{8}, &custom_response_header_fn);
 
   RpcRequestHeader request{};
   request.function_id = function_id_t{8};
@@ -344,16 +344,16 @@ TEST_F(RpcDispatcherTest, DispatchReturnRpcResponseHeader) {
   ParamMeta p{};
   p.type = ParamType::PRIMITIVE_UINT32;
   p.value.emplace<PrimitiveValue>(request.session_id.v_);
-  request.add_param(std::move(p));
+  request.AddParam(std::move(p));
 
   auto request_buffer = cista::serialize(request);
   auto response_pair =
-    dispatcher.dispatch<std::monostate>(std::move(request_buffer));
+    dispatcher.Dispatch<std::monostate>(std::move(request_buffer));
   auto& response_header = response_pair.header;
 
   EXPECT_EQ(response_header.session_id.v_, 107);
   ASSERT_EQ(response_header.results.size(), 1);
-  EXPECT_EQ(response_header.get_string(0), data::string("custom_header"));
+  EXPECT_EQ(response_header.GetString(0), data::string("custom_header"));
 }
 
 TEST_F(RpcDispatcherTest, FunctionNotFound) {
@@ -363,7 +363,7 @@ TEST_F(RpcDispatcherTest, FunctionNotFound) {
 
   auto request_buffer = cista::serialize(request);
   auto response_pair =
-    dispatcher.dispatch<std::monostate>(std::move(request_buffer));
+    dispatcher.Dispatch<std::monostate>(std::move(request_buffer));
   auto& response_header = response_pair.header;
 
   EXPECT_EQ(response_header.session_id.v_, 109);
@@ -372,7 +372,7 @@ TEST_F(RpcDispatcherTest, FunctionNotFound) {
 }
 
 TEST_F(RpcDispatcherTest, TypeMismatch) {
-  dispatcher.register_function(function_id_t{1}, &add);
+  dispatcher.RegisterFunction(function_id_t{1}, &add);
 
   RpcRequestHeader request{};
   request.function_id = function_id_t{1};
@@ -381,16 +381,16 @@ TEST_F(RpcDispatcherTest, TypeMismatch) {
   ParamMeta p1{};
   p1.type = ParamType::PRIMITIVE_INT32;
   p1.value.emplace<PrimitiveValue>(5);
-  request.add_param(std::move(p1));
+  request.AddParam(std::move(p1));
 
   ParamMeta p2{};
   p2.type = ParamType::STRING;  // Mismatch
   p2.value.emplace<data::string>("not a number");
-  request.add_param(std::move(p2));
+  request.AddParam(std::move(p2));
 
   auto request_buffer = cista::serialize(request);
   auto response_pair =
-    dispatcher.dispatch<std::monostate>(std::move(request_buffer));
+    dispatcher.Dispatch<std::monostate>(std::move(request_buffer));
   auto& response_header = response_pair.header;
 
   EXPECT_EQ(response_header.session_id.v_, 110);
@@ -403,25 +403,24 @@ int64_t tensor_meta_volume(const TensorMeta& meta) {
 }
 
 TEST_F(RpcDispatcherTest, GetFunctionSignature) {
-  dispatcher.register_function(
-    function_id_t{1}, &add, data::string("add_func"));
-  dispatcher.register_function(
+  dispatcher.RegisterFunction(function_id_t{1}, &add, data::string("add_func"));
+  dispatcher.RegisterFunction(
     function_id_t{2}, &no_op, data::string("no_op_func"));
-  dispatcher.register_function(
+  dispatcher.RegisterFunction(
     function_id_t{11}, &tensor_meta_volume, data::string("tensor_meta_volume"));
 
   ucxx::DefaultUcxMemoryResourceManager mr;
-  dispatcher.register_function(
+  dispatcher.RegisterFunction(
     function_id_t{12},
     [&mr]() { return return_ucx_buffer(mr); },
     data::string("return_ucx_buffer"));
-  dispatcher.register_function(
+  dispatcher.RegisterFunction(
     function_id_t{13},
     [&mr]() { return return_ucx_buffer_vec(mr); },
     data::string("return_ucx_buffer_vec"));
 
   // Test signature for 'add'
-  auto add_sig_opt = dispatcher.get_signature(function_id_t{1});
+  auto add_sig_opt = dispatcher.GetSignature(function_id_t{1});
   ASSERT_TRUE(add_sig_opt.has_value());
   auto& add_sig = add_sig_opt.value();
   EXPECT_EQ(add_sig.id.v_, 1);
@@ -435,7 +434,7 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
   EXPECT_EQ(add_sig.return_types[0], ParamType::PRIMITIVE_INT32);
 
   // Test signature for 'no_op'
-  auto no_op_sig_opt = dispatcher.get_signature(function_id_t{2});
+  auto no_op_sig_opt = dispatcher.GetSignature(function_id_t{2});
   ASSERT_TRUE(no_op_sig_opt.has_value());
   auto& no_op_sig = no_op_sig_opt.value();
   EXPECT_EQ(no_op_sig.id.v_, 2);
@@ -444,7 +443,7 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
   EXPECT_TRUE(no_op_sig.return_types.empty());
 
   // Test signature for 'tensor_meta_volume'
-  auto tensor_sig_opt = dispatcher.get_signature(function_id_t{11});
+  auto tensor_sig_opt = dispatcher.GetSignature(function_id_t{11});
   ASSERT_TRUE(tensor_sig_opt.has_value());
   auto& tensor_sig = tensor_sig_opt.value();
   EXPECT_EQ(tensor_sig.id.v_, 11);
@@ -456,21 +455,21 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
   EXPECT_EQ(tensor_sig.return_payload_type, PayloadType::MONOSTATE);
 
   // Test signature for 'return_ucx_buffer'
-  auto buffer_sig_opt = dispatcher.get_signature(function_id_t{12});
+  auto buffer_sig_opt = dispatcher.GetSignature(function_id_t{12});
   ASSERT_TRUE(buffer_sig_opt.has_value());
   auto& buffer_sig = buffer_sig_opt.value();
   EXPECT_TRUE(buffer_sig.return_types.empty());
   EXPECT_EQ(buffer_sig.return_payload_type, PayloadType::UCX_BUFFER);
 
   // Test signature for 'return_ucx_buffer_vec'
-  auto buffer_vec_sig_opt = dispatcher.get_signature(function_id_t{13});
+  auto buffer_vec_sig_opt = dispatcher.GetSignature(function_id_t{13});
   ASSERT_TRUE(buffer_vec_sig_opt.has_value());
   auto& buffer_vec_sig = buffer_vec_sig_opt.value();
   EXPECT_TRUE(buffer_vec_sig.return_types.empty());
   EXPECT_EQ(buffer_vec_sig.return_payload_type, PayloadType::UCX_BUFFER_VEC);
 
   // Test getting all signatures
-  auto serialized_sigs = dispatcher.get_all_signatures();
+  auto serialized_sigs = dispatcher.GetAllSignatures();
   auto deserialized_sigs =
     cista::deserialize<data::vector<RpcFunctionSignature>, MODE>(
       serialized_sigs);
@@ -496,7 +495,7 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
 
 TEST_F(RpcDispatcherTest, DispatchWithMixedInputsAndOutputs) {
   ucxx::DefaultUcxMemoryResourceManager mr;
-  dispatcher.register_function(
+  dispatcher.RegisterFunction(
     function_id_t{15},
     [&mr](
       const RpcRequestHeader& req, int multiplier, const data::string& tag,
@@ -514,26 +513,26 @@ TEST_F(RpcDispatcherTest, DispatchWithMixedInputsAndOutputs) {
   ParamMeta p1;
   p1.type = ParamType::PRIMITIVE_INT32;
   p1.value.emplace<PrimitiveValue>(10);
-  request.add_param(std::move(p1));
+  request.AddParam(std::move(p1));
 
   ParamMeta p2;
   p2.type = ParamType::STRING;
   p2.value.emplace<data::string>("processed");
-  request.add_param(std::move(p2));
+  request.AddParam(std::move(p2));
 
   // Non-serializable context input
   ucxx::UcxBufferVec input_vec(
     mr, ucx_memory_type::HOST, {10, 20});  // Total size 30
 
   // 2. Dispatch the call
-  auto result = dispatcher.dispatch<ucxx::UcxBufferVec>(request, input_vec);
+  auto result = dispatcher.Dispatch<ucxx::UcxBufferVec>(request, input_vec);
 
   // 3. Verify outputs
   // Verify serializable outputs from the header
   EXPECT_EQ(result.header.session_id.v_, 400);
   ASSERT_EQ(result.header.results.size(), 2);
-  EXPECT_EQ(result.header.get_primitive<uint64_t>(0), 300);  // 30 * 10
-  EXPECT_EQ(result.header.get_string(1), data::string("processed"));
+  EXPECT_EQ(result.header.GetPrimitive<uint64_t>(0), 300);  // 30 * 10
+  EXPECT_EQ(result.header.GetString(1), data::string("processed"));
 
   // Verify non-serializable context output
   ASSERT_TRUE(result.context.has_value());
@@ -544,9 +543,9 @@ TEST_F(RpcDispatcherTest, DispatchWithMixedInputsAndOutputs) {
 
 TEST_F(RpcDispatcherTest, DispatchDynamic) {
   ucxx::DefaultUcxMemoryResourceManager mr;
-  dispatcher.register_function(
+  dispatcher.RegisterFunction(
     function_id_t(1), [&mr]() { return return_ucx_buffer(mr); });
-  dispatcher.register_function(function_id_t(2), &no_op);
+  dispatcher.RegisterFunction(function_id_t(2), &no_op);
 
   // Test dynamically dispatching a function that returns a context
   {
@@ -555,7 +554,7 @@ TEST_F(RpcDispatcherTest, DispatchDynamic) {
     auto request_buffer = cista::serialize(request);
 
     // Call the non-template overload
-    auto result = dispatcher.dispatch(std::move(request_buffer));
+    auto result = dispatcher.Dispatch(std::move(request_buffer));
     ASSERT_TRUE(result.context.has_value());
 
     // Use std::visit to inspect the variant at runtime
@@ -578,7 +577,7 @@ TEST_F(RpcDispatcherTest, DispatchDynamic) {
     auto request_buffer = cista::serialize(request);
 
     // Call the non-template overload
-    auto result = dispatcher.dispatch(std::move(request_buffer));
+    auto result = dispatcher.Dispatch(std::move(request_buffer));
     ASSERT_TRUE(result.context.has_value());
     ASSERT_TRUE(std::holds_alternative<std::monostate>(result.context.value()));
   }
@@ -586,9 +585,9 @@ TEST_F(RpcDispatcherTest, DispatchDynamic) {
 
 TEST_F(RpcDispatcherTest, DispatchWithReturnContext) {
   ucxx::DefaultUcxMemoryResourceManager mr;
-  dispatcher.register_function(
+  dispatcher.RegisterFunction(
     function_id_t(1), [&mr]() { return return_ucx_buffer(mr); });
-  dispatcher.register_function(
+  dispatcher.RegisterFunction(
     function_id_t(2), [&mr]() { return return_ucx_buffer_vec(mr); });
 
   // Test returning UcxBuffer
@@ -598,14 +597,14 @@ TEST_F(RpcDispatcherTest, DispatchWithReturnContext) {
     auto request_buffer = cista::serialize(request);
 
     auto result =
-      dispatcher.dispatch<ucxx::UcxBuffer>(std::move(request_buffer));
+      dispatcher.Dispatch<ucxx::UcxBuffer>(std::move(request_buffer));
 
     if (!result.context.has_value()) {
       if (
         !result.header.results.empty()
         && result.header.results[0].type == ParamType::STRING) {
         FAIL() << "RPC failed with message: "
-               << result.header.get_string(0).str();
+               << result.header.GetString(0).str();
       } else {
         FAIL() << "RPC failed with no error message. Status: "
                << static_cast<std::error_code>(result.header.status).message();
@@ -624,7 +623,7 @@ TEST_F(RpcDispatcherTest, DispatchWithReturnContext) {
     auto request_buffer = cista::serialize(request);
 
     auto result =
-      dispatcher.dispatch<ucxx::UcxBufferVec>(std::move(request_buffer));
+      dispatcher.Dispatch<ucxx::UcxBufferVec>(std::move(request_buffer));
 
     ASSERT_TRUE(result.context.has_value());
     auto& buffer_vec = result.context.value();
@@ -634,13 +633,13 @@ TEST_F(RpcDispatcherTest, DispatchWithReturnContext) {
   }
 
   // Test type mismatch (expecting context but getting monostate)
-  dispatcher.register_function(function_id_t{3}, &no_op);
+  dispatcher.RegisterFunction(function_id_t{3}, &no_op);
   {
     RpcRequestHeader request{};
     request.function_id = function_id_t{3};
     auto request_buffer = cista::serialize(request);
     EXPECT_THROW(
-      dispatcher.dispatch<ucxx::UcxBuffer>(std::move(request_buffer)),
+      dispatcher.Dispatch<ucxx::UcxBuffer>(std::move(request_buffer)),
       std::bad_variant_access);
   }
 
@@ -650,7 +649,7 @@ TEST_F(RpcDispatcherTest, DispatchWithReturnContext) {
     request.function_id = function_id_t{1};
     auto request_buffer = cista::serialize(request);
     EXPECT_THROW(
-      dispatcher.dispatch<std::monostate>(std::move(request_buffer)),
+      dispatcher.Dispatch<std::monostate>(std::move(request_buffer)),
       std::bad_variant_access);
   }
 }
@@ -659,7 +658,7 @@ TEST_F(RpcDispatcherTest, DispatchWithUcxBufferVecContext) {
   // 1. Register the function that processes UcxBufferVec.
   // NOTE: Due to the const RpcRequestHeader change, functions can no longer
   // take payload by value. We register a function that takes it by const ref.
-  dispatcher.register_function(function_id_t{10}, &process_buffer_vec_ref);
+  dispatcher.RegisterFunction(function_id_t{10}, &process_buffer_vec_ref);
 
   // 2. Prepare the context object (UcxBufferVec).
   // This requires a memory manager.
@@ -675,13 +674,12 @@ TEST_F(RpcDispatcherTest, DispatchWithUcxBufferVecContext) {
 
   // 4. Dispatch the call, moving the context object.
   auto response_pair =
-    dispatcher.dispatch_move(std::move(request_buffer), std::move(buffer_vec));
+    dispatcher.DispatchMove(std::move(request_buffer), std::move(buffer_vec));
   auto& response_header = response_pair.header;
 
   // 5. Verify the result.
   ASSERT_EQ(response_header.results.size(), 1);
-  EXPECT_EQ(
-    response_header.get_primitive<uint64_t>(0), 7168);  // 1024+2048+4096
+  EXPECT_EQ(response_header.GetPrimitive<uint64_t>(0), 7168);  // 1024+2048+4096
   EXPECT_EQ(response_header.status.value, 0);
 }
 
@@ -692,7 +690,7 @@ TensorMeta tensor_meta_mutator(TensorMeta meta) {
 }
 
 TEST_F(RpcDispatcherTest, DispatchTensorMetadataParameter) {
-  dispatcher.register_function(function_id_t{11}, &tensor_meta_volume);
+  dispatcher.RegisterFunction(function_id_t{11}, &tensor_meta_volume);
 
   TensorMeta input_meta = make_test_tensor_meta();
 
@@ -703,21 +701,21 @@ TEST_F(RpcDispatcherTest, DispatchTensorMetadataParameter) {
   ParamMeta tensor_param{};
   tensor_param.type = ParamType::TENSOR_META;
   tensor_param.value.emplace<TensorMeta>(input_meta);
-  request.add_param(std::move(tensor_param));
+  request.AddParam(std::move(tensor_param));
 
-  auto response_pair = dispatcher.dispatch<std::monostate>(request);
+  auto response_pair = dispatcher.Dispatch<std::monostate>(request);
   auto& response_header = response_pair.header;
 
   ASSERT_EQ(response_header.results.size(), 1);
   EXPECT_EQ(response_header.results[0].type, ParamType::PRIMITIVE_INT64);
   EXPECT_EQ(
-    response_header.get_primitive<int64_t>(0), tensor_meta_numel(input_meta));
+    response_header.GetPrimitive<int64_t>(0), tensor_meta_numel(input_meta));
   EXPECT_EQ(response_header.status.value, 0);
 }
 
 TEST_F(RpcDispatcherTest, DispatchWithResponseBuilder) {
   bool builder_called = false;
-  dispatcher.register_function(
+  dispatcher.RegisterFunction(
     function_id_t{14},
     [&builder_called](
       const RpcRequestHeader& req, int a,
@@ -725,10 +723,10 @@ TEST_F(RpcDispatcherTest, DispatchWithResponseBuilder) {
       // Use the builder to prepare a dummy response. This doesn't affect the
       // actual return value but verifies the builder is functional.
       auto resp_header =
-        builder.prepare_response(req.session_id, req.request_id, "test");
+        builder.PrepareResponse(req.session_id, req.request_id, "test");
       EXPECT_EQ(resp_header.session_id, req.session_id);
       EXPECT_EQ(resp_header.request_id, req.request_id);
-      EXPECT_EQ(resp_header.get_string(0), "test");
+      EXPECT_EQ(resp_header.GetString(0), "test");
       builder_called = true;
       return a * 2;
     });
@@ -740,14 +738,14 @@ TEST_F(RpcDispatcherTest, DispatchWithResponseBuilder) {
   ParamMeta p1{};
   p1.type = ParamType::PRIMITIVE_INT32;
   p1.value.emplace<PrimitiveValue>(50);
-  request.add_param(std::move(p1));
+  request.AddParam(std::move(p1));
 
-  auto response_pair = dispatcher.dispatch<std::monostate>(request);
+  auto response_pair = dispatcher.Dispatch<std::monostate>(request);
   auto& response_header = response_pair.header;
 
   EXPECT_TRUE(builder_called);
   ASSERT_EQ(response_header.results.size(), 1);
-  EXPECT_EQ(response_header.get_primitive<int32_t>(0), 100);
+  EXPECT_EQ(response_header.GetPrimitive<int32_t>(0), 100);
   EXPECT_EQ(response_header.session_id.v_, 300);
   EXPECT_EQ(response_header.request_id.v_, 500);
 }
@@ -762,11 +760,11 @@ TEST_F(RpcDispatcherTest, EndToEndRpcWithRegistry) {
   // signatures.
   {
     RpcDispatcher dispatcher_B("client_B_instance");
-    dispatcher_B.register_function(
+    dispatcher_B.RegisterFunction(
       function_id_t{100}, &add, data::string("add_func"));
 
     // Publish signatures to the central registry.
-    registry["client_B_instance"] = dispatcher_B.get_all_signatures();
+    registry["client_B_instance"] = dispatcher_B.GetAllSignatures();
 
     // 3. Client A (the caller) discovers and calls the function.
     // --- Discovery Phase ---
@@ -795,24 +793,24 @@ TEST_F(RpcDispatcherTest, EndToEndRpcWithRegistry) {
     ParamMeta p1{};
     p1.type = ParamType::PRIMITIVE_INT32;
     p1.value.emplace<PrimitiveValue>(25);
-    request.add_param(std::move(p1));
+    request.AddParam(std::move(p1));
 
     ParamMeta p2{};
     p2.type = ParamType::PRIMITIVE_INT32;
     p2.value.emplace<PrimitiveValue>(17);
-    request.add_param(std::move(p2));
+    request.AddParam(std::move(p2));
 
     auto request_buffer = cista::serialize(request);
 
     // Simulate sending the request to Client B's dispatcher.
     auto response_pair =
-      dispatcher_B.dispatch<std::monostate>(std::move(request_buffer));
+      dispatcher_B.Dispatch<std::monostate>(std::move(request_buffer));
     auto& response_header = response_pair.header;
 
     // --- Verification Phase ---
     EXPECT_EQ(response_header.session_id.v_, 2025);
     ASSERT_EQ(response_header.results.size(), 1);
-    EXPECT_EQ(response_header.get_primitive<int32_t>(0), 42);  // 25 + 17
+    EXPECT_EQ(response_header.GetPrimitive<int32_t>(0), 42);  // 25 + 17
     EXPECT_EQ(response_header.status.value, 0);
   }
 }
@@ -828,20 +826,20 @@ std::tuple<int, ucxx::UcxBufferVec> return_multiple_with_payload(
 
 TEST_F(RpcDispatcherTest, DispatchWithTupleReturn) {
   ucxx::DefaultUcxMemoryResourceManager mr;
-  dispatcher.register_function(function_id_t{1}, &return_multiple_values);
-  dispatcher.register_function(
+  dispatcher.RegisterFunction(function_id_t{1}, &return_multiple_values);
+  dispatcher.RegisterFunction(
     function_id_t{2}, [&mr]() { return return_multiple_with_payload(mr); });
 
   // Test case 1: Multiple serializable return values, no payload
   {
     RpcRequestHeader request{};
     request.function_id = function_id_t{1};
-    auto result = dispatcher.dispatch<std::monostate>(request);
+    auto result = dispatcher.Dispatch<std::monostate>(request);
 
     ASSERT_EQ(result.header.results.size(), 3);
-    EXPECT_EQ(result.header.get_primitive<int>(0), 123);
-    EXPECT_EQ(result.header.get_string(1), "hello");
-    EXPECT_EQ(result.header.get_primitive<float>(2), 3.14f);
+    EXPECT_EQ(result.header.GetPrimitive<int>(0), 123);
+    EXPECT_EQ(result.header.GetString(1), "hello");
+    EXPECT_EQ(result.header.GetPrimitive<float>(2), 3.14f);
     EXPECT_FALSE(result.context.has_value());
   }
 
@@ -849,10 +847,10 @@ TEST_F(RpcDispatcherTest, DispatchWithTupleReturn) {
   {
     RpcRequestHeader request{};
     request.function_id = function_id_t{2};
-    auto result = dispatcher.dispatch<ucxx::UcxBufferVec>(request);
+    auto result = dispatcher.Dispatch<ucxx::UcxBufferVec>(request);
 
     ASSERT_EQ(result.header.results.size(), 1);
-    EXPECT_EQ(result.header.get_primitive<int>(0), 456);
+    EXPECT_EQ(result.header.GetPrimitive<int>(0), 456);
     ASSERT_TRUE(result.context.has_value());
     auto& payload = result.context.value();
     EXPECT_EQ(payload.size(), 2);
@@ -885,22 +883,22 @@ std::pair<RpcResponseHeader, ucxx::UcxBuffer> return_manual_pair(
 
 TEST_F(RpcDispatcherTest, DispatchWithManualResponse) {
   ucxx::DefaultUcxMemoryResourceManager mr;
-  dispatcher.register_function(function_id_t{3}, &return_manual_header);
-  dispatcher.register_function(
+  dispatcher.RegisterFunction(function_id_t{3}, &return_manual_header);
+  dispatcher.RegisterFunction(
     function_id_t{4}, [&mr]() { return return_manual_pair(mr); });
 
   // Test case 1: Function returns RpcResponseHeader directly
   {
     RpcRequestHeader request{};
     request.function_id = function_id_t{3};
-    auto result = dispatcher.dispatch<std::monostate>(request);
+    auto result = dispatcher.Dispatch<std::monostate>(request);
 
     EXPECT_EQ(result.header.session_id.v_, 999);
     EXPECT_EQ(
       result.header.status,
       std::make_error_code(std::errc::function_not_supported));
     ASSERT_EQ(result.header.results.size(), 1);
-    EXPECT_EQ(result.header.get_string(0), "manual_header");
+    EXPECT_EQ(result.header.GetString(0), "manual_header");
     EXPECT_FALSE(result.context.has_value());
   }
 
@@ -908,13 +906,116 @@ TEST_F(RpcDispatcherTest, DispatchWithManualResponse) {
   {
     RpcRequestHeader request{};
     request.function_id = function_id_t{4};
-    auto result = dispatcher.dispatch<ucxx::UcxBuffer>(request);
+    auto result = dispatcher.Dispatch<ucxx::UcxBuffer>(request);
 
     EXPECT_EQ(result.header.session_id.v_, 888);
     ASSERT_EQ(result.header.results.size(), 1);
-    EXPECT_EQ(result.header.get_primitive<int64_t>(0), 1337);
+    EXPECT_EQ(result.header.GetPrimitive<int64_t>(0), 1337);
     ASSERT_TRUE(result.context.has_value());
     EXPECT_EQ(result.context.value().size(), 256);
+  }
+}
+
+TEST_F(RpcDispatcherTest, GetCallerNaturalSyntax) {
+  ucxx::DefaultUcxMemoryResourceManager mr;
+
+  // 1. Register functions for testing
+  dispatcher.RegisterFunction(function_id_t{1}, &add, "add");
+  dispatcher.RegisterFunction(function_id_t{2}, &no_op, "no_op");
+  dispatcher.RegisterFunction(
+    function_id_t{3}, &return_multiple_values, "return_multiple_values");
+  dispatcher.RegisterFunction(
+    function_id_t{4},
+    [&mr]() { return return_ucx_buffer_vec(mr); },
+    "return_ucx_buffer_vec");
+  dispatcher.RegisterFunction(
+    function_id_t{5}, &process_buffer_vec_ref, "process_buffer_vec_ref");
+  dispatcher.RegisterFunction(
+    function_id_t{6},
+    [&mr]() { return return_multiple_with_payload(mr); },
+    "return_multiple_with_payload");
+
+  // 2. Test simple function: int add(int, int)
+  {
+    auto add_caller = dispatcher.GetCaller<int(int, int)>(function_id_t{1});
+    int result = add_caller(20, 22);
+    EXPECT_EQ(result, 42);
+  }
+
+  // 3. Test void function: void no_op()
+  {
+    auto no_op_caller = dispatcher.GetCaller<void()>(function_id_t{2});
+    no_op_caller();  // Should not throw and complete successfully
+  }
+
+  // 4. Test tuple return: std::tuple<int, std::string, float>()
+  {
+    auto tuple_caller =
+      dispatcher.GetCaller<std::tuple<int, std::string, float>()>(
+        function_id_t{3});
+    auto [i, s, f] = tuple_caller();
+    EXPECT_EQ(i, 123);
+    EXPECT_EQ(s, "hello");
+    EXPECT_FLOAT_EQ(f, 3.14f);
+  }
+
+  // 5. Test payload return: ucxx::UcxBufferVec()
+  {
+    auto payload_return_caller =
+      dispatcher.GetCaller<ucxx::UcxBufferVec()>(function_id_t{4});
+    auto result_vec = payload_return_caller();
+    EXPECT_EQ(result_vec.size(), 2);
+    EXPECT_EQ(result_vec[0].size, 128);
+    EXPECT_EQ(result_vec[1].size, 256);
+  }
+
+  // 6. Test payload argument: uint64_t(const ucxx::UcxBufferVec&)
+  {
+    auto payload_arg_caller =
+      dispatcher.GetCaller<uint64_t(const ucxx::UcxBufferVec&)>(
+        function_id_t{5});
+    ucxx::UcxBufferVec input_vec(
+      mr, ::ucx_memory_type_t::HOST, {100, 200, 300});
+    uint64_t total_size = 0;
+    for (const auto& buf : input_vec) {
+      total_size += buf.size;
+    }
+    uint64_t result = payload_arg_caller(input_vec);
+    EXPECT_EQ(result, total_size);
+    // The input_vec is passed by const reference and should not be modified.
+    EXPECT_EQ(input_vec.size(), 3);
+  }
+
+  // 7. Test tuple with payload return: std::tuple<int, ucxx::UcxBufferVec>()
+  {
+    auto tuple_payload_caller =
+      dispatcher.GetCaller<std::tuple<int, ucxx::UcxBufferVec>()>(
+        function_id_t{6});
+    auto [val, vec] = tuple_payload_caller();
+    EXPECT_EQ(val, 456);
+    EXPECT_EQ(vec.size(), 2);
+    EXPECT_EQ(vec[0].size, 16);
+    EXPECT_EQ(vec[1].size, 32);
+  }
+
+  // 8. Test unregistered function throws exception
+  {
+    EXPECT_THROW(
+      dispatcher.GetCaller<void()>(function_id_t{999}), std::runtime_error);
+  }
+
+  // 9. Test native call error propagation
+  {
+    dispatcher.RegisterFunction(function_id_t{7}, []() -> void {
+      throw std::runtime_error("Something went wrong");
+    });
+    auto error_caller = dispatcher.GetCaller<void()>(function_id_t{7});
+    try {
+      error_caller();
+      FAIL() << "Expected std::runtime_error";
+    } catch (const std::runtime_error& e) {
+      EXPECT_STREQ(e.what(), "Something went wrong");
+    }
   }
 }
 
@@ -1003,7 +1104,7 @@ TEST_F(RpcStatusTest, StdErrorCodeConversion) {
 TEST_F(RpcStatusTest, ThirdPartyExtension) {
   // 1. Register the custom third-party category.
   // This would typically be done once during application startup.
-  RpcCategoryRegistry::get_instance().register_category(
+  RpcCategoryRegistry::GetInstance().RegisterCategory(
     my_third_party_error_category());
 
   // 2. Create an error code using the third-party system.

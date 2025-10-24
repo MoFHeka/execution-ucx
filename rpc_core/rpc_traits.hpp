@@ -94,6 +94,37 @@ struct function_traits<R (C::*)(Args...) const> {
   static constexpr size_t arity = sizeof...(Args);
 };
 
+template <typename R, typename... Args>
+struct function_traits<R(Args...)> {
+  using return_type = R;
+  using args_tuple = std::tuple<Args...>;
+  static constexpr size_t arity = sizeof...(Args);
+};
+
+namespace detail {
+template <typename R, typename T>
+struct function_signature_builder;
+
+template <typename R, typename... Args>
+struct function_signature_builder<R, std::tuple<Args...>> {
+  using type = R(Args...);
+};
+}  // namespace detail
+
+// Helper to deduce function signature R(Args...) from any callable type T
+template <typename T>
+struct signature_from_traits {
+  using traits = function_traits<std::decay_t<T>>;
+  using type = typename detail::function_signature_builder<
+    typename traits::return_type,
+    typename traits::args_tuple>::type;
+};
+
+template <typename T>
+struct is_std_function : std::false_type {};
+template <typename R, typename... Args>
+struct is_std_function<std::function<R(Args...)>> : std::true_type {};
+
 template <typename Lambda>
 struct function_traits : function_traits<decltype(&Lambda::operator())> {};
 
@@ -195,6 +226,84 @@ struct payload_finder {
 template <typename Tuple>
 struct payload_finder<Tuple, std::tuple_size_v<Tuple>> {
   using type = void;
+};
+
+// Finds the index and count of context types in a type pack.
+namespace detail {
+template <size_t I, typename... Ts>
+struct payload_finder_impl;
+
+template <size_t I, typename T, typename... Ts>
+struct payload_finder_impl<I, T, Ts...> {
+  static constexpr bool is_current_payload = is_payload_v<T>;
+  using next_finder = payload_finder_impl<I + 1, Ts...>;
+  static constexpr size_t payload_count =
+    (is_current_payload ? 1 : 0) + next_finder::payload_count;
+  static constexpr size_t index = is_current_payload ? I : next_finder::index;
+};
+
+template <size_t I>
+struct payload_finder_impl<I> {
+  static constexpr size_t payload_count = 0;
+  static constexpr size_t index = -1;
+};
+}  // namespace detail
+
+template <typename... Args>
+struct PayloadExtractor {
+ private:
+  using finder = detail::payload_finder_impl<0, std::decay_t<Args>...>;
+
+ public:
+  static constexpr size_t payload_count = finder::payload_count;
+  static constexpr size_t payload_index = finder::index;
+};
+
+// Merges two tuples into a new tuple of a specified type.
+// The new tuple's types must be a superset of the types in the source tuples.
+template <typename ResultTuple, typename Tuple1, typename Tuple2>
+ResultTuple tuple_merge_by_type(Tuple1&& t1, Tuple2&& t2) {
+  return std::apply(
+    [&](auto&&... args1) {
+      return std::apply(
+        [&](auto&&... args2) {
+          return ResultTuple{std::get<std::decay_t<decltype(args1)>>(
+            std::forward_as_tuple(args1..., args2...))...};
+        },
+        std::forward<Tuple2>(t2));
+    },
+    std::forward<Tuple1>(t1));
+}
+
+// Filters a tuple's types based on a type trait.
+template <typename Tuple, template <typename> class Trait, typename ResultTuple>
+struct filter_tuple_by_trait;
+
+template <
+  typename Head,
+  typename... Tail,
+  template <typename>
+  class Trait,
+  typename... ResultArgs>
+struct filter_tuple_by_trait<
+  std::tuple<Head, Tail...>,
+  Trait,
+  std::tuple<ResultArgs...>> {
+  using type = std::conditional_t<
+    Trait<Head>::value,
+    typename filter_tuple_by_trait<
+      std::tuple<Tail...>,
+      Trait,
+      std::tuple<ResultArgs..., Head>>::type,
+    typename filter_tuple_by_trait<
+      std::tuple<Tail...>,
+      Trait,
+      std::tuple<ResultArgs...>>::type>;
+};
+
+template <template <typename> class Trait, typename... ResultArgs>
+struct filter_tuple_by_trait<std::tuple<>, Trait, std::tuple<ResultArgs...>> {
+  using type = std::tuple<ResultArgs...>;
 };
 
 }  // namespace rpc

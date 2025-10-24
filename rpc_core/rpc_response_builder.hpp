@@ -32,7 +32,7 @@ namespace rpc {
 namespace detail {
 
 template <typename T>
-void pack_result(RpcResponseHeader& header, T&& value) {
+void PackResult(RpcResponseHeader& header, T&& value) {
   using DecayedT = std::decay_t<T>;
   static_assert(
     is_serializable_v<DecayedT> || is_payload_v<DecayedT>
@@ -73,41 +73,13 @@ void pack_result(RpcResponseHeader& header, T&& value) {
     meta.value.template emplace<VectorValue>(std::move(cista_vec));
   }
 
-  header.add_result(std::move(meta));
+  header.AddResult(std::move(meta));
 }
 
 template <typename... Args>
-void pack_results(RpcResponseHeader& header, Args&&... args) {
-  (pack_result(header, std::forward<Args>(args)), ...);
+void PackResults(RpcResponseHeader& header, Args&&... args) {
+  (PackResult(header, std::forward<Args>(args)), ...);
 }
-
-template <size_t I, typename... Ts>
-struct payload_finder_impl;
-
-template <size_t I, typename T, typename... Ts>
-struct payload_finder_impl<I, T, Ts...> {
-  static constexpr bool is_current_payload = is_payload_v<T>;
-  using next_finder = payload_finder_impl<I + 1, Ts...>;
-  static constexpr size_t payload_count =
-    (is_current_payload ? 1 : 0) + next_finder::payload_count;
-  static constexpr size_t index = is_current_payload ? I : next_finder::index;
-};
-
-template <size_t I>
-struct payload_finder_impl<I> {
-  static constexpr size_t payload_count = 0;
-  static constexpr size_t index = -1;
-};
-
-template <typename... Args>
-struct PayloadExtractor {
- private:
-  using finder = payload_finder_impl<0, std::decay_t<Args>...>;
-
- public:
-  static constexpr size_t payload_count = finder::payload_count;
-  static constexpr size_t payload_index = finder::index;
-};
 
 }  // namespace detail
 
@@ -116,9 +88,9 @@ class RpcResponseBuilder {
   RpcResponseBuilder() = default;
 
   template <typename... Args>
-  auto prepare_response(
+  auto PrepareResponse(
     session_id_t session_id, request_id_t request_id, Args&&... args) const {
-    using Extractor = detail::PayloadExtractor<Args...>;
+    using Extractor = PayloadExtractor<Args...>;
     static_assert(
       Extractor::payload_count <= 1,
       "RPC responses can have at most one payload argument.");
@@ -131,7 +103,7 @@ class RpcResponseBuilder {
 
     std::apply(
       [&header](auto&&... a) {
-        detail::pack_results(header, std::forward<decltype(a)>(a)...);
+        detail::PackResults(header, std::forward<decltype(a)>(a)...);
       },
       args_tuple);
 
