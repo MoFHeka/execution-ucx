@@ -23,6 +23,11 @@ filegroup(
     ],
 )
 
+config_setting(
+    name = "rpc_enable_natural_call",
+    values = {"define": "rpc_enable_natural_call=true"},
+)
+
 cc_library(
     name = "hybrid_logical_clock_lib",
     hdrs = [
@@ -52,6 +57,10 @@ cc_library(
         ":rpc_headers",
     ],
     copts = ["-std=c++20"],
+    defines = select({
+        ":rpc_enable_natural_call": ["EUX_RPC_ENABLE_NATURAL_CALL"],
+        "//conditions:default": [],
+    }),
     deps = [
         ":hybrid_logical_clock_lib",
         ":tensor_meta_lib",

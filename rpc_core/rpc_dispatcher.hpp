@@ -18,6 +18,8 @@ limitations under the License.
 #ifndef RPC_CORE_RPC_DISPATCHER_HPP_
 #define RPC_CORE_RPC_DISPATCHER_HPP_
 
+#include <proxy/proxy.h>
+
 #include <any>
 #include <functional>
 #include <memory>
@@ -29,8 +31,6 @@ limitations under the License.
 #include <utility>
 #include <variant>
 #include <vector>
-
-#include <proxy/proxy.h>
 
 #include "rpc_core/rpc_request_builder.hpp"
 #include "rpc_core/rpc_response_builder.hpp"
@@ -98,12 +98,12 @@ T extract_arg(
   using DecayedT = std::decay_t<T>;
   static constexpr bool is_arithmetic_or_enum =
     std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>;
+  static constexpr bool is_response_builder = std::is_same_v<
+    DecayedT, std::remove_reference_t<std::remove_const_t<RpcResponseBuilder>>>;
 
   if constexpr (std::is_same_v<DecayedT, RpcRequestHeader>) {
     return req;
-  } else if constexpr (std::is_same_v<
-                         DecayedT, std::remove_reference_t<std::remove_const_t<
-                                     RpcResponseBuilder>>>) {
+  } else if constexpr (is_response_builder) {
     static_assert(
       std::is_lvalue_reference_v<T>
         && std::is_const_v<std::remove_reference_t<T>>,
@@ -189,7 +189,9 @@ class RpcDispatcher {
  private:
   data::string instance_name_;
   std::unordered_map<function_id_t, ErasedRpcFunction> functions_;
+#ifdef EUX_RPC_ENABLE_NATURAL_CALL
   std::unordered_map<function_id_t, std::any> native_functions_;
+#endif
   cista::raw::hash_map<function_id_t, RpcFunctionSignature> signatures_;
 
   std::pair<RpcResponseHeader, ReturnedPayload> InvokeFunction(
@@ -259,8 +261,10 @@ class RpcDispatcher {
     functions_[id] = pro::make_proxy<ErasedRpcFunctionFacade>(
       MakeRpcWrapper(std::forward<Func>(func)));
 
+#ifdef EUX_RPC_ENABLE_NATURAL_CALL
     using Signature = typename signature_from_traits<std::decay_t<Func>>::type;
     native_functions_[id] = std::function<Signature>(std::forward<Func>(func));
+#endif
 
     signatures_[id] = MakeRpcSignature<Func>(id, name, instance_name_);
   }
@@ -519,16 +523,17 @@ class RpcDispatcher {
     return cista::serialize<MODE>(sig_vec);
   }
 
-  /**
-   * @brief Gets a callable that can be used to invoke a registered function.
-   *
-   * This is a type-safe way to call a function that was previously registered
-   * with `register_function`.
-   *
-   * // Call it like a normal function
-   * auto add_func = dispatcher.get_caller<int(int, int)>(function_id_t{1});
-   * int result = add_func(5, 10); // result will be 15
-   */
+/**
+ * @brief Gets a callable that can be used to invoke a registered function.
+ *
+ * This is a type-safe way to call a function that was previously registered
+ * with `register_function`.
+ *
+ * // Call it like a normal function
+ * auto add_func = dispatcher.get_caller<int(int, int)>(function_id_t{1});
+ * int result = add_func(5, 10); // result will be 15
+ */
+#ifdef EUX_RPC_ENABLE_NATURAL_CALL
   template <typename Signature>
   std::function<Signature> GetCaller(function_id_t id) {
     if (!IsRegistered(id)) {
@@ -538,6 +543,7 @@ class RpcDispatcher {
     const auto& any_func = native_functions_.at(id);
     return std::any_cast<std::function<Signature>>(any_func);
   }
+#endif
 
  private:
   template <typename ReturnContextT>
