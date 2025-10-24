@@ -916,6 +916,7 @@ TEST_F(RpcDispatcherTest, DispatchWithManualResponse) {
   }
 }
 
+#ifdef EUX_RPC_ENABLE_NATURAL_CALL
 TEST_F(RpcDispatcherTest, GetCallerNaturalSyntax) {
   ucxx::DefaultUcxMemoryResourceManager mr;
 
@@ -1018,6 +1019,7 @@ TEST_F(RpcDispatcherTest, GetCallerNaturalSyntax) {
     }
   }
 }
+#endif
 
 // =============================================================================
 // RpcStatus and RpcCategoryRegistry Test Cases
