@@ -54,10 +54,10 @@ class HybridLogicalClock final {
 
   constexpr HybridLogicalClock(
     uint64_t physical_time_ms, uint16_t logical_counter) noexcept
-    : raw_(pack(physical_time_ms, logical_counter)) {}
+    : raw_(Pack(physical_time_ms, logical_counter)) {}
 
-  static HybridLogicalClock now() noexcept {
-    return HybridLogicalClock{current_physical_time_ms(), 0};
+  static HybridLogicalClock Now() noexcept {
+    return HybridLogicalClock{CurrentPhysicalTimeMs(), 0};
   }
 
   [[nodiscard]] constexpr uint64_t raw() const noexcept { return raw_; }
@@ -68,23 +68,23 @@ class HybridLogicalClock final {
     return static_cast<uint16_t>(raw_ & kLogicalMask);
   }
 
-  void tick_local() noexcept { tick_local(current_physical_time_ms()); }
+  void TickLocal() noexcept { TickLocal(CurrentPhysicalTimeMs()); }
 
-  void tick_local(uint64_t observed_physical_ms) noexcept {
+  void TickLocal(uint64_t observed_physical_ms) noexcept {
     // A local event is equivalent to receiving a message from our past self.
     // The logic is unified by deferring to the merge function.
-    merge(raw_, observed_physical_ms);
+    Merge(raw_, observed_physical_ms);
   }
 
-  void merge(HybridLogicalClock remote) noexcept { merge(remote.raw_); }
+  void Merge(HybridLogicalClock remote) noexcept { Merge(remote.raw_); }
 
-  void merge(uint64_t remote_raw) noexcept {
-    merge(remote_raw, current_physical_time_ms());
+  void Merge(uint64_t remote_raw) noexcept {
+    Merge(remote_raw, CurrentPhysicalTimeMs());
   }
 
   // Merge remote HLC (remote_raw) and observed physical time into the local
   // clock.
-  void merge(uint64_t remote_raw, uint64_t observed_physical_ms) noexcept {
+  void Merge(uint64_t remote_raw, uint64_t observed_physical_ms) noexcept {
     const uint64_t local_physical = raw_ >> kLogicalBits;
     const uint64_t remote_physical = remote_raw >> kLogicalBits;
 
@@ -112,31 +112,31 @@ class HybridLogicalClock final {
     if (max_physical == local_physical && max_physical == remote_physical) {
       const uint64_t local_logical = raw_ & kLogicalMask;
       const uint64_t remote_logical = remote_raw & kLogicalMask;
-      next_logical = bump_logical(std::max(local_logical, remote_logical));
+      next_logical = BumpLogical(std::max(local_logical, remote_logical));
     } else if (max_physical == local_physical) {
       const uint64_t local_logical = raw_ & kLogicalMask;
-      next_logical = bump_logical(local_logical);
+      next_logical = BumpLogical(local_logical);
     } else if (max_physical == remote_physical) {
       const uint64_t remote_logical = remote_raw & kLogicalMask;
-      next_logical = bump_logical(remote_logical);
+      next_logical = BumpLogical(remote_logical);
     }
     // else: max_physical is from observed_physical_ms, next_logical remains 0.
 
     raw_ = (max_physical << kLogicalBits) | next_logical;
   }
 
-  void assign(uint64_t physical_ms, uint16_t logical) noexcept {
-    raw_ = pack(physical_ms, logical);
+  void Assign(uint64_t physical_ms, uint16_t logical) noexcept {
+    raw_ = Pack(physical_ms, logical);
   }
 
-  void assign_raw(uint64_t raw_timestamp) noexcept { raw_ = raw_timestamp; }
+  void AssignRaw(uint64_t raw_timestamp) noexcept { raw_ = raw_timestamp; }
 
-  void bump_logical_counter() noexcept {
+  void BumpLogicalCounter() noexcept {
     raw_ = (raw_ & kPhysicalMask)
-           | bump_logical(static_cast<uint64_t>(raw_ & kLogicalMask));
+           | BumpLogical(static_cast<uint64_t>(raw_ & kLogicalMask));
   }
 
-  [[nodiscard]] std::string to_string() const {
+  [[nodiscard]] std::string ToString() const {
     return std::to_string(physical_time_ms()) + "."
            + std::to_string(logical_counter());
   }
@@ -171,17 +171,17 @@ class HybridLogicalClock final {
   }
 
  private:
-  static constexpr uint64_t pack(
+  static constexpr uint64_t Pack(
     uint64_t physical_ms, uint16_t logical) noexcept {
     return (physical_ms << kLogicalBits) | static_cast<uint64_t>(logical);
   }
 
-  static constexpr uint64_t bump_logical(uint64_t logical) noexcept {
+  static constexpr uint64_t BumpLogical(uint64_t logical) noexcept {
     const uint64_t incremented = (logical + 1ULL) & kLogicalMask;
     return incremented;
   }
 
-  static uint64_t current_physical_time_ms() noexcept {
+  static uint64_t CurrentPhysicalTimeMs() noexcept {
     using clock = std::chrono::system_clock;
     using duration = std::chrono::milliseconds;
     return static_cast<uint64_t>(

@@ -32,6 +32,7 @@ limitations under the License.
 
 #include <proxy/proxy.h>
 
+#include "rpc_core/rpc_request_builder.hpp"
 #include "rpc_core/rpc_response_builder.hpp"
 #include "rpc_core/rpc_traits.hpp"
 #include "rpc_core/rpc_types.hpp"
@@ -39,6 +40,8 @@ limitations under the License.
 
 namespace eux {
 namespace rpc {
+
+class RpcDispatcher;
 
 // The set of possible context types that can be returned from an RPC function.
 using ReturnedPayload = PayloadVariant;
@@ -107,26 +110,26 @@ T extract_arg(
       "RpcResponseBuilder must be passed as const&");
     return builder;
   } else if constexpr (is_arithmetic_or_enum) {
-    return req.get_primitive<DecayedT>(param_idx++);
+    return req.GetPrimitive<DecayedT>(param_idx++);
   } else if constexpr (is_cista_strong<DecayedT>::value) {
     using UnderlyingType =
       typename get_cista_strong_underlying_type<DecayedT>::type;
-    return DecayedT{req.get_primitive<UnderlyingType>(param_idx++)};
+    return DecayedT{req.GetPrimitive<UnderlyingType>(param_idx++)};
   } else if constexpr (std::is_same_v<DecayedT, data::string>) {
-    return req.get_string(param_idx++);
+    return req.GetString(param_idx++);
   } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
     static_assert(
       std::is_lvalue_reference_v<T>,
       "TensorMeta must be passed by lvalue reference (e.g., const "
       "TensorMeta&) since RpcRequestHeader is const.");
-    return req.get_tensor(param_idx++);
+    return req.GetTensor(param_idx++);
   } else if constexpr (is_data_vector<DecayedT>::value) {
     static_assert(
       std::is_lvalue_reference_v<T>,
       "cista::vector must be passed by lvalue reference (e.g., const "
       "cista::vector<T>&) since RpcRequestHeader is const.");
     using ElementType = typename DecayedT::value_type;
-    return req.template get_vector<ElementType>(param_idx++);
+    return req.template GetVector<ElementType>(param_idx++);
   } else {
     // It's a context type.
     static_assert(
@@ -158,6 +161,12 @@ auto extract_args_impl(
       req, std::forward<Context>(context), builder, param_idx)...};
 }
 
+namespace detail {
+
+// The NaturalCallerFacade is no longer needed with the std::function approach.
+
+}  // namespace detail
+
 /**
  * @brief Manages registration and dispatching of RPC functions.
  *
@@ -180,9 +189,10 @@ class RpcDispatcher {
  private:
   data::string instance_name_;
   std::unordered_map<function_id_t, ErasedRpcFunction> functions_;
+  std::unordered_map<function_id_t, std::any> native_functions_;
   cista::raw::hash_map<function_id_t, RpcFunctionSignature> signatures_;
 
-  std::pair<RpcResponseHeader, ReturnedPayload> invoke_function(
+  std::pair<RpcResponseHeader, ReturnedPayload> InvokeFunction(
     const RpcRequestHeader& request, RpcContextPtr context,
     const RpcResponseBuilder& builder) {
     try {
@@ -200,7 +210,7 @@ class RpcDispatcher {
     }
   }
 
-  std::pair<RpcResponseHeader, ReturnedPayload> dispatch_impl(
+  std::pair<RpcResponseHeader, ReturnedPayload> DispatchImpl(
     cista::byte_buf&& request_buffer, RpcContextPtr context) {
     const RpcRequestHeader* request_ptr = nullptr;
     try {
@@ -211,7 +221,7 @@ class RpcDispatcher {
       }
 
       RpcResponseBuilder builder;
-      return invoke_function(*request_ptr, std::move(context), builder);
+      return InvokeFunction(*request_ptr, std::move(context), builder);
     } catch (const std::exception& e) {
       RpcResponseHeader error_response;
       if (request_ptr) {
@@ -229,8 +239,7 @@ class RpcDispatcher {
    * @param response_header The response header to serialize.
    * @return A cista::byte_buf containing the serialized data.
    */
-  static cista::byte_buf serialize_response(
-    RpcResponseHeader& response_header) {
+  static cista::byte_buf SerializeResponse(RpcResponseHeader& response_header) {
     return cista::serialize<MODE>(response_header);
   }
 
@@ -244,12 +253,16 @@ class RpcDispatcher {
    * discovery. Defaults to "anonymous".
    */
   template <typename Func>
-  void register_function(
+  void RegisterFunction(
     function_id_t id, Func&& func,
     const data::string& name = data::string{"anonymous"}) {
     functions_[id] = pro::make_proxy<ErasedRpcFunctionFacade>(
-      make_rpc_wrapper(std::forward<Func>(func)));
-    signatures_[id] = make_rpc_signature<Func>(id, name, instance_name_);
+      MakeRpcWrapper(std::forward<Func>(func)));
+
+    using Signature = typename signature_from_traits<std::decay_t<Func>>::type;
+    native_functions_[id] = std::function<Signature>(std::forward<Func>(func));
+
+    signatures_[id] = MakeRpcSignature<Func>(id, name, instance_name_);
   }
 
   /**
@@ -266,24 +279,24 @@ class RpcDispatcher {
    * context.
    */
   template <typename ReturnContextT, typename InputData>
-  RpcInvokeResult<ReturnContextT> dispatch(
+  RpcInvokeResult<ReturnContextT> Dispatch(
     cista::byte_buf&& request_buffer, InputData& input_data) {
-    auto [header, context_variant] = dispatch_impl(
+    auto [header, context_variant] = DispatchImpl(
       std::move(request_buffer),
       RpcContextPtr(&input_data, [](void*) { /* non-owning */ }));
 
-    return build_rpc_result<ReturnContextT>(
+    return BuildRpcResult<ReturnContextT>(
       std::move(header), std::move(context_variant));
   }
 
   template <typename ReturnContextT, typename InputData>
-  RpcInvokeResult<ReturnContextT> dispatch(
+  RpcInvokeResult<ReturnContextT> Dispatch(
     const RpcRequestHeader& request_header, InputData& input_data,
     const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
-    auto [header, context_variant] = invoke_function(
+    auto [header, context_variant] = InvokeFunction(
       request_header, RpcContextPtr(&input_data, [](void*) {}), builder);
 
-    return build_rpc_result<ReturnContextT>(
+    return BuildRpcResult<ReturnContextT>(
       std::move(header), std::move(context_variant));
   }
 
@@ -303,7 +316,7 @@ class RpcDispatcher {
    * context.
    */
   template <typename ReturnContextT, typename InputData>
-  RpcInvokeResult<ReturnContextT> dispatch_move(
+  RpcInvokeResult<ReturnContextT> DispatchMove(
     cista::byte_buf&& request_buffer, InputData&& input_data) {
     // Take ownership of the input data by moving it to a local variable on the
     // stack. This avoids heap allocation, which is critical for RAII types that
@@ -318,14 +331,14 @@ class RpcDispatcher {
     RpcContextPtr non_owning_ptr(&owned_input_data, [](void*) {});
 
     auto [header, context_variant] =
-      dispatch_impl(std::move(request_buffer), std::move(non_owning_ptr));
+      DispatchImpl(std::move(request_buffer), std::move(non_owning_ptr));
 
-    return build_rpc_result<ReturnContextT>(
+    return BuildRpcResult<ReturnContextT>(
       std::move(header), std::move(context_variant));
   }
 
   template <typename ReturnContextT, typename InputData>
-  RpcInvokeResult<ReturnContextT> dispatch_move(
+  RpcInvokeResult<ReturnContextT> DispatchMove(
     const RpcRequestHeader& request_header, InputData&& input_data,
     const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
     using DecayedInput = std::decay_t<InputData>;
@@ -334,9 +347,9 @@ class RpcDispatcher {
     RpcContextPtr non_owning_ptr(&owned_input_data, [](void*) {});
 
     auto [header, context_variant] =
-      invoke_function(request_header, std::move(non_owning_ptr), builder);
+      InvokeFunction(request_header, std::move(non_owning_ptr), builder);
 
-    return build_rpc_result<ReturnContextT>(
+    return BuildRpcResult<ReturnContextT>(
       std::move(header), std::move(context_variant));
   }
 
@@ -351,22 +364,22 @@ class RpcDispatcher {
    * context.
    */
   template <typename ReturnContextT>
-  RpcInvokeResult<ReturnContextT> dispatch(cista::byte_buf&& request_buffer) {
-    auto [header, context_variant] = dispatch_impl(
+  RpcInvokeResult<ReturnContextT> Dispatch(cista::byte_buf&& request_buffer) {
+    auto [header, context_variant] = DispatchImpl(
       std::move(request_buffer), RpcContextPtr(nullptr, [](void*) {}));
 
-    return build_rpc_result<ReturnContextT>(
+    return BuildRpcResult<ReturnContextT>(
       std::move(header), std::move(context_variant));
   }
 
   template <typename ReturnContextT>
-  RpcInvokeResult<ReturnContextT> dispatch(
+  RpcInvokeResult<ReturnContextT> Dispatch(
     const RpcRequestHeader& request_header,
     const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
-    auto [header, context_variant] = invoke_function(
+    auto [header, context_variant] = InvokeFunction(
       request_header, RpcContextPtr(nullptr, [](void*) {}), builder);
 
-    return build_rpc_result<ReturnContextT>(
+    return BuildRpcResult<ReturnContextT>(
       std::move(header), std::move(context_variant));
   }
 
@@ -383,8 +396,8 @@ class RpcDispatcher {
    * @return An `RpcInvokeResult` containing the header and an optional variant
    * of the returned context.
    */
-  RpcInvokeResult<ReturnedPayload> dispatch(cista::byte_buf&& request_buffer) {
-    auto [header, context_variant] = dispatch_impl(
+  RpcInvokeResult<ReturnedPayload> Dispatch(cista::byte_buf&& request_buffer) {
+    auto [header, context_variant] = DispatchImpl(
       std::move(request_buffer), RpcContextPtr(nullptr, [](void*) {}));
     if (static_cast<std::error_code>(header.status)) {
       return {std::move(header), std::nullopt};
@@ -392,10 +405,10 @@ class RpcDispatcher {
     return {std::move(header), std::move(context_variant)};
   }
 
-  RpcInvokeResult<ReturnedPayload> dispatch(
+  RpcInvokeResult<ReturnedPayload> Dispatch(
     const RpcRequestHeader& request_header,
     const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
-    auto [header, context_variant] = invoke_function(
+    auto [header, context_variant] = InvokeFunction(
       request_header, RpcContextPtr(nullptr, [](void*) {}), builder);
     if (static_cast<std::error_code>(header.status)) {
       return {std::move(header), std::nullopt};
@@ -404,9 +417,9 @@ class RpcDispatcher {
   }
 
   template <typename InputData>
-  RpcInvokeResult<ReturnedPayload> dispatch(
+  RpcInvokeResult<ReturnedPayload> Dispatch(
     cista::byte_buf&& request_buffer, const InputData& input_data) {
-    auto [header, context_variant] = dispatch_impl(
+    auto [header, context_variant] = DispatchImpl(
       std::move(request_buffer),
       RpcContextPtr(
         const_cast<InputData*>(&input_data), [](void*) { /* non-owning */ }));
@@ -417,10 +430,10 @@ class RpcDispatcher {
   }
 
   template <typename InputData>
-  RpcInvokeResult<ReturnedPayload> dispatch(
+  RpcInvokeResult<ReturnedPayload> Dispatch(
     const RpcRequestHeader& request_header, const InputData& input_data,
     const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
-    auto [header, context_variant] = invoke_function(
+    auto [header, context_variant] = InvokeFunction(
       request_header,
       RpcContextPtr(const_cast<InputData*>(&input_data), [](void*) {}),
       builder);
@@ -431,13 +444,13 @@ class RpcDispatcher {
   }
 
   template <typename InputData>
-  RpcInvokeResult<ReturnedPayload> dispatch_move(
+  RpcInvokeResult<ReturnedPayload> DispatchMove(
     cista::byte_buf&& request_buffer, InputData&& input_data) {
     using DecayedInput = std::decay_t<InputData>;
     DecayedInput owned_input_data(std::forward<InputData>(input_data));
     RpcContextPtr non_owning_ptr(&owned_input_data, [](void*) {});
     auto [header, context_variant] =
-      dispatch_impl(std::move(request_buffer), std::move(non_owning_ptr));
+      DispatchImpl(std::move(request_buffer), std::move(non_owning_ptr));
     if (static_cast<std::error_code>(header.status)) {
       return {std::move(header), std::nullopt};
     }
@@ -445,14 +458,14 @@ class RpcDispatcher {
   }
 
   template <typename InputData>
-  RpcInvokeResult<ReturnedPayload> dispatch_move(
+  RpcInvokeResult<ReturnedPayload> DispatchMove(
     const RpcRequestHeader& request_header, InputData&& input_data,
     const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
     using DecayedInput = std::decay_t<InputData>;
     DecayedInput owned_input_data(std::forward<InputData>(input_data));
     RpcContextPtr non_owning_ptr(&owned_input_data, [](void*) {});
     auto [header, context_variant] =
-      invoke_function(request_header, std::move(non_owning_ptr), builder);
+      InvokeFunction(request_header, std::move(non_owning_ptr), builder);
     if (static_cast<std::error_code>(header.status)) {
       return {std::move(header), std::nullopt};
     }
@@ -464,7 +477,7 @@ class RpcDispatcher {
    * @param id The function ID to check.
    * @return True if the function is registered, false otherwise.
    */
-  bool is_registered(function_id_t id) const {
+  bool IsRegistered(function_id_t id) const {
     return functions_.find(id) != functions_.end();
   }
 
@@ -472,7 +485,7 @@ class RpcDispatcher {
    * @brief Gets the total number of registered functions.
    * @return The number of functions.
    */
-  size_t function_count() const { return functions_.size(); }
+  size_t FunctionCount() const { return functions_.size(); }
 
   /**
    * @brief Retrieves the signature of a registered function.
@@ -480,7 +493,7 @@ class RpcDispatcher {
    * @return An std::optional<RpcFunctionSignature> containing the signature if
    * found, otherwise std::nullopt.
    */
-  std::optional<RpcFunctionSignature> get_signature(function_id_t id) const {
+  std::optional<RpcFunctionSignature> GetSignature(function_id_t id) const {
     auto it = signatures_.find(id);
     if (it != signatures_.end()) {
       return it->second;
@@ -498,7 +511,7 @@ class RpcDispatcher {
    * @return A cista::byte_buf containing the serialized vector of
    * RpcFunctionSignature.
    */
-  cista::byte_buf get_all_signatures() const {
+  cista::byte_buf GetAllSignatures() const {
     data::vector<RpcFunctionSignature> sig_vec;
     for (const auto& pair : signatures_) {
       sig_vec.push_back(pair.second);
@@ -506,9 +519,29 @@ class RpcDispatcher {
     return cista::serialize<MODE>(sig_vec);
   }
 
+  /**
+   * @brief Gets a callable that can be used to invoke a registered function.
+   *
+   * This is a type-safe way to call a function that was previously registered
+   * with `register_function`.
+   *
+   * // Call it like a normal function
+   * auto add_func = dispatcher.get_caller<int(int, int)>(function_id_t{1});
+   * int result = add_func(5, 10); // result will be 15
+   */
+  template <typename Signature>
+  std::function<Signature> GetCaller(function_id_t id) {
+    if (!IsRegistered(id)) {
+      throw std::runtime_error(
+        "Function with ID " + std::to_string(id.v_) + " not registered.");
+    }
+    const auto& any_func = native_functions_.at(id);
+    return std::any_cast<std::function<Signature>>(any_func);
+  }
+
  private:
   template <typename ReturnContextT>
-  RpcInvokeResult<ReturnContextT> build_rpc_result(
+  RpcInvokeResult<ReturnContextT> BuildRpcResult(
     RpcResponseHeader&& header, ReturnedPayload&& context_variant) {
     if (static_cast<std::error_code>(header.status)) {
       return {std::move(header), std::nullopt};
@@ -525,31 +558,31 @@ class RpcDispatcher {
   }
 
   template <typename Tuple, typename ContextType, size_t Index = 0>
-  static void fill_param_types_impl(data::vector<ParamType>& params) {
+  static void FillParamTypesImpl(data::vector<ParamType>& params) {
     if constexpr (Index < std::tuple_size_v<Tuple>) {
       using T = std::tuple_element_t<Index, Tuple>;
       using DecayedT = std::decay_t<T>;
       if constexpr (get_param_type<DecayedT>() != ParamType::UNKNOWN) {
         params.push_back(get_param_type<T>());
       }
-      fill_param_types_impl<Tuple, ContextType, Index + 1>(params);
+      FillParamTypesImpl<Tuple, ContextType, Index + 1>(params);
     }
   }
 
   template <typename Tuple, size_t Index = 0>
-  static void fill_return_types_impl(data::vector<ParamType>& return_types) {
+  static void FillReturnTypesImpl(data::vector<ParamType>& return_types) {
     if constexpr (Index < std::tuple_size_v<Tuple>) {
       using T = std::tuple_element_t<Index, Tuple>;
       using DecayedT = std::decay_t<T>;
       if constexpr (get_param_type<DecayedT>() != ParamType::UNKNOWN) {
         return_types.push_back(get_param_type<T>());
       }
-      fill_return_types_impl<Tuple, Index + 1>(return_types);
+      FillReturnTypesImpl<Tuple, Index + 1>(return_types);
     }
   }
 
   template <typename Func>
-  static RpcFunctionSignature make_rpc_signature(
+  static RpcFunctionSignature MakeRpcSignature(
     function_id_t id, const data::string& function_name,
     const data::string& instance_name) {
     using Traits = function_traits<std::decay_t<Func>>;
@@ -563,7 +596,7 @@ class RpcDispatcher {
     sig.function_name = function_name;
     sig.takes_context = !std::is_void_v<InputContextType>;
 
-    fill_param_types_impl<ArgsTuple, InputContextType>(sig.param_types);
+    FillParamTypesImpl<ArgsTuple, InputContextType>(sig.param_types);
 
     using DecayR = std::decay_t<ReturnType>;
     if constexpr (std::is_void_v<DecayR>) {
@@ -582,7 +615,7 @@ class RpcDispatcher {
         sig.return_payload_type = PayloadType::MONOSTATE;
       }
     } else if constexpr (is_std_tuple<DecayR>::value) {
-      fill_return_types_impl<DecayR>(sig.return_types);
+      FillReturnTypesImpl<DecayR>(sig.return_types);
       using PayloadT = typename payload_finder<DecayR>::type;
       if constexpr (!std::is_void_v<PayloadT>) {
         sig.return_payload_type = get_payload_type<PayloadT>();
@@ -605,7 +638,7 @@ class RpcDispatcher {
   template <typename Func>
   static std::function<std::pair<RpcResponseHeader, ReturnedPayload>(
     const RpcRequestHeader&, RpcContextPtr, const RpcResponseBuilder&)>
-  make_rpc_wrapper(Func&& func) {
+  MakeRpcWrapper(Func&& func) {
     return [func = std::forward<Func>(func)](
              const RpcRequestHeader& request, RpcContextPtr context_ptr,
              const RpcResponseBuilder& builder)
@@ -639,7 +672,7 @@ class RpcDispatcher {
             // Case: Function returns void
             std::apply(func, std::move(args));
             auto header =
-              builder.prepare_response(request.session_id, request.request_id);
+              builder.PrepareResponse(request.session_id, request.request_id);
             return {std::move(header), std::monostate{}};
           } else {
             // Case: Function returns a value
@@ -666,13 +699,13 @@ class RpcDispatcher {
                 if constexpr (is_std_tuple<DecayR>::value) {
                   return std::apply(
                     [&](auto&&... results) {
-                      return builder.prepare_response(
+                      return builder.PrepareResponse(
                         request.session_id, request.request_id,
                         std::forward<decltype(results)>(results)...);
                     },
                     std::move(result));
                 } else {
-                  return builder.prepare_response(
+                  return builder.PrepareResponse(
                     request.session_id, request.request_id, std::move(result));
                 }
               }();

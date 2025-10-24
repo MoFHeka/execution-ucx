@@ -35,14 +35,14 @@ TEST_F(RpcResponseBuilderTest, PrepareResponseSimple) {
   RpcResponseBuilder builder;
 
   auto response =
-    builder.prepare_response(session_id_t{123}, request_id_t{456}, 5, "hello");
+    builder.PrepareResponse(session_id_t{123}, request_id_t{456}, 5, "hello");
 
   EXPECT_EQ(response.session_id.v_, 123);
   EXPECT_EQ(response.request_id.v_, 456);
   ASSERT_EQ(response.results.size(), 2);
 
-  EXPECT_EQ(response.get_primitive<int>(0), 5);
-  EXPECT_EQ(response.get_string(1), "hello");
+  EXPECT_EQ(response.GetPrimitive<int>(0), 5);
+  EXPECT_EQ(response.GetString(1), "hello");
 }
 
 TEST_F(RpcResponseBuilderTest, PrepareResponseWithPayload) {
@@ -51,7 +51,7 @@ TEST_F(RpcResponseBuilderTest, PrepareResponseWithPayload) {
   ucxx::DefaultUcxMemoryResourceManager mr;
   ucxx::UcxBufferVec payload(mr, ucx_memory_type_t::HOST, {10, 20});
 
-  auto [response, returned_payload] = builder.prepare_response(
+  auto [response, returned_payload] = builder.PrepareResponse(
     session_id_t{789}, request_id_t{101}, 42, test_string, std::move(payload));
 
   EXPECT_EQ(response.session_id.v_, 789);
@@ -59,8 +59,8 @@ TEST_F(RpcResponseBuilderTest, PrepareResponseWithPayload) {
 
   // Payload argument is not serialized into results
   ASSERT_EQ(response.results.size(), 2);
-  EXPECT_EQ(response.get_primitive<int>(0), 42);
-  EXPECT_EQ(response.get_string(1), test_string);
+  EXPECT_EQ(response.GetPrimitive<int>(0), 42);
+  EXPECT_EQ(response.GetString(1), test_string);
 
   ASSERT_FALSE(std::holds_alternative<std::monostate>(returned_payload));
   ASSERT_TRUE(std::holds_alternative<ucxx::UcxBufferVec>(returned_payload));
@@ -72,7 +72,7 @@ TEST_F(RpcResponseBuilderTest, PrepareResponseWithPayload) {
 TEST_F(RpcResponseBuilderTest, PrepareResponseNoResults) {
   RpcResponseBuilder builder;
 
-  auto response = builder.prepare_response(session_id_t{1}, request_id_t{2});
+  auto response = builder.PrepareResponse(session_id_t{1}, request_id_t{2});
 
   EXPECT_EQ(response.session_id.v_, 1);
   EXPECT_EQ(response.request_id.v_, 2);
@@ -94,7 +94,7 @@ TEST_F(RpcResponseBuilderTest, PrepareResponseWithComprehensiveTypes) {
   val_tensor.ndim = 2;
   ucxx::UcxBuffer val_payload(mr, ucx_memory_type_t::HOST, 256);
 
-  auto [res, payload] = builder.prepare_response(
+  auto [res, payload] = builder.PrepareResponse(
     session_id_t{100}, request_id_t{200}, val_bool, val_int8, val_uint64,
     val_double, val_strong, val_vec, val_tensor, std::move(val_payload));
 
@@ -104,18 +104,18 @@ TEST_F(RpcResponseBuilderTest, PrepareResponseWithComprehensiveTypes) {
   ASSERT_EQ(res.results.size(), 7);
 
   // Verify params
-  EXPECT_EQ(res.get_primitive<bool>(0), val_bool);
-  EXPECT_EQ(res.get_primitive<int8_t>(1), val_int8);
-  EXPECT_EQ(res.get_primitive<uint64_t>(2), val_uint64);
-  EXPECT_EQ(res.get_primitive<double>(3), val_double);
-  EXPECT_EQ(res.get_primitive<uint32_t>(4), val_strong.v_);
+  EXPECT_EQ(res.GetPrimitive<bool>(0), val_bool);
+  EXPECT_EQ(res.GetPrimitive<int8_t>(1), val_int8);
+  EXPECT_EQ(res.GetPrimitive<uint64_t>(2), val_uint64);
+  EXPECT_EQ(res.GetPrimitive<double>(3), val_double);
+  EXPECT_EQ(res.GetPrimitive<uint32_t>(4), val_strong.v_);
 
-  const auto& vec = res.get_vector<int16_t>(5);
+  const auto& vec = res.GetVector<int16_t>(5);
   ASSERT_EQ(vec.size(), 3);
   EXPECT_EQ(vec[0], -100);
   EXPECT_EQ(vec[2], -300);
 
-  const auto& tensor = res.get_tensor(6);
+  const auto& tensor = res.GetTensor(6);
   EXPECT_EQ(tensor.ndim, 2);
 
   // Verify payload

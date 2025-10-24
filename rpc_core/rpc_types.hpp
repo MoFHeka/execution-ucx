@@ -204,8 +204,8 @@ struct RpcMessageAccessor {
   // --- Const-ref accessors for zero-copy read ---
 
   template <typename T>
-  T get_primitive(size_t index) const {
-    const auto& container = derived().get_params_container();
+  T GetPrimitive(size_t index) const {
+    const auto& container = derived().GetParamsContainer();
     if (index >= container.size()) {
       throw std::out_of_range("Item index out of bounds");
     }
@@ -220,8 +220,8 @@ struct RpcMessageAccessor {
     return cista::get<T>(cista::get<PrimitiveValue>(item.value));
   }
 
-  const data::string& get_string(size_t index) const {
-    const auto& container = derived().get_params_container();
+  const data::string& GetString(size_t index) const {
+    const auto& container = derived().GetParamsContainer();
     if (
       index >= container.size() || container[index].type != ParamType::STRING) {
       throw std::runtime_error("Invalid item access for string");
@@ -231,8 +231,8 @@ struct RpcMessageAccessor {
   }
 
   template <typename T>
-  const data::vector<T>& get_vector(size_t index) const {
-    const auto& container = derived().get_params_container();
+  const data::vector<T>& GetVector(size_t index) const {
+    const auto& container = derived().GetParamsContainer();
     if (index >= container.size()) {
       throw std::out_of_range("Item index out of bounds");
     }
@@ -247,8 +247,8 @@ struct RpcMessageAccessor {
     return cista::get<data::vector<T>>(cista::get<VectorValue>(item.value));
   }
 
-  const TensorMeta& get_tensor(size_t index) const {
-    const auto& container = derived().get_params_container();
+  const TensorMeta& GetTensor(size_t index) const {
+    const auto& container = derived().GetParamsContainer();
     if (
       index >= container.size()
       || container[index].type != ParamType::TENSOR_META) {
@@ -260,8 +260,8 @@ struct RpcMessageAccessor {
   // --- Move-based accessors for taking ownership ---
 
   template <typename T>
-  data::vector<T>&& move_vector(size_t index) {
-    auto& container = derived().get_params_container();
+  data::vector<T>&& MoveVector(size_t index) {
+    auto& container = derived().GetParamsContainer();
     constexpr auto expected_info = get_vector_param_info<T>();
     if (
       index >= container.size()
@@ -275,8 +275,8 @@ struct RpcMessageAccessor {
       std::move(cista::get<VectorValue>(container[index].value)));
   }
 
-  TensorMeta&& move_tensor(size_t index) {
-    auto& container = derived().get_params_container();
+  TensorMeta&& MoveTensor(size_t index) {
+    auto& container = derived().GetParamsContainer();
     if (
       index >= container.size()
       || container[index].type != ParamType::TENSOR_META) {
@@ -288,22 +288,22 @@ struct RpcMessageAccessor {
   // --- Temporal metadata helpers
   // -------------------------------------------------
 
-  void tick_local_hlc() noexcept { derived().get_hlc().tick_local(); }
+  void TickLocalHlc() noexcept { derived().GetHlc().TickLocal(); }
 
-  void merge_remote_hlc(uint64_t remote_raw_timestamp) noexcept {
-    derived().get_hlc().merge(remote_raw_timestamp);
+  void MergeRemoteHlc(uint64_t remote_raw_timestamp) noexcept {
+    derived().GetHlc().Merge(remote_raw_timestamp);
   }
 
-  void merge_remote_hlc(const utils::HybridLogicalClock& remote) noexcept {
-    derived().get_hlc().merge(remote);
+  void MergeRemoteHlc(const utils::HybridLogicalClock& remote) noexcept {
+    derived().GetHlc().Merge(remote);
   }
 
-  void clear_workflow_id() noexcept {
-    derived().get_workflow_id() = utils::workflow_id_t{};
+  void ClearWorkflowId() noexcept {
+    derived().GetWorkflowId() = utils::workflow_id_t{};
   }
 
-  void assign_workflow_id(utils::workflow_id_t new_workflow_id) noexcept {
-    derived().get_workflow_id() = new_workflow_id;
+  void AssignWorkflowId(utils::workflow_id_t new_workflow_id) noexcept {
+    derived().GetWorkflowId() = new_workflow_id;
   }
 };
 
@@ -325,18 +325,18 @@ struct RpcRequestHeader : public RpcMessageAccessor<RpcRequestHeader> {
 
   // Add a parameter to the request
   template <typename T>
-  void add_param(T&& value) {
+  void AddParam(T&& value) {
     params.emplace_back(std::forward<T>(value));
   }
 
   // CRTP interface method
-  const data::vector<ParamMeta>& get_params_container() const { return params; }
-  data::vector<ParamMeta>& get_params_container() { return params; }
+  const data::vector<ParamMeta>& GetParamsContainer() const { return params; }
+  data::vector<ParamMeta>& GetParamsContainer() { return params; }
 
-  const utils::HybridLogicalClock& get_hlc() const { return hlc; }
-  utils::HybridLogicalClock& get_hlc() { return hlc; }
-  const utils::workflow_id_t& get_workflow_id() const { return workflow_id; }
-  utils::workflow_id_t& get_workflow_id() { return workflow_id; }
+  const utils::HybridLogicalClock& GetHlc() const { return hlc; }
+  utils::HybridLogicalClock& GetHlc() { return hlc; }
+  const utils::workflow_id_t& GetWorkflowId() const { return workflow_id; }
+  utils::workflow_id_t& GetWorkflowId() { return workflow_id; }
 };
 
 // RPC response header
@@ -356,20 +356,18 @@ struct RpcResponseHeader : public RpcMessageAccessor<RpcResponseHeader> {
 
   // Add a result to the response
   template <typename T>
-  void add_result(T&& value) {
+  void AddResult(T&& value) {
     results.emplace_back(std::forward<T>(value));
   }
 
   // CRTP interface method
-  const data::vector<ParamMeta>& get_params_container() const {
-    return results;
-  }
-  data::vector<ParamMeta>& get_params_container() { return results; }
+  const data::vector<ParamMeta>& GetParamsContainer() const { return results; }
+  data::vector<ParamMeta>& GetParamsContainer() { return results; }
 
-  const utils::HybridLogicalClock& get_hlc() const { return hlc; }
-  utils::HybridLogicalClock& get_hlc() { return hlc; }
-  const utils::workflow_id_t& get_workflow_id() const { return workflow_id; }
-  utils::workflow_id_t& get_workflow_id() { return workflow_id; }
+  const utils::HybridLogicalClock& GetHlc() const { return hlc; }
+  utils::HybridLogicalClock& GetHlc() { return hlc; }
+  const utils::workflow_id_t& GetWorkflowId() const { return workflow_id; }
+  utils::workflow_id_t& GetWorkflowId() { return workflow_id; }
 };
 
 }  // namespace rpc

@@ -200,7 +200,7 @@ TEST_F(RpcCausalityTest, TemporalMetadataDefaults) {
 
 TEST_F(RpcCausalityTest, TickLocalUpdatesClock) {
   auto header = make_request();
-  header.tick_local_hlc();
+  header.TickLocalHlc();
 
   EXPECT_NE(header.hlc.raw(), 0u);
   EXPECT_LE(header.hlc.logical_counter(), 1u);
@@ -212,19 +212,19 @@ TEST_F(RpcCausalityTest, EventAssignmentAndClear) {
 
   EXPECT_EQ(header.workflow_id, utils::workflow_id_t{7});
 
-  header.clear_workflow_id();
+  header.ClearWorkflowId();
   EXPECT_EQ(header.workflow_id, utils::workflow_id_t{});
 }
 
 TEST_F(RpcCausalityTest, MergeRemoteClockPropagates) {
   RpcRequestHeader header;
   utils::HybridLogicalClock remote;
-  remote.assign(123, 10);
+  remote.Assign(123, 10);
 
   // Set initial clock with some logical counter
-  header.hlc.assign(100, 5);  // physical=100, logical=5
+  header.hlc.Assign(100, 5);  // physical=100, logical=5
 
-  header.merge_remote_hlc(remote);
+  header.MergeRemoteHlc(remote);
 
   EXPECT_GE(header.hlc.physical_time_ms(), 123u);
   // When physical time advances, logical counter is reset to 0 in HLC
@@ -239,11 +239,11 @@ class HLCNode {
     : node_id_(node_id), name_(name) {}
 
   // Process incoming RPC request with proper HLC updates
-  RpcRequestHeader process_request(
+  RpcRequestHeader ProcessRequest(
     const RpcRequestHeader& incoming_request,
     DistributedGraphRecorder& recorder) {
     // 1. Merge incoming clock into local HLC (receive event)
-    local_hlc_.merge(incoming_request.hlc);
+    local_hlc_.Merge(incoming_request.hlc);
 
     // 2. Create a copy of incoming request with updated clock for recording
     RpcRequestHeader receive_request = incoming_request;
@@ -251,7 +251,7 @@ class HLCNode {
     recorder.record_execution(name_ + "_receive", receive_request);
 
     // 3. Tick local clock for local processing event
-    local_hlc_.tick_local();
+    local_hlc_.TickLocal();
 
     // 4. Create response with current HLC
     RpcRequestHeader response;
@@ -270,8 +270,8 @@ class HLCNode {
   }
 
   // Send event - tick local clock and return HLC
-  uint64_t send_event() {
-    local_hlc_.tick_local();
+  uint64_t SendEvent() {
+    local_hlc_.TickLocal();
     return local_hlc_.raw();
   }
 
@@ -309,8 +309,8 @@ TEST_F(RpcCausalityTest, HLCBasedDistributedForkJoinSimulation) {
     initial_request.workflow_id = utils::workflow_id_t{0};
 
     // Source tick local clock for send event
-    uint64_t source_clock = source_node.send_event();
-    initial_request.hlc.assign_raw(source_clock);
+    uint64_t source_clock = source_node.SendEvent();
+    initial_request.hlc.AssignRaw(source_clock);
 
     // Record source send event
     recorder.record_execution("Source_send", initial_request);
@@ -320,12 +320,12 @@ TEST_F(RpcCausalityTest, HLCBasedDistributedForkJoinSimulation) {
 
     // BranchA receives and processes
     auto branch_a_response =
-      branch_a_node.process_request(initial_request, recorder);
+      branch_a_node.ProcessRequest(initial_request, recorder);
     EXPECT_GT(branch_a_response.hlc.raw(), initial_request.hlc.raw());
 
     // BranchB receives and processes (parallel)
     auto branch_b_response =
-      branch_b_node.process_request(initial_request, recorder);
+      branch_b_node.ProcessRequest(initial_request, recorder);
     EXPECT_GT(branch_b_response.hlc.raw(), initial_request.hlc.raw());
 
     // Verify causal ordering: both branches have clocks > source
@@ -352,10 +352,8 @@ TEST_F(RpcCausalityTest, HLCBasedDistributedForkJoinSimulation) {
     branch_b_request.workflow_id = utils::workflow_id_t{2};
 
     // Simulate receiving from both branches
-    auto join_response_a =
-      join_node.process_request(branch_a_request, recorder);
-    auto join_response_b =
-      join_node.process_request(branch_b_request, recorder);
+    auto join_response_a = join_node.ProcessRequest(branch_a_request, recorder);
+    auto join_response_b = join_node.ProcessRequest(branch_b_request, recorder);
 
     // Join should have clock > both branches
     EXPECT_GT(join_response_a.hlc.raw(), branch_a_request.hlc.raw());
@@ -373,7 +371,7 @@ TEST_F(RpcCausalityTest, HLCBasedDistributedForkJoinSimulation) {
     join_request.request_id = request_id_t{4};
     join_request.workflow_id = utils::workflow_id_t{3};
 
-    auto sink_response = sink_node.process_request(join_request, recorder);
+    auto sink_response = sink_node.ProcessRequest(join_request, recorder);
 
     // Sink should have clock > join
     EXPECT_GT(sink_response.hlc.raw(), join_request.hlc.raw());
@@ -483,12 +481,12 @@ TEST_F(RpcCausalityTest, HLCBasicCausalOrdering) {
   request.workflow_id = utils::workflow_id_t{0};
 
   // NodeA ticks local clock for send event
-  uint64_t send_clock = node_a.send_event();
-  request.hlc.assign_raw(send_clock);
+  uint64_t send_clock = node_a.SendEvent();
+  request.hlc.AssignRaw(send_clock);
   recorder.record_execution("NodeA_send", request);
 
   // NodeB receives and processes
-  auto response = node_b.process_request(request, recorder);
+  auto response = node_b.ProcessRequest(request, recorder);
 
   // Verify causal ordering: NodeB clock > NodeA send clock
   EXPECT_GT(response.hlc.raw(), send_clock)

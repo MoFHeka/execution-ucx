@@ -18,8 +18,9 @@
 #ifndef RPC_CORE_RPC_REQUEST_BUILDER_HPP_
 #define RPC_CORE_RPC_REQUEST_BUILDER_HPP_
 
-#include <atomic>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -33,7 +34,7 @@ namespace rpc {
 namespace detail {
 
 template <typename T>
-void pack_arg(RpcRequestHeader& header, T&& value) {
+void PackArg(RpcRequestHeader& header, T&& value) {
   using DecayedT = std::decay_t<T>;
   static_assert(
     is_serializable_v<DecayedT> || is_payload_v<DecayedT>
@@ -53,15 +54,17 @@ void pack_arg(RpcRequestHeader& header, T&& value) {
   constexpr bool is_arithmetic_or_enum =
     std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>;
 
+  constexpr bool is_string_convertable =
+    std::is_same_v<DecayedT, data::string>
+    || std::is_same_v<DecayedT, std::string>
+    || std::is_same_v<DecayedT, std::string_view>
+    || std::is_same_v<DecayedT, const char*>;
+
   if constexpr (is_arithmetic_or_enum) {
     meta.value.template emplace<PrimitiveValue>(std::forward<T>(value));
   } else if constexpr (is_cista_strong<DecayedT>::value) {
     meta.value.template emplace<PrimitiveValue>(value.v_);
-  } else if constexpr (
-    std::is_same_v<DecayedT, data::string>
-    || std::is_same_v<DecayedT, std::string>
-    || std::is_same_v<DecayedT, std::string_view>
-    || std::is_same_v<DecayedT, const char*>) {
+  } else if constexpr (is_string_convertable) {
     meta.value.template emplace<data::string>(data::string{value});
   } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
     meta.value.template emplace<TensorMeta>(std::forward<T>(value));
@@ -74,42 +77,13 @@ void pack_arg(RpcRequestHeader& header, T&& value) {
     meta.value.template emplace<VectorValue>(std::move(cista_vec));
   }
 
-  header.add_param(std::move(meta));
+  header.AddParam(std::move(meta));
 }
 
 template <typename... Args>
-void pack_args(RpcRequestHeader& header, Args&&... args) {
-  (pack_arg(header, std::forward<Args>(args)), ...);
+void PackArgs(RpcRequestHeader& header, Args&&... args) {
+  (PackArg(header, std::forward<Args>(args)), ...);
 }
-
-// Finds the index and count of context types in a type pack.
-template <size_t I, typename... Ts>
-struct payload_finder_impl;
-
-template <size_t I, typename T, typename... Ts>
-struct payload_finder_impl<I, T, Ts...> {
-  static constexpr bool is_current_payload = is_payload_v<T>;
-  using next_finder = payload_finder_impl<I + 1, Ts...>;
-  static constexpr size_t payload_count =
-    (is_current_payload ? 1 : 0) + next_finder::payload_count;
-  static constexpr size_t index = is_current_payload ? I : next_finder::index;
-};
-
-template <size_t I>
-struct payload_finder_impl<I> {
-  static constexpr size_t payload_count = 0;
-  static constexpr size_t index = -1;
-};
-
-template <typename... Args>
-struct PayloadExtractor {
- private:
-  using finder = payload_finder_impl<0, std::decay_t<Args>...>;
-
- public:
-  static constexpr size_t payload_count = finder::payload_count;
-  static constexpr size_t payload_index = finder::index;
-};
 
 }  // namespace detail
 
@@ -118,10 +92,10 @@ class RpcRequestBuilder {
   RpcRequestBuilder() = default;
 
   template <typename... Args>
-  auto prepare_request(
+  auto PrepareRequest(
     function_id_t function_id, session_id_t session_id, request_id_t request_id,
     Args&&... args) const {
-    using Extractor = detail::PayloadExtractor<Args...>;
+    using Extractor = PayloadExtractor<Args...>;
     static_assert(
       Extractor::payload_count <= 1,
       "RPC calls can have at most one payload argument.");
@@ -135,7 +109,7 @@ class RpcRequestBuilder {
 
     std::apply(
       [&header](auto&&... a) {
-        detail::pack_args(header, std::forward<decltype(a)>(a)...);
+        detail::PackArgs(header, std::forward<decltype(a)>(a)...);
       },
       args_tuple);
 
@@ -149,10 +123,10 @@ class RpcRequestBuilder {
   }
 
   template <typename... Args>
-  auto prepare_request(
+  auto PrepareRequest(
     function_id_t function_id, RpcFunctionSignature signature,
     session_id_t session_id, request_id_t request_id, Args&&... args) const {
-    using Extractor = detail::PayloadExtractor<Args...>;
+    using Extractor = PayloadExtractor<Args...>;
     static_assert(
       Extractor::payload_count <= 1,
       "RPC calls can have at most one payload argument.");
@@ -166,7 +140,7 @@ class RpcRequestBuilder {
 
     std::apply(
       [&header](auto&&... a) {
-        detail::pack_args(header, std::forward<decltype(a)>(a)...);
+        detail::PackArgs(header, std::forward<decltype(a)>(a)...);
       },
       args_tuple);
 
@@ -178,9 +152,6 @@ class RpcRequestBuilder {
       return header;
     }
   }
-
- private:
-  mutable std::atomic<uint32_t> request_counter_{0};
 };
 
 }  // namespace rpc
