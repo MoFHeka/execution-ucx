@@ -2,6 +2,8 @@
 plf::hive is a fork of plf::colony to match the current C++ standards proposal (https://wg21.link/p0447).
 """
 
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
 cc_library(
     name = "plf_hive",
     hdrs = [

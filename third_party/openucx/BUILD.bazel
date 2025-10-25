@@ -2,15 +2,15 @@
 Unified Communication X (UCX) is an award winning, optimized production proven-communication framework for modern, high-bandwidth and low-latency networks.
 """
 
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
-load("@rules_cuda//cuda:defs.bzl", "requires_cuda")
 
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "all_srcs",
     srcs = glob(["**"]),
-    visibility = ["//visibility:private"],
+    visibility = ["//visibility:public"],
 )
 
 exports_files(["BUILD.bazel"])
