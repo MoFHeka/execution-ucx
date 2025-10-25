@@ -27,7 +27,6 @@
 #include <utility>
 #include <vector>
 
-#include "rpc_core/rpc_dispatcher.hpp"
 #include "rpc_core/rpc_types.hpp"
 #include "rpc_core/utils/hybrid_logical_clock.hpp"
 

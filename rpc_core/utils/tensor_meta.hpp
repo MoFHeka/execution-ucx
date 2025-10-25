@@ -22,10 +22,6 @@
 #include <dlpack/dlpack.h>  // from @dlpack
 
 #include <cstdint>
-#include <memory>
-#include <type_traits>
-#include <utility>
-#include <vector>
 
 namespace eux {
 namespace rpc {

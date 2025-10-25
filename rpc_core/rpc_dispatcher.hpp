@@ -21,7 +21,6 @@ limitations under the License.
 #include <proxy/proxy.h>
 
 #include <any>
-#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -30,13 +29,10 @@ limitations under the License.
 #include <unordered_map>
 #include <utility>
 #include <variant>
-#include <vector>
 
-#include "rpc_core/rpc_request_builder.hpp"
 #include "rpc_core/rpc_response_builder.hpp"
 #include "rpc_core/rpc_traits.hpp"
 #include "rpc_core/rpc_types.hpp"
-#include "ucx_context/ucx_context_data.hpp"
 
 namespace eux {
 namespace rpc {
@@ -163,7 +159,15 @@ auto extract_args_impl(
 
 namespace detail {
 
-// The NaturalCallerFacade is no longer needed with the std::function approach.
+template <typename Signature>
+struct NaturalCallerFacade;
+
+template <typename R, typename... Args>
+struct NaturalCallerFacade<R(Args...)>
+  : pro::facade_builder::template add_convention<
+      pro::operator_dispatch<"()">, R(Args...)>::
+      template support_relocation<pro::constraint_level::nontrivial>::
+        template support_copy<pro::constraint_level::nontrivial>::build {};
 
 }  // namespace detail
 
@@ -258,12 +262,13 @@ class RpcDispatcher {
   void RegisterFunction(
     function_id_t id, Func&& func,
     const data::string& name = data::string{"anonymous"}) {
-    functions_[id] = pro::make_proxy<ErasedRpcFunctionFacade>(
-      MakeRpcWrapper(std::forward<Func>(func)));
+    functions_[id] = MakeRpcWrapper(std::forward<Func>(func));
 
 #ifdef EUX_RPC_ENABLE_NATURAL_CALL
     using Signature = typename signature_from_traits<std::decay_t<Func>>::type;
-    native_functions_[id] = std::function<Signature>(std::forward<Func>(func));
+    native_functions_[id] =
+      pro::make_proxy<detail::NaturalCallerFacade<Signature>>(
+        std::forward<Func>(func));
 #endif
 
     signatures_[id] = MakeRpcSignature<Func>(id, name, instance_name_);
@@ -535,13 +540,15 @@ class RpcDispatcher {
  */
 #ifdef EUX_RPC_ENABLE_NATURAL_CALL
   template <typename Signature>
-  std::function<Signature> GetCaller(function_id_t id) {
+  pro::proxy<detail::NaturalCallerFacade<Signature>> GetCaller(
+    function_id_t id) {
     if (!IsRegistered(id)) {
       throw std::runtime_error(
         "Function with ID " + std::to_string(id.v_) + " not registered.");
     }
     const auto& any_func = native_functions_.at(id);
-    return std::any_cast<std::function<Signature>>(any_func);
+    using ProxyType = pro::proxy<detail::NaturalCallerFacade<Signature>>;
+    return std::any_cast<ProxyType>(any_func);
   }
 #endif
 
@@ -605,15 +612,16 @@ class RpcDispatcher {
     FillParamTypesImpl<ArgsTuple, InputContextType>(sig.param_types);
 
     using DecayR = std::decay_t<ReturnType>;
+    static constexpr bool is_response_pair =
+      is_pair<DecayR>::value
+      && std::is_same_v<
+        std::decay_t<typename get_pair_first_type<DecayR>::type>,
+        RpcResponseHeader>;
     if constexpr (std::is_void_v<DecayR>) {
       sig.return_payload_type = PayloadType::MONOSTATE;
     } else if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
       sig.return_payload_type = PayloadType::MONOSTATE;
-    } else if constexpr (
-      is_pair<DecayR>::value
-      && std::is_same_v<
-        std::decay_t<typename get_pair_first_type<DecayR>::type>,
-        RpcResponseHeader>) {
+    } else if constexpr (is_response_pair) {
       using PayloadT = std::decay_t<typename DecayR::second_type>;
       if constexpr (is_payload_v<PayloadT>) {
         sig.return_payload_type = get_payload_type<PayloadT>();
@@ -642,109 +650,110 @@ class RpcDispatcher {
   }
 
   template <typename Func>
-  static std::function<std::pair<RpcResponseHeader, ReturnedPayload>(
-    const RpcRequestHeader&, RpcContextPtr, const RpcResponseBuilder&)>
-  MakeRpcWrapper(Func&& func) {
-    return [func = std::forward<Func>(func)](
-             const RpcRequestHeader& request, RpcContextPtr context_ptr,
-             const RpcResponseBuilder& builder)
-             -> std::pair<RpcResponseHeader, ReturnedPayload> {
-      try {
-        using Traits = function_traits<std::decay_t<Func>>;
-        using ReturnType = typename Traits::return_type;
-        using ArgsTuple = typename Traits::args_tuple;
-        using ContextType = typename payload_finder<ArgsTuple>::type;
+  static pro::proxy<ErasedRpcFunctionFacade> MakeRpcWrapper(Func&& func) {
+    return pro::make_proxy<ErasedRpcFunctionFacade>(
+      [func = std::forward<Func>(func)](
+        const RpcRequestHeader& request, RpcContextPtr context_ptr,
+        const RpcResponseBuilder& builder)
+        -> std::pair<RpcResponseHeader, ReturnedPayload> {
+        try {
+          using Traits = function_traits<std::decay_t<Func>>;
+          using ReturnType = typename Traits::return_type;
+          using ArgsTuple = typename Traits::args_tuple;
+          using ContextType = typename payload_finder<ArgsTuple>::type;
 
-        auto invoke_and_package =
-          [&]() -> std::pair<RpcResponseHeader, ReturnedPayload> {
-          auto args = [&]() {
-            if constexpr (std::is_void_v<ContextType>) {
-              return extract_args_impl<ArgsTuple>(
-                request, static_cast<void*>(nullptr), builder,
-                std::make_index_sequence<Traits::arity>{});
-            } else {
-              auto* typed_context =
-                static_cast<ContextType*>(context_ptr.get());
-              if (!typed_context) {
-                throw std::runtime_error("Context required but not provided.");
-              }
-              return extract_args_impl<ArgsTuple>(
-                request, typed_context, builder,
-                std::make_index_sequence<Traits::arity>{});
-            }
-          }();
-
-          if constexpr (std::is_void_v<ReturnType>) {
-            // Case: Function returns void
-            std::apply(func, std::move(args));
-            auto header =
-              builder.PrepareResponse(request.session_id, request.request_id);
-            return {std::move(header), std::monostate{}};
-          } else {
-            // Case: Function returns a value
-            auto result = std::apply(func, std::move(args));
-            using DecayR = std::decay_t<decltype(result)>;
-
-            // Manual mode: User returns a pre-built response header.
-            static constexpr bool is_header_pair =
-              is_pair<DecayR>::value
-              && std::is_same_v<
-                std::decay_t<typename get_pair_first_type<DecayR>::type>,
-                RpcResponseHeader>;
-
-            if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
-              return {std::move(result), std::monostate{}};
-            } else if constexpr (is_header_pair) {
-              return {
-                std::move(result.first),
-                ReturnedPayload(std::move(result.second))};
-            } else {
-              // Automatic mode: Build response from the function's return
-              // value.
-              auto builder_result = [&]() {
-                if constexpr (is_std_tuple<DecayR>::value) {
-                  return std::apply(
-                    [&](auto&&... results) {
-                      return builder.PrepareResponse(
-                        request.session_id, request.request_id,
-                        std::forward<decltype(results)>(results)...);
-                    },
-                    std::move(result));
-                } else {
-                  return builder.PrepareResponse(
-                    request.session_id, request.request_id, std::move(result));
-                }
-              }();
-
-              if constexpr (std::is_same_v<
-                              std::decay_t<decltype(builder_result)>,
-                              RpcResponseHeader>) {
-                return {std::move(builder_result), std::monostate{}};
+          auto invoke_and_package =
+            [&]() -> std::pair<RpcResponseHeader, ReturnedPayload> {
+            auto args = [&]() {
+              if constexpr (std::is_void_v<ContextType>) {
+                return extract_args_impl<ArgsTuple>(
+                  request, static_cast<void*>(nullptr), builder,
+                  std::make_index_sequence<Traits::arity>{});
               } else {
+                auto* typed_context =
+                  static_cast<ContextType*>(context_ptr.get());
+                if (!typed_context) {
+                  throw std::runtime_error(
+                    "Context required but not provided.");
+                }
+                return extract_args_impl<ArgsTuple>(
+                  request, typed_context, builder,
+                  std::make_index_sequence<Traits::arity>{});
+              }
+            }();
+
+            if constexpr (std::is_void_v<ReturnType>) {
+              // Case: Function returns void
+              std::apply(func, std::move(args));
+              auto header =
+                builder.PrepareResponse(request.session_id, request.request_id);
+              return {std::move(header), std::monostate{}};
+            } else {
+              // Case: Function returns a value
+              auto result = std::apply(func, std::move(args));
+              using DecayR = std::decay_t<decltype(result)>;
+
+              // Manual mode: User returns a pre-built response header.
+              static constexpr bool is_header_pair =
+                is_pair<DecayR>::value
+                && std::is_same_v<
+                  std::decay_t<typename get_pair_first_type<DecayR>::type>,
+                  RpcResponseHeader>;
+
+              if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
+                return {std::move(result), std::monostate{}};
+              } else if constexpr (is_header_pair) {
                 return {
-                  std::move(builder_result.first),
-                  std::move(builder_result.second)};
+                  std::move(result.first),
+                  ReturnedPayload(std::move(result.second))};
+              } else {
+                // Automatic mode: Build response from the function's return
+                // value.
+                auto builder_result = [&]() {
+                  if constexpr (is_std_tuple<DecayR>::value) {
+                    return std::apply(
+                      [&](auto&&... results) {
+                        return builder.PrepareResponse(
+                          request.session_id, request.request_id,
+                          std::forward<decltype(results)>(results)...);
+                      },
+                      std::move(result));
+                  } else {
+                    return builder.PrepareResponse(
+                      request.session_id, request.request_id,
+                      std::move(result));
+                  }
+                }();
+
+                if constexpr (std::is_same_v<
+                                std::decay_t<decltype(builder_result)>,
+                                RpcResponseHeader>) {
+                  return {std::move(builder_result), std::monostate{}};
+                } else {
+                  return {
+                    std::move(builder_result.first),
+                    std::move(builder_result.second)};
+                }
               }
             }
-          }
-        };
+          };
 
-        return invoke_and_package();
-      } catch (const std::exception& e) {
-        RpcResponseHeader error_response;
-        error_response.session_id = request.session_id;
-        error_response.request_id = request.request_id;
-        error_response.status =
-          std::make_error_code(std::errc::invalid_argument);
-        // In a real application, you would log e.what() here.
-        // For debugging, pack the error message into the results.
-        ParamMeta error_meta;
-        error_meta.type = ParamType::STRING;
-        error_meta.value.emplace<data::string>(e.what());
-        error_response.results.emplace_back(std::move(error_meta));
-        return {std::move(error_response), std::monostate{}};
-      }
-    };
+          return invoke_and_package();
+        } catch (const std::exception& e) {
+          RpcResponseHeader error_response;
+          error_response.session_id = request.session_id;
+          error_response.request_id = request.request_id;
+          error_response.status =
+            std::make_error_code(std::errc::invalid_argument);
+          // In a real application, you would log e.what() here.
+          // For debugging, pack the error message into the results.
+          ParamMeta error_meta;
+          error_meta.type = ParamType::STRING;
+          error_meta.value.emplace<data::string>(e.what());
+          error_response.results.emplace_back(std::move(error_meta));
+          return {std::move(error_response), std::monostate{}};
+        }
+      });
   }
 };
 

@@ -939,14 +939,14 @@ TEST_F(RpcDispatcherTest, GetCallerNaturalSyntax) {
   // 2. Test simple function: int add(int, int)
   {
     auto add_caller = dispatcher.GetCaller<int(int, int)>(function_id_t{1});
-    int result = add_caller(20, 22);
+    int result = (*add_caller)(20, 22);
     EXPECT_EQ(result, 42);
   }
 
   // 3. Test void function: void no_op()
   {
     auto no_op_caller = dispatcher.GetCaller<void()>(function_id_t{2});
-    no_op_caller();  // Should not throw and complete successfully
+    (*no_op_caller)();  // Should not throw and complete successfully
   }
 
   // 4. Test tuple return: std::tuple<int, std::string, float>()
@@ -954,7 +954,7 @@ TEST_F(RpcDispatcherTest, GetCallerNaturalSyntax) {
     auto tuple_caller =
       dispatcher.GetCaller<std::tuple<int, std::string, float>()>(
         function_id_t{3});
-    auto [i, s, f] = tuple_caller();
+    auto [i, s, f] = (*tuple_caller)();
     EXPECT_EQ(i, 123);
     EXPECT_EQ(s, "hello");
     EXPECT_FLOAT_EQ(f, 3.14f);
@@ -964,7 +964,7 @@ TEST_F(RpcDispatcherTest, GetCallerNaturalSyntax) {
   {
     auto payload_return_caller =
       dispatcher.GetCaller<ucxx::UcxBufferVec()>(function_id_t{4});
-    auto result_vec = payload_return_caller();
+    auto result_vec = (*payload_return_caller)();
     EXPECT_EQ(result_vec.size(), 2);
     EXPECT_EQ(result_vec[0].size, 128);
     EXPECT_EQ(result_vec[1].size, 256);
@@ -981,7 +981,7 @@ TEST_F(RpcDispatcherTest, GetCallerNaturalSyntax) {
     for (const auto& buf : input_vec) {
       total_size += buf.size;
     }
-    uint64_t result = payload_arg_caller(input_vec);
+    uint64_t result = (*payload_arg_caller)(input_vec);
     EXPECT_EQ(result, total_size);
     // The input_vec is passed by const reference and should not be modified.
     EXPECT_EQ(input_vec.size(), 3);
@@ -992,7 +992,7 @@ TEST_F(RpcDispatcherTest, GetCallerNaturalSyntax) {
     auto tuple_payload_caller =
       dispatcher.GetCaller<std::tuple<int, ucxx::UcxBufferVec>()>(
         function_id_t{6});
-    auto [val, vec] = tuple_payload_caller();
+    auto [val, vec] = (*tuple_payload_caller)();
     EXPECT_EQ(val, 456);
     EXPECT_EQ(vec.size(), 2);
     EXPECT_EQ(vec[0].size, 16);
@@ -1012,7 +1012,7 @@ TEST_F(RpcDispatcherTest, GetCallerNaturalSyntax) {
     });
     auto error_caller = dispatcher.GetCaller<void()>(function_id_t{7});
     try {
-      error_caller();
+      (*error_caller)();
       FAIL() << "Expected std::runtime_error";
     } catch (const std::runtime_error& e) {
       EXPECT_STREQ(e.what(), "Something went wrong");

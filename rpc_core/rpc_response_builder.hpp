@@ -18,13 +18,11 @@
 #ifndef RPC_CORE_RPC_RESPONSE_BUILDER_HPP_
 #define RPC_CORE_RPC_RESPONSE_BUILDER_HPP_
 
-#include <optional>
 #include <tuple>
 #include <utility>
 
 #include "rpc_core/rpc_traits.hpp"
 #include "rpc_core/rpc_types.hpp"
-#include "ucx_context/ucx_context_data.hpp"
 
 namespace eux {
 namespace rpc {

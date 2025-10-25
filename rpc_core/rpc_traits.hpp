@@ -20,8 +20,10 @@
 
 #include <cista.h>
 
+#include <string>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "rpc_core/rpc_types.hpp"
@@ -176,27 +178,30 @@ struct is_std_vector<std::vector<T, A>> : std::true_type {};
 template <typename T>
 constexpr ParamType get_param_type() {
   using DecayedT = std::decay_t<T>;
+  constexpr bool is_primitive =
+    std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>;
+  constexpr bool is_string_convertable =
+    std::is_same_v<DecayedT, data::string>
+    || std::is_same_v<DecayedT, std::string>
+    || std::is_same_v<DecayedT, std::string_view>
+    || std::is_same_v<DecayedT, const char*>;
+  constexpr bool is_vector_convertable =
+    is_data_vector<DecayedT>::value || is_std_vector<DecayedT>::value;
 
   // Payloads are handled separately and not serialized as parameters.
   if constexpr (is_payload_v<DecayedT>) {
     return ParamType::UNKNOWN;
-  } else if constexpr (
-    std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>) {
+  } else if constexpr (is_primitive) {
     return get_primitive_param_info<DecayedT>().type;
   } else if constexpr (is_cista_strong<DecayedT>::value) {
     using UnderlyingType =
       typename get_cista_strong_underlying_type<DecayedT>::type;
     return get_primitive_param_info<UnderlyingType>().type;
-  } else if constexpr (
-    std::is_same_v<DecayedT, data::string>
-    || std::is_same_v<DecayedT, std::string>
-    || std::is_same_v<DecayedT, std::string_view>
-    || std::is_same_v<DecayedT, const char*>) {
+  } else if constexpr (is_string_convertable) {
     return ParamType::STRING;
   } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
     return ParamType::TENSOR_META;
-  } else if constexpr (
-    is_data_vector<DecayedT>::value || is_std_vector<DecayedT>::value) {
+  } else if constexpr (is_vector_convertable) {
     using ElementType = typename DecayedT::value_type;
     return get_vector_param_info<ElementType>().type;
   } else {
@@ -209,23 +214,49 @@ constexpr ParamType get_param_type() {
 template <typename T>
 constexpr bool is_serializable_v = get_param_type<T>() != ParamType::UNKNOWN;
 
+// template <typename Tuple, size_t Index = 0>
+// struct payload_finder;
+
+// template <typename Tuple, size_t Index>
+// struct payload_finder {
+//   using current_element_raw = std::tuple_element_t<Index, Tuple>;
+//   using current_element = std::decay_t<current_element_raw>;
+
+//   using type = std::conditional_t<
+//     is_payload_type_v<current_element>,
+//     current_element,
+//     typename payload_finder<Tuple, Index + 1>::type>;
+// };
+
+// template <typename Tuple>
+// struct payload_finder<Tuple, std::tuple_size<Tuple>::value> {
+//   using type = void;
+// };
+
 template <typename Tuple, size_t Index = 0>
-struct payload_finder;
-
-template <typename Tuple, size_t Index>
 struct payload_finder {
-  using current_element_raw = std::tuple_element_t<Index, Tuple>;
-  using current_element = std::decay_t<current_element_raw>;
+ private:
+  template <typename T>
+  struct type_identity {
+    using type = T;
+  };
+  static auto get_type_helper() {
+    if constexpr (Index == std::tuple_size<Tuple>::value) {
+      return type_identity<void>{};
+    } else {
+      using current_element_raw = std::tuple_element_t<Index, Tuple>;
+      using current_element = std::decay_t<current_element_raw>;
 
-  using type = std::conditional_t<
-    is_payload_type_v<current_element>,
-    current_element,
-    typename payload_finder<Tuple, Index + 1>::type>;
-};
+      if constexpr (is_payload_type_v<current_element>) {
+        return type_identity<current_element>{};
+      } else {
+        return type_identity<typename payload_finder<Tuple, Index + 1>::type>{};
+      }
+    }
+  }
 
-template <typename Tuple>
-struct payload_finder<Tuple, std::tuple_size_v<Tuple>> {
-  using type = void;
+ public:
+  using type = typename decltype(get_type_helper())::type;
 };
 
 // Finds the index and count of context types in a type pack.

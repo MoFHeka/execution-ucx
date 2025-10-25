@@ -26,7 +26,6 @@
 
 #include "rpc_core/rpc_traits.hpp"
 #include "rpc_core/rpc_types.hpp"
-#include "ucx_context/ucx_context_data.hpp"
 
 namespace eux {
 namespace rpc {
