@@ -21,7 +21,6 @@
 #include <cista.h>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cstdint>
 #include <string>
@@ -30,8 +29,6 @@
 namespace eux {
 namespace rpc {
 namespace utils {
-
-namespace data = cista::offset;
 
 /**
  * @brief Hybrid logical clock with millisecond physical component and 16-bit

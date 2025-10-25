@@ -18,12 +18,11 @@ limitations under the License.
 #ifndef RPC_CORE_RPC_STATUS_HPP_
 #define RPC_CORE_RPC_STATUS_HPP_
 
-#include <map>
+#include <cista.h>
+
 #include <string>
 #include <string_view>
 #include <system_error>
-
-#include "ucx_context/ucx_context_data.hpp"
 
 namespace eux {
 namespace rpc {
