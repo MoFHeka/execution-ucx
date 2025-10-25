@@ -1,6 +1,8 @@
 # Description:
 #   Proxy: Next Generation Polymorphism in C++.
 
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
 licenses(["notice"])  # Apache 2
 
 exports_files(["LICENSE"])

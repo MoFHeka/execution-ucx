@@ -18,6 +18,7 @@ def _cista_repo_impl(repository_ctx):
     repository_ctx.file(
         "BUILD.bazel",
         """
+load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(
     name = "cista",
     hdrs = ["cista.h"],

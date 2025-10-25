@@ -2,7 +2,7 @@
 
 load("//third_party/cista:repositories.bzl", "cista_repo")
 
-def _cista_dep_impl(ctx):
+def _cista_dep_impl(_ctx):
     cista_repo()
 
 cista_dep = module_extension(

@@ -1,5 +1,8 @@
-# Description:
-#   DLPack is a protocol for sharing arrays between deep learning frameworks.
+"""
+DLPack is a protocol for sharing arrays between deep learning frameworks.
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
 
 licenses(["notice"])  # Apache 2
 
