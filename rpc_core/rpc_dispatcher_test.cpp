@@ -1127,5 +1127,89 @@ TEST_F(RpcStatusTest, ThirdPartyExtension) {
   EXPECT_EQ(converted_ec.message(), "Network timeout");
 }
 
+TEST_F(RpcDispatcherTest, DispatchDynamicFunction) {
+  // 1. Define the dynamic function's signature and implementation.
+  data::string function_name = "dynamic_processor";
+  data::vector<ParamType> param_types = {
+    ParamType::PRIMITIVE_INT64, ParamType::STRING};
+  data::vector<ParamType> return_types = {ParamType::PRIMITIVE_BOOL};
+  PayloadType input_payload_type = PayloadType::UCX_BUFFER_VEC;
+  PayloadType return_payload_type = PayloadType::UCX_BUFFER;
+
+  ucxx::DefaultUcxMemoryResourceManager mr;
+
+  auto dynamic_fn_impl = [&mr](
+                           const data::vector<ParamMeta>& params,
+                           InputPayloadVariant input_payload)
+    -> std::pair<data::vector<ParamMeta>, ReturnedPayload> {
+    // Verify inputs
+    EXPECT_EQ(params.size(), 2);
+    EXPECT_EQ(params[0].type, ParamType::PRIMITIVE_INT64);
+    EXPECT_EQ(
+      cista::get<int64_t>(cista::get<PrimitiveValue>(params[0].value)), 12345L);
+    EXPECT_EQ(params[1].type, ParamType::STRING);
+    EXPECT_EQ(cista::get<data::string>(params[1].value), "test_param");
+
+    EXPECT_TRUE(std::holds_alternative<ucxx::UcxBufferVec*>(input_payload));
+    auto* input_vec = std::get<ucxx::UcxBufferVec*>(input_payload);
+    EXPECT_NE(input_vec, nullptr);
+    if (!input_vec) {
+      return {};
+    }
+    uint64_t total_input_size = 0;
+    for (const auto& buf : *input_vec) {
+      total_input_size += buf.size;
+    }
+
+    // Prepare outputs
+    data::vector<ParamMeta> serializable_results;
+    ParamMeta result_meta;
+    result_meta.type = ParamType::PRIMITIVE_BOOL;
+    result_meta.value.emplace<PrimitiveValue>(total_input_size > 0);
+    serializable_results.push_back(std::move(result_meta));
+
+    ReturnedPayload returned_payload =
+      ucxx::UcxBuffer(mr, ucx_memory_type::HOST, total_input_size);
+
+    return {std::move(serializable_results), std::move(returned_payload)};
+  };
+
+  // 2. Register the dynamic function.
+  dispatcher.RegisterFunction(
+    function_id_t{20}, function_name, param_types, return_types,
+    input_payload_type, return_payload_type,
+    pro::make_proxy<DynamicRpcFunctionFacade>(dynamic_fn_impl));
+
+  // 3. Verify the signature.
+  auto sig_opt = dispatcher.GetSignature(function_id_t{20});
+  ASSERT_TRUE(sig_opt.has_value());
+  auto& sig = sig_opt.value();
+  EXPECT_EQ(sig.function_name, function_name);
+  EXPECT_TRUE(sig.takes_context);
+  EXPECT_EQ(sig.param_types, param_types);
+  EXPECT_EQ(sig.return_types, return_types);
+  EXPECT_EQ(sig.return_payload_type, return_payload_type);
+
+  // 4. Prepare and dispatch the call.
+  RpcRequestHeader request{};
+  request.function_id = function_id_t{20};
+  request.session_id = session_id_t{500};
+  request.AddParam(
+    ParamMeta{ParamType::PRIMITIVE_INT64, PrimitiveValue(12345L)});
+  request.AddParam(ParamMeta{ParamType::STRING, data::string("test_param")});
+
+  ucxx::UcxBufferVec input_vec(mr, ucx_memory_type::HOST, {256, 512});
+  uint64_t expected_size = 256 + 512;
+
+  auto result = dispatcher.Dispatch<ucxx::UcxBuffer>(request, input_vec);
+
+  // 5. Verify the results.
+  EXPECT_EQ(result.header.session_id.v_, 500);
+  ASSERT_EQ(result.header.results.size(), 1);
+  EXPECT_EQ(result.header.GetPrimitive<bool>(0), true);
+  ASSERT_TRUE(result.context.has_value());
+  EXPECT_EQ(result.context.value().size(), expected_size);
+}
+
 }  // namespace rpc
 }  // namespace eux
