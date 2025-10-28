@@ -42,6 +42,11 @@ class RpcDispatcher;
 // The set of possible context types that can be returned from an RPC function.
 using ReturnedPayload = PayloadVariant;
 
+// A variant of pointers to payload types, used for passing input context by
+// reference in a type-safe way.
+using InputPayloadVariant =
+  std::variant<std::monostate, ucxx::UcxBuffer*, ucxx::UcxBufferVec*>;
+
 #if WITH_CISTA_VERSION && WITH_CISTA_INTEGRITY
 constexpr auto const MODE =  // opt. versioning + check sum
   cista::mode::WITH_VERSION | cista::mode::WITH_INTEGRITY;
@@ -84,6 +89,15 @@ struct ErasedRpcFunctionFacade
       support_relocation<pro::constraint_level::trivial>::build {};
 
 using ErasedRpcFunction = pro::proxy<ErasedRpcFunctionFacade>;
+
+struct DynamicRpcFunctionFacade
+  : pro::facade_builder::add_convention<
+      pro::operator_dispatch<"()">,
+      std::pair<data::vector<ParamMeta>, ReturnedPayload>(
+        const data::vector<ParamMeta>&, InputPayloadVariant)>::
+      support_relocation<pro::constraint_level::trivial>::build {};
+
+using DynamicRpcFunction = pro::proxy<DynamicRpcFunctionFacade>;
 
 // Helper for extracting function arguments from the request header and
 // context.
@@ -198,6 +212,52 @@ class RpcDispatcher {
 #endif
   cista::raw::hash_map<function_id_t, RpcFunctionSignature> signatures_;
 
+  // Functor to wrap a type-erased dynamic function for pro::proxy.
+  struct DynamicFuncWrapper {
+    DynamicRpcFunction dynamic_func;
+    PayloadType input_payload_type;
+
+    std::pair<RpcResponseHeader, ReturnedPayload> operator()(
+      const RpcRequestHeader& request, RpcContextPtr context_ptr,
+      const RpcResponseBuilder& builder) {
+      try {
+        InputPayloadVariant input_payload = std::monostate{};
+        if (context_ptr) {
+          switch (input_payload_type) {
+            case PayloadType::UCX_BUFFER:
+              input_payload = static_cast<ucxx::UcxBuffer*>(context_ptr.get());
+              break;
+            case PayloadType::UCX_BUFFER_VEC:
+              input_payload =
+                static_cast<ucxx::UcxBufferVec*>(context_ptr.get());
+              break;
+            default:
+              break;
+          }
+        }
+        auto [serializable_results, returned_payload] =
+          (*dynamic_func)(request.params, input_payload);
+        RpcResponseHeader response_header;
+        response_header.session_id = request.session_id;
+        response_header.request_id = request.request_id;
+        response_header.status = std::error_code{};
+        response_header.results = std::move(serializable_results);
+        return {std::move(response_header), std::move(returned_payload)};
+      } catch (const std::exception& e) {
+        RpcResponseHeader error_response;
+        error_response.session_id = request.session_id;
+        error_response.request_id = request.request_id;
+        error_response.status =
+          std::make_error_code(std::errc::invalid_argument);
+        ParamMeta error_meta;
+        error_meta.type = ParamType::STRING;
+        error_meta.value.emplace<data::string>(e.what());
+        error_response.results.emplace_back(std::move(error_meta));
+        return {std::move(error_response), std::monostate{}};
+      }
+    }
+  };
+
   std::pair<RpcResponseHeader, ReturnedPayload> InvokeFunction(
     const RpcRequestHeader& request, RpcContextPtr context,
     const RpcResponseBuilder& builder) {
@@ -272,6 +332,47 @@ class RpcDispatcher {
 #endif
 
     signatures_[id] = MakeRpcSignature<Func>(id, name, instance_name_);
+  }
+
+  /**
+   * @brief Registers a type-erased dynamic function as an RPC function.
+   *
+   * This overload is designed for dynamic registration scenarios, such as
+   * plugins or language bindings (e.g., Python), where function signatures are
+   * not known at compile time.
+   *
+   * @param id The unique identifier for this function.
+   * @param name A human-readable name for the function.
+   * @param param_types A vector describing the types of serializable
+   * parameters.
+   * @param return_types A vector describing the types of serializable return
+   * values.
+   * @param input_payload_type The type of the non-serializable payload
+   * expected as input, if any.
+   * @param return_payload_type The type of the non-serializable payload
+   * returned, if any.
+   * @param func A type-erased callable that takes a vector of `ParamMeta` and
+   * an `InputPayloadVariant` and returns a pair of a vector of result
+   * `ParamMeta` and a `ReturnedPayload`.
+   */
+  void RegisterFunction(
+    function_id_t id, const data::string& name,
+    const data::vector<ParamType>& param_types,
+    const data::vector<ParamType>& return_types, PayloadType input_payload_type,
+    PayloadType return_payload_type, DynamicRpcFunction&& func) {
+    functions_[id] = pro::make_proxy<ErasedRpcFunctionFacade>(
+      DynamicFuncWrapper{std::move(func), input_payload_type});
+
+    // Create and store the signature manually from the provided types.
+    RpcFunctionSignature sig;
+    sig.instance_name = instance_name_;
+    sig.id = id;
+    sig.function_name = name;
+    sig.takes_context = (input_payload_type != PayloadType::MONOSTATE);
+    sig.param_types = param_types;
+    sig.return_types = return_types;
+    sig.return_payload_type = return_payload_type;
+    signatures_[id] = sig;
   }
 
   /**

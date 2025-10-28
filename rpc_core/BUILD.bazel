@@ -11,15 +11,29 @@ filegroup(
 )
 
 filegroup(
-    name = "rpc_headers",
+    name = "rpc_dispatcher_header",
     srcs = [
         "rpc_dispatcher.hpp",
+    ],
+)
+
+filegroup(
+    name = "rpc_basic_headers",
+    srcs = [
         "rpc_payload_types.hpp",
         "rpc_request_builder.hpp",
         "rpc_response_builder.hpp",
         "rpc_status.hpp",
         "rpc_traits.hpp",
         "rpc_types.hpp",
+    ],
+)
+
+filegroup(
+    name = "rpc_headers",
+    srcs = [
+        ":rpc_basic_headers",
+        ":rpc_dispatcher_header",
     ],
 )
 
@@ -52,6 +66,29 @@ cc_library(
 )
 
 cc_library(
+    name = "rpc_basic_header_lib",
+    hdrs = [
+        ":rpc_basic_headers",
+    ],
+    copts = ["-std=c++20"],
+    deps = [
+        "@cista",
+    ],
+)
+
+cc_library(
+    name = "rpc_dispatcher_lib",
+    hdrs = [
+        ":rpc_dispatcher_header",
+    ],
+    copts = ["-std=c++23"],
+    deps = [
+        ":rpc_basic_header_lib",
+        "@proxy",
+    ],
+)
+
+cc_library(
     name = "rpc_headers_lib",
     hdrs = [
         ":rpc_headers",
@@ -62,6 +99,7 @@ cc_library(
         "//conditions:default": [],
     }),
     deps = [
+        ":rpc_dispatcher_lib",
         ":hybrid_logical_clock_lib",
         ":tensor_meta_lib",
         "@cista",
