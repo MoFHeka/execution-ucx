@@ -1419,9 +1419,7 @@ ucx_am_context::connect_sender tag_invoke(
   tag_t<connect_endpoint>,
   ucx_am_context::scheduler scheduler,
   const std::vector<std::byte>& address_buffer) {
-  assert(address_buffer.size() > 0);
-  std::vector<std::byte> ucp_address_buffer(
-    address_buffer.begin(), address_buffer.end());
+  std::vector<std::byte> ucp_address_buffer = address_buffer;
   return ucx_am_context::connect_sender{
     *scheduler.context_, std::move(ucp_address_buffer)};
 }
