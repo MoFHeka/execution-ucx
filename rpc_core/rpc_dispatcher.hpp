@@ -15,6 +15,7 @@ limitations under the License.
 
 #pragma once
 
+#include "ucx_context/ucx_context_data.hpp"
 #ifndef RPC_CORE_RPC_DISPATCHER_HPP_
 #define RPC_CORE_RPC_DISPATCHER_HPP_
 
@@ -24,39 +25,22 @@ limitations under the License.
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <variant>
 
+#include "rpc_core/rpc_facade_helpers.hpp"
 #include "rpc_core/rpc_response_builder.hpp"
 #include "rpc_core/rpc_traits.hpp"
 #include "rpc_core/rpc_types.hpp"
+#include "rpc_core/utils/cista_serialize_helper.hpp"
 
 namespace eux {
 namespace rpc {
 
 class RpcDispatcher;
-
-// The set of possible context types that can be returned from an RPC function.
-using ReturnedPayload = PayloadVariant;
-
-// A variant of pointers to payload types, used for passing input context by
-// reference in a type-safe way.
-using InputPayloadVariant =
-  std::variant<std::monostate, ucxx::UcxBuffer*, ucxx::UcxBufferVec*>;
-
-#if WITH_CISTA_VERSION && WITH_CISTA_INTEGRITY
-constexpr auto const MODE =  // opt. versioning + check sum
-  cista::mode::WITH_VERSION | cista::mode::WITH_INTEGRITY;
-#elif WITH_CISTA_INTEGRITY
-constexpr auto const MODE = cista::mode::WITH_INTEGRITY;
-#elif WITH_CISTA_VERSION
-constexpr auto const MODE = cista::mode::WITH_VERSION;
-#else
-constexpr auto const MODE = cista::mode::NONE;
-#endif
 
 /**
  * @brief Holds the result of an RPC invocation.
@@ -64,13 +48,13 @@ constexpr auto const MODE = cista::mode::NONE;
  * This struct contains the response header and an optional, type-erased context
  * object that may be returned by the invoked function.
  *
- * @tparam ContextT The type of the context object. Defaults to std::monostate
- * if no context is returned.
+ * @tparam ContextT The type of the payload object. Defaults to std::monostate
+ * if no payload is returned.
  */
-template <typename ContextT = std::monostate>
+template <typename ReturnedPayload>
 struct RpcInvokeResult {
   RpcResponseHeader header;
-  std::optional<ContextT> context;
+  ReturnedPayload payload;
 };
 
 /**
@@ -82,22 +66,49 @@ struct RpcInvokeResult {
 using RpcContextPtr = std::unique_ptr<void, void (*)(void*)>;
 
 struct ErasedRpcFunctionFacade
-  : pro::facade_builder::add_convention<
+  : pro::facade_builder  //
+    ::add_convention<
       pro::operator_dispatch<"()">,
       std::pair<RpcResponseHeader, ReturnedPayload>(
-        const RpcRequestHeader&, RpcContextPtr, const RpcResponseBuilder&)>::
-      support_relocation<pro::constraint_level::trivial>::build {};
+        const RpcRequestHeader&, RpcContextPtr, const RpcResponseBuilder&)>  //
+    ::support_relocation<pro::constraint_level::trivial>                     //
+    ::build {};
 
 using ErasedRpcFunction = pro::proxy<ErasedRpcFunctionFacade>;
 
+// Define operation tag of pro::proxy Facade
+using RpcCallOperator = pro::operator_dispatch<"()">;
+
+// Define function signatures in pro::proxy Facade for dynamic RPC
+using DynamicFunctionReturnType =
+  std::pair<data::vector<ParamMeta>, ReturnedPayload>;
+
+namespace detail {
+template <typename PayloadT>
+using DynamicRpcConventionSignature =
+  DynamicFunctionReturnType(const data::vector<ParamMeta>&, const PayloadT&);
+using DynamicRpcConventionSignatureNoPayload =
+  DynamicFunctionReturnType(const data::vector<ParamMeta>&);
+
+// Define initial builder (contains "no payload" base version)
+using InitialBuilder = pro::facade_builder  //
+  ::add_skill<pro::skills::as_view>         //
+  ::add_convention<
+    pro::weak_dispatch<RpcCallOperator>,
+    DynamicRpcConventionSignatureNoPayload>;
+// Use TMP helper template to add all Payload conventions
+using BuilderWithPayloads = AddVariantConventionsType<
+  InitialBuilder, PayloadVariant, DynamicRpcConventionSignature,
+  RpcCallOperator>;
+}  // namespace detail
+
+// Final build Facade
 struct DynamicRpcFunctionFacade
-  : pro::facade_builder::add_convention<
-      pro::operator_dispatch<"()">,
-      std::pair<data::vector<ParamMeta>, ReturnedPayload>(
-        const data::vector<ParamMeta>&, InputPayloadVariant)>::
-      support_relocation<pro::constraint_level::trivial>::build {};
+  : detail::BuilderWithPayloads  //
+    ::template support_relocation<pro::constraint_level::trivial>::build {};
 
 using DynamicRpcFunction = pro::proxy<DynamicRpcFunctionFacade>;
+using DynamicRpcFunctionView = pro::proxy_view<DynamicRpcFunctionFacade>;
 
 // Helper for extracting function arguments from the request header and
 // context.
@@ -110,6 +121,8 @@ T extract_arg(
     std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>;
   static constexpr bool is_response_builder = std::is_same_v<
     DecayedT, std::remove_reference_t<std::remove_const_t<RpcResponseBuilder>>>;
+  static constexpr bool is_void_pointer =
+    std::is_same_v<std::remove_cv_t<std::remove_reference_t<T>>, void*>;
 
   if constexpr (std::is_same_v<DecayedT, RpcRequestHeader>) {
     return req;
@@ -148,6 +161,9 @@ T extract_arg(
     static_assert(
       !std::is_void_v<std::decay_t<Context>>,
       "Function expects a context, but none was provided.");
+    static_assert(
+      !is_void_pointer,
+      "Function argument is a void pointer, but it should be a context type.");
     if constexpr (std::is_lvalue_reference_v<T>) {
       return *context;
     } else {
@@ -185,6 +201,9 @@ struct NaturalCallerFacade<R(Args...)>
 
 }  // namespace detail
 
+template size_t utils::GetSerializedSize(const RpcResponseHeader& value);
+template size_t utils::GetSerializedSize(const RpcRequestHeader& value);
+
 /**
  * @brief Manages registration and dispatching of RPC functions.
  *
@@ -204,60 +223,6 @@ class RpcDispatcher {
   explicit RpcDispatcher(data::string instance_name)
     : instance_name_(std::move(instance_name)) {}
 
- private:
-  data::string instance_name_;
-  std::unordered_map<function_id_t, ErasedRpcFunction> functions_;
-#ifdef EUX_RPC_ENABLE_NATURAL_CALL
-  std::unordered_map<function_id_t, std::any> native_functions_;
-#endif
-  cista::raw::hash_map<function_id_t, RpcFunctionSignature> signatures_;
-
-  // Functor to wrap a type-erased dynamic function for pro::proxy.
-  struct DynamicFuncWrapper {
-    DynamicRpcFunction dynamic_func;
-    PayloadType input_payload_type;
-
-    std::pair<RpcResponseHeader, ReturnedPayload> operator()(
-      const RpcRequestHeader& request, RpcContextPtr context_ptr,
-      const RpcResponseBuilder& builder) {
-      try {
-        InputPayloadVariant input_payload = std::monostate{};
-        if (context_ptr) {
-          switch (input_payload_type) {
-            case PayloadType::UCX_BUFFER:
-              input_payload = static_cast<ucxx::UcxBuffer*>(context_ptr.get());
-              break;
-            case PayloadType::UCX_BUFFER_VEC:
-              input_payload =
-                static_cast<ucxx::UcxBufferVec*>(context_ptr.get());
-              break;
-            default:
-              break;
-          }
-        }
-        auto [serializable_results, returned_payload] =
-          (*dynamic_func)(request.params, input_payload);
-        RpcResponseHeader response_header;
-        response_header.session_id = request.session_id;
-        response_header.request_id = request.request_id;
-        response_header.status = std::error_code{};
-        response_header.results = std::move(serializable_results);
-        return {std::move(response_header), std::move(returned_payload)};
-      } catch (const std::exception& e) {
-        RpcResponseHeader error_response;
-        error_response.session_id = request.session_id;
-        error_response.request_id = request.request_id;
-        error_response.status =
-          std::make_error_code(std::errc::invalid_argument);
-        ParamMeta error_meta;
-        error_meta.type = ParamType::STRING;
-        error_meta.value.emplace<data::string>(e.what());
-        error_response.results.emplace_back(std::move(error_meta));
-        return {std::move(error_response), std::monostate{}};
-      }
-    }
-  };
-
   std::pair<RpcResponseHeader, ReturnedPayload> InvokeFunction(
     const RpcRequestHeader& request, RpcContextPtr context,
     const RpcResponseBuilder& builder) {
@@ -271,42 +236,54 @@ class RpcDispatcher {
       RpcResponseHeader error_response;
       error_response.session_id = request.session_id;
       error_response.request_id = request.request_id;
-      error_response.status = std::make_error_code(std::errc::invalid_argument);
+      error_response.status =
+        std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT);
       return {std::move(error_response), std::monostate{}};
     }
   }
 
-  std::pair<RpcResponseHeader, ReturnedPayload> DispatchImpl(
-    cista::byte_buf&& request_buffer, RpcContextPtr context) {
-    const RpcRequestHeader* request_ptr = nullptr;
-    try {
-      request_ptr =
-        cista::deserialize<const RpcRequestHeader, MODE>(request_buffer);
-      if (!request_ptr) {
-        throw std::runtime_error("Failed to deserialize request");
-      }
-
-      RpcResponseBuilder builder;
-      return InvokeFunction(*request_ptr, std::move(context), builder);
-    } catch (const std::exception& e) {
-      RpcResponseHeader error_response;
-      if (request_ptr) {
-        error_response.session_id = request_ptr->session_id;
-        error_response.request_id = request_ptr->request_id;
-      }
-      error_response.status = std::make_error_code(std::errc::invalid_argument);
-      return {std::move(error_response), std::monostate{}};
-    }
-  }
-
- public:
   /**
    * @brief Serializes an RpcResponseHeader into a byte buffer.
    * @param response_header The response header to serialize.
    * @return A cista::byte_buf containing the serialized data.
    */
-  static cista::byte_buf SerializeResponse(RpcResponseHeader& response_header) {
-    return cista::serialize<MODE>(response_header);
+  static cista::byte_buf SerializeResponse(
+    const RpcResponseHeader& response_header) {
+    return cista::serialize<utils::SerializerMode>(response_header);
+  }
+
+  template <typename T>
+  void SerializeResponse(const RpcResponseHeader& response_header, T& writer) {
+    static_assert(
+      std::is_same_v<
+        decltype(std::declval<T&>().write(
+          static_cast<void const*>(nullptr),
+          std::declval<std::size_t>(),
+          std::declval<std::size_t>())),
+        cista::offset_t>,
+      "Writer must implement: offset_t write(void const* ptr, std::size_t "
+      "num_bytes, std::size_t alignment = 0U);");
+    return cista::serialize<utils::SerializerMode>(writer, response_header);
+  }
+
+  static void SerializeResponse(
+    const RpcResponseHeader& response_header,
+    utils::FixedBufferWriter& writer) {
+    return cista::serialize<utils::SerializerMode>(writer, response_header);
+  }
+
+  static void SerializeResponse(
+    const RpcResponseHeader& response_header,
+    cista::buf<cista::byte_buf>& buffer) {
+    return cista::serialize<utils::SerializerMode>(buffer, response_header);
+  }
+
+  static ResponseHeaderUniquePtr DeerializeResponse(ucxx::UcxHeader&& data) {
+    const auto* header =
+      cista::deserialize<const RpcResponseHeader, utils::SerializerMode>(
+        std::string_view(
+          reinterpret_cast<const char*>(data.data()), data.size()));
+    return ResponseHeaderUniquePtr(header, UcxHeaderDeleter{std::move(data)});
   }
 
   /**
@@ -322,13 +299,14 @@ class RpcDispatcher {
   void RegisterFunction(
     function_id_t id, Func&& func,
     const data::string& name = data::string{"anonymous"}) {
-    functions_[id] = MakeRpcWrapper(std::forward<Func>(func));
+    functions_.emplace(id, MakeRpcWrapper(std::forward<Func>(func)));
 
 #ifdef EUX_RPC_ENABLE_NATURAL_CALL
     using Signature = typename signature_from_traits<std::decay_t<Func>>::type;
-    native_functions_[id] =
+    native_functions_.emplace(
+      id,
       pro::make_proxy<detail::NaturalCallerFacade<Signature>>(
-        std::forward<Func>(func));
+        std::forward<Func>(func)));
 #endif
 
     signatures_[id] = MakeRpcSignature<Func>(id, name, instance_name_);
@@ -360,19 +338,22 @@ class RpcDispatcher {
     const data::vector<ParamType>& param_types,
     const data::vector<ParamType>& return_types, PayloadType input_payload_type,
     PayloadType return_payload_type, DynamicRpcFunction&& func) {
-    functions_[id] = pro::make_proxy<ErasedRpcFunctionFacade>(
-      DynamicFuncWrapper{std::move(func), input_payload_type});
+    functions_.emplace(
+      id, pro::make_proxy<ErasedRpcFunctionFacade>(
+            DynamicFuncWrapper<DynamicRpcFunction>{
+              std::move(func), input_payload_type}));
 
     // Create and store the signature manually from the provided types.
-    RpcFunctionSignature sig;
-    sig.instance_name = instance_name_;
-    sig.id = id;
-    sig.function_name = name;
-    sig.takes_context = (input_payload_type != PayloadType::MONOSTATE);
-    sig.param_types = param_types;
-    sig.return_types = return_types;
-    sig.return_payload_type = return_payload_type;
-    signatures_[id] = sig;
+    signatures_.emplace(
+      id, RpcFunctionSignature{
+            .instance_name = instance_name_,
+            .id = id,
+            .function_name = name,
+            .param_types = param_types,
+            .return_types = return_types,
+            .input_payload_type = input_payload_type,
+            .return_payload_type = return_payload_type,
+          });
   }
 
   /**
@@ -509,9 +490,6 @@ class RpcDispatcher {
   RpcInvokeResult<ReturnedPayload> Dispatch(cista::byte_buf&& request_buffer) {
     auto [header, context_variant] = DispatchImpl(
       std::move(request_buffer), RpcContextPtr(nullptr, [](void*) {}));
-    if (static_cast<std::error_code>(header.status)) {
-      return {std::move(header), std::nullopt};
-    }
     return {std::move(header), std::move(context_variant)};
   }
 
@@ -520,9 +498,6 @@ class RpcDispatcher {
     const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
     auto [header, context_variant] = InvokeFunction(
       request_header, RpcContextPtr(nullptr, [](void*) {}), builder);
-    if (static_cast<std::error_code>(header.status)) {
-      return {std::move(header), std::nullopt};
-    }
     return {std::move(header), std::move(context_variant)};
   }
 
@@ -533,9 +508,6 @@ class RpcDispatcher {
       std::move(request_buffer),
       RpcContextPtr(
         const_cast<InputData*>(&input_data), [](void*) { /* non-owning */ }));
-    if (static_cast<std::error_code>(header.status)) {
-      return {std::move(header), std::nullopt};
-    }
     return {std::move(header), std::move(context_variant)};
   }
 
@@ -547,9 +519,6 @@ class RpcDispatcher {
       request_header,
       RpcContextPtr(const_cast<InputData*>(&input_data), [](void*) {}),
       builder);
-    if (static_cast<std::error_code>(header.status)) {
-      return {std::move(header), std::nullopt};
-    }
     return {std::move(header), std::move(context_variant)};
   }
 
@@ -561,9 +530,6 @@ class RpcDispatcher {
     RpcContextPtr non_owning_ptr(&owned_input_data, [](void*) {});
     auto [header, context_variant] =
       DispatchImpl(std::move(request_buffer), std::move(non_owning_ptr));
-    if (static_cast<std::error_code>(header.status)) {
-      return {std::move(header), std::nullopt};
-    }
     return {std::move(header), std::move(context_variant)};
   }
 
@@ -576,10 +542,24 @@ class RpcDispatcher {
     RpcContextPtr non_owning_ptr(&owned_input_data, [](void*) {});
     auto [header, context_variant] =
       InvokeFunction(request_header, std::move(non_owning_ptr), builder);
-    if (static_cast<std::error_code>(header.status)) {
-      return {std::move(header), std::nullopt};
-    }
     return {std::move(header), std::move(context_variant)};
+  }
+
+  template <typename Func>
+  std::pair<RpcResponseHeader, ReturnedPayload> DispatchAdhoc(
+    Func&& func, const RpcRequestHeader& header, RpcContextPtr context,
+    const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
+    auto wrapper = MakeRpcWrapper(std::forward<Func>(func));
+    return (*wrapper)(header, std::move(context), builder);
+  }
+
+  std::pair<RpcResponseHeader, ReturnedPayload> DispatchAdhoc(
+    DynamicRpcFunctionView func, PayloadType input_payload_type,
+    const RpcRequestHeader& header, RpcContextPtr context,
+    const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
+    auto wrapper = pro::make_proxy<ErasedRpcFunctionFacade>(
+      DynamicFuncWrapper<DynamicRpcFunctionView>{func, input_payload_type});
+    return (*wrapper)(header, std::move(context), builder);
   }
 
   /**
@@ -626,7 +606,7 @@ class RpcDispatcher {
     for (const auto& pair : signatures_) {
       sig_vec.push_back(pair.second);
     }
-    return cista::serialize<MODE>(sig_vec);
+    return cista::serialize<utils::SerializerMode>(sig_vec);
   }
 
 /**
@@ -654,18 +634,124 @@ class RpcDispatcher {
 #endif
 
  private:
+  cista::raw::hash_map<function_id_t, ErasedRpcFunction> functions_;
+#ifdef EUX_RPC_ENABLE_NATURAL_CALL
+  cista::raw::hash_map<function_id_t, std::any> native_functions_;
+#endif
+
+ protected:
+  data::string instance_name_;
+  cista::raw::hash_map<function_id_t, RpcFunctionSignature> signatures_;
+
+  template <typename Func, typename PayloadT>
+  static constexpr bool is_dynamic_function_v = requires(Func&& func) {
+    {
+      (*std::forward<Func>(func))(
+        std::declval<const data::vector<ParamMeta>&>(),
+        std::declval<const PayloadT&>())
+    };  // NOLINT(readability/braces)
+  };
+
+  template <typename Func>
+  struct DynamicFuncWrapper {
+    Func dynamic_func;
+    PayloadType input_payload_type;
+
+    std::pair<RpcResponseHeader, ReturnedPayload> operator()(
+      const RpcRequestHeader& request, RpcContextPtr context_ptr,
+      const RpcResponseBuilder& builder) {
+      constexpr bool is_reference_wrapper =
+        is_reference_wrapper_v<std::decay_t<Func>>;
+      constexpr bool is_dynamic_function =
+        is_dynamic_function_v<Func, ucxx::UcxBuffer>
+        || is_dynamic_function_v<Func, ucxx::UcxBufferVec>;
+      try {
+        auto call_fn = [&]() {
+          if constexpr (is_dynamic_function) {
+            if (context_ptr) {
+              if (input_payload_type == PayloadType::UCX_BUFFER) {
+                return (*dynamic_func)(
+                  request.params,
+                  *static_cast<ucxx::UcxBuffer*>(context_ptr.get()));
+              } else if (input_payload_type == PayloadType::UCX_BUFFER_VEC) {
+                return (*dynamic_func)(
+                  request.params,
+                  *static_cast<ucxx::UcxBufferVec*>(context_ptr.get()));
+              }
+            }
+            return (*dynamic_func)(request.params);
+          } else if constexpr (is_reference_wrapper) {
+            if (context_ptr) {
+              if (input_payload_type == PayloadType::UCX_BUFFER) {
+                return (*(dynamic_func.get()))(
+                  request.params,
+                  *static_cast<ucxx::UcxBuffer*>(context_ptr.get()));
+              } else if (input_payload_type == PayloadType::UCX_BUFFER_VEC) {
+                return (*(dynamic_func.get()))(
+                  request.params,
+                  *static_cast<ucxx::UcxBufferVec*>(context_ptr.get()));
+              }
+            }
+            return (*(dynamic_func.get()))(request.params);
+          } else {
+            static_assert(false, "Invalid function type");
+          }
+        };
+        auto [serializable_results, returned_payload] = call_fn();
+        RpcResponseHeader response_header;
+        response_header.session_id = request.session_id;
+        response_header.request_id = request.request_id;
+        response_header.status = std::make_error_code(rpc::RpcErrc::OK);
+        response_header.results = std::move(serializable_results);
+        return {std::move(response_header), std::move(returned_payload)};
+      } catch (const std::exception& e) {
+        RpcResponseHeader error_response;
+        error_response.session_id = request.session_id;
+        error_response.request_id = request.request_id;
+        error_response.status = std::make_error_code(rpc::RpcErrc::INTERNAL);
+        ParamMeta error_meta;
+        error_meta.type = ParamType::STRING;
+        error_meta.value.emplace<data::string>(e.what());
+        error_response.results.emplace_back(std::move(error_meta));
+        return {std::move(error_response), std::monostate{}};
+      }
+    }
+  };
+
+  std::pair<RpcResponseHeader, ReturnedPayload> DispatchImpl(
+    cista::byte_buf&& request_buffer, RpcContextPtr context) {
+    const RpcRequestHeader* request_ptr = nullptr;
+    try {
+      request_ptr =
+        cista::deserialize<const RpcRequestHeader, utils::SerializerMode>(
+          request_buffer);
+      if (!request_ptr) {
+        throw std::runtime_error("Failed to deserialize request");
+      }
+
+      RpcResponseBuilder builder;
+      return InvokeFunction(*request_ptr, std::move(context), builder);
+    } catch (const std::exception& e) {
+      RpcResponseHeader error_response;
+      if (request_ptr) {
+        error_response.session_id = request_ptr->session_id;
+        error_response.request_id = request_ptr->request_id;
+      }
+      error_response.status =
+        std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT);
+      return {std::move(error_response), std::monostate{}};
+    }
+  }
+
   template <typename ReturnContextT>
   RpcInvokeResult<ReturnContextT> BuildRpcResult(
     RpcResponseHeader&& header, ReturnedPayload&& context_variant) {
-    if (static_cast<std::error_code>(header.status)) {
-      return {std::move(header), std::nullopt};
-    }
-
-    if constexpr (std::is_same_v<ReturnContextT, std::monostate>) {
-      if (std::holds_alternative<std::monostate>(context_variant)) {
-        return {std::move(header), std::nullopt};
-      }
-    }
+    static_assert(
+      std::is_same_v<ReturnContextT, std::monostate>
+        || std::is_same_v<ReturnContextT, ucxx::UcxBuffer>
+        || std::is_same_v<ReturnContextT, ucxx::UcxBufferVec>,
+      "ReturnContextT must be std::monostate, ucxx::UcxBuffer, or "
+      "ucxx::UcxBufferVec");
 
     return {
       std::move(header), std::get<ReturnContextT>(std::move(context_variant))};
@@ -708,7 +794,7 @@ class RpcDispatcher {
     sig.instance_name = instance_name;
     sig.id = id;
     sig.function_name = function_name;
-    sig.takes_context = !std::is_void_v<InputContextType>;
+    sig.input_payload_type = get_payload_type<InputContextType>();
 
     FillParamTypesImpl<ArgsTuple, InputContextType>(sig.param_types);
 
@@ -719,15 +805,15 @@ class RpcDispatcher {
         std::decay_t<typename get_pair_first_type<DecayR>::type>,
         RpcResponseHeader>;
     if constexpr (std::is_void_v<DecayR>) {
-      sig.return_payload_type = PayloadType::MONOSTATE;
+      sig.return_payload_type = PayloadType::NO_PAYLOAD;
     } else if constexpr (std::is_same_v<DecayR, RpcResponseHeader>) {
-      sig.return_payload_type = PayloadType::MONOSTATE;
+      sig.return_payload_type = PayloadType::NO_PAYLOAD;
     } else if constexpr (is_response_pair) {
       using PayloadT = std::decay_t<typename DecayR::second_type>;
       if constexpr (is_payload_v<PayloadT>) {
         sig.return_payload_type = get_payload_type<PayloadT>();
       } else {
-        sig.return_payload_type = PayloadType::MONOSTATE;
+        sig.return_payload_type = PayloadType::NO_PAYLOAD;
       }
     } else if constexpr (is_std_tuple<DecayR>::value) {
       FillReturnTypesImpl<DecayR>(sig.return_types);
@@ -735,7 +821,7 @@ class RpcDispatcher {
       if constexpr (!std::is_void_v<PayloadT>) {
         sig.return_payload_type = get_payload_type<PayloadT>();
       } else {
-        sig.return_payload_type = PayloadType::MONOSTATE;
+        sig.return_payload_type = PayloadType::NO_PAYLOAD;
       }
     } else {
       if (is_payload_v<DecayR>) {
@@ -744,7 +830,7 @@ class RpcDispatcher {
         if (get_param_type<DecayR>() != ParamType::UNKNOWN) {
           sig.return_types.push_back(get_param_type<DecayR>());
         }
-        sig.return_payload_type = PayloadType::MONOSTATE;
+        sig.return_payload_type = PayloadType::NO_PAYLOAD;
       }
     }
     return sig;
@@ -844,8 +930,7 @@ class RpcDispatcher {
           RpcResponseHeader error_response;
           error_response.session_id = request.session_id;
           error_response.request_id = request.request_id;
-          error_response.status =
-            std::make_error_code(std::errc::invalid_argument);
+          error_response.status = std::make_error_code(rpc::RpcErrc::INTERNAL);
           // In a real application, you would log e.what() here.
           // For debugging, pack the error message into the results.
           ParamMeta error_meta;

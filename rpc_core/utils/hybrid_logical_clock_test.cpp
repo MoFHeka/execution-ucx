@@ -13,12 +13,12 @@
  *limitations under the License.
  *==============================================================================*/
 
+#include "rpc_core/utils/hybrid_logical_clock.hpp"
+
 #include <gtest/gtest.h>
 
 #include <chrono>
 #include <thread>
-
-#include "rpc_core/utils/hybrid_logical_clock.hpp"
 
 namespace eux {
 namespace rpc {
@@ -39,9 +39,9 @@ class HybridLogicalClockTest : public ::testing::Test {
 
 TEST_F(HybridLogicalClockTest, DefaultConstructionStartsAtZero) {
   HybridLogicalClock clock;
-  EXPECT_EQ(clock.raw(), 0u);
-  EXPECT_EQ(clock.physical_time_ms(), 0u);
-  EXPECT_EQ(clock.logical_counter(), 0u);
+  EXPECT_EQ(clock.Raw(), 0u);
+  EXPECT_EQ(clock.PhysicalTimeMs(), 0u);
+  EXPECT_EQ(clock.LogicalCounter(), 0u);
 }
 
 TEST_F(HybridLogicalClockTest, TickLocalAdvancesWhenPhysicalIncreases) {
@@ -50,50 +50,50 @@ TEST_F(HybridLogicalClockTest, TickLocalAdvancesWhenPhysicalIncreases) {
 
   clock.TickLocal(next_physical);
 
-  EXPECT_EQ(clock.physical_time_ms(), next_physical);
-  EXPECT_EQ(clock.logical_counter(), 0u);
+  EXPECT_EQ(clock.PhysicalTimeMs(), next_physical);
+  EXPECT_EQ(clock.LogicalCounter(), 0u);
 }
 
 TEST_F(HybridLogicalClockTest, TickLocalIncrementsLogicalWhenPhysicalStalled) {
   HybridLogicalClock clock = make_clock(kBasePhysical, /*logical=*/1);
 
   clock.TickLocal(kBasePhysical);
-  EXPECT_EQ(clock.physical_time_ms(), kBasePhysical);
-  EXPECT_EQ(clock.logical_counter(), 2u);
+  EXPECT_EQ(clock.PhysicalTimeMs(), kBasePhysical);
+  EXPECT_EQ(clock.LogicalCounter(), 2u);
 
   clock.TickLocal(kBasePhysical - 1);
-  EXPECT_EQ(clock.physical_time_ms(), kBasePhysical);
-  EXPECT_EQ(clock.logical_counter(), 3u);
+  EXPECT_EQ(clock.PhysicalTimeMs(), kBasePhysical);
+  EXPECT_EQ(clock.LogicalCounter(), 3u);
 }
 
 TEST_F(HybridLogicalClockTest, MergeChoosesMaximumPhysicalComponent) {
   HybridLogicalClock local = make_clock(kBasePhysical + 3, 5);
   HybridLogicalClock remote = make_clock(kBasePhysical + 5, 9);
 
-  local.Merge(remote.raw(), kBasePhysical + 4);
+  local.Merge(remote.Raw(), kBasePhysical + 4);
 
-  EXPECT_EQ(local.physical_time_ms(), kBasePhysical + 5);
-  EXPECT_EQ(local.logical_counter(), 10u);
+  EXPECT_EQ(local.PhysicalTimeMs(), kBasePhysical + 5);
+  EXPECT_EQ(local.LogicalCounter(), 10u);
 }
 
 TEST_F(HybridLogicalClockTest, MergeTiesUseMaxLogicalBeforeIncrement) {
   HybridLogicalClock local = make_clock(kBasePhysical, 10);
   HybridLogicalClock remote = make_clock(kBasePhysical, 42);
 
-  local.Merge(remote.raw(), kBasePhysical);
+  local.Merge(remote.Raw(), kBasePhysical);
 
-  EXPECT_EQ(local.physical_time_ms(), kBasePhysical);
-  EXPECT_EQ(local.logical_counter(), 43u);
+  EXPECT_EQ(local.PhysicalTimeMs(), kBasePhysical);
+  EXPECT_EQ(local.LogicalCounter(), 43u);
 }
 
 TEST_F(HybridLogicalClockTest, MergeLowerPhysicalKeepsLocal) {
   HybridLogicalClock local = make_clock(kBasePhysical + 10, 7);
   HybridLogicalClock remote = make_clock(kBasePhysical + 2, 100);
 
-  local.Merge(remote.raw(), kBasePhysical + 5);
+  local.Merge(remote.Raw(), kBasePhysical + 5);
 
-  EXPECT_EQ(local.physical_time_ms(), kBasePhysical + 10);
-  EXPECT_EQ(local.logical_counter(), 8u);
+  EXPECT_EQ(local.PhysicalTimeMs(), kBasePhysical + 10);
+  EXPECT_EQ(local.LogicalCounter(), 8u);
 }
 
 TEST_F(HybridLogicalClockTest, BumpLogicalCounterWraps) {
@@ -102,8 +102,8 @@ TEST_F(HybridLogicalClockTest, BumpLogicalCounterWraps) {
 
   clock.BumpLogicalCounter();
 
-  EXPECT_EQ(clock.physical_time_ms(), kBasePhysical);
-  EXPECT_EQ(clock.logical_counter(), 0u);
+  EXPECT_EQ(clock.PhysicalTimeMs(), kBasePhysical);
+  EXPECT_EQ(clock.LogicalCounter(), 0u);
 }
 
 TEST_F(HybridLogicalClockTest, ToStringContainsPhysicalAndLogical) {
@@ -116,20 +116,20 @@ TEST_F(HybridLogicalClockTest, NowProducesNonZeroPhysicalComponent) {
   std::this_thread::sleep_for(std::chrono::milliseconds(1));
   const auto after = HybridLogicalClock::Now();
 
-  EXPECT_GT(before.physical_time_ms(), 0u);
-  EXPECT_GE(after.physical_time_ms(), before.physical_time_ms());
-  EXPECT_EQ(before.logical_counter(), 0u);
-  EXPECT_EQ(after.logical_counter(), 0u);
+  EXPECT_GT(before.PhysicalTimeMs(), 0u);
+  EXPECT_GE(after.PhysicalTimeMs(), before.PhysicalTimeMs());
+  EXPECT_EQ(before.LogicalCounter(), 0u);
+  EXPECT_EQ(after.LogicalCounter(), 0u);
 }
 
 TEST_F(HybridLogicalClockTest, MergeWithSystemNowKeepsProgressMonotonic) {
   HybridLogicalClock local = make_clock(kBasePhysical, 0);
   const auto remote = HybridLogicalClock::Now();
 
-  local.Merge(remote.raw());
+  local.Merge(remote.Raw());
 
-  EXPECT_GE(local.physical_time_ms(), remote.physical_time_ms());
-  EXPECT_LT(local.logical_counter(), HybridLogicalClock::kLogicalMask);
+  EXPECT_GE(local.PhysicalTimeMs(), remote.PhysicalTimeMs());
+  EXPECT_LT(local.LogicalCounter(), HybridLogicalClock::kLogicalMask);
 }
 
 TEST_F(HybridLogicalClockTest, AssignRawOverwritesStateExactly) {
@@ -139,19 +139,19 @@ TEST_F(HybridLogicalClockTest, AssignRawOverwritesStateExactly) {
 
   clock.AssignRaw(raw);
 
-  EXPECT_EQ(clock.raw(), raw);
-  EXPECT_EQ(clock.physical_time_ms(), kBasePhysical);
-  EXPECT_EQ(clock.logical_counter(), 0x55u);
+  EXPECT_EQ(clock.Raw(), raw);
+  EXPECT_EQ(clock.PhysicalTimeMs(), kBasePhysical);
+  EXPECT_EQ(clock.LogicalCounter(), 0x55u);
 }
 
 TEST_F(HybridLogicalClockTest, MergeWithLowerObservedPhysicalPrefersObserved) {
   HybridLogicalClock local = make_clock(kBasePhysical + 5, 2);
   HybridLogicalClock remote = make_clock(kBasePhysical + 10, 1);
 
-  local.Merge(remote.raw(), kBasePhysical + 20);
+  local.Merge(remote.Raw(), kBasePhysical + 20);
 
-  EXPECT_EQ(local.physical_time_ms(), kBasePhysical + 20);
-  EXPECT_EQ(local.logical_counter(), 0u);
+  EXPECT_EQ(local.PhysicalTimeMs(), kBasePhysical + 20);
+  EXPECT_EQ(local.LogicalCounter(), 0u);
 }
 
 }  // namespace

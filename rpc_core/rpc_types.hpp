@@ -20,17 +20,17 @@ limitations under the License.
 
 #include <cista.h>
 
+#include <cstddef>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
-#include <variant>
 
 #include "rpc_core/rpc_payload_types.hpp"
 #include "rpc_core/rpc_status.hpp"
 #include "rpc_core/utils/hybrid_logical_clock.hpp"
 #include "rpc_core/utils/tensor_meta.hpp"
-#include "ucx_context/ucx_context_data.hpp"
 
 namespace eux {
 namespace rpc {
@@ -122,13 +122,13 @@ struct RpcFunctionSignature {
   data::string function_name;
   data::vector<ParamType> param_types;
   data::vector<ParamType> return_types;
+  PayloadType input_payload_type;
   PayloadType return_payload_type;
-  bool takes_context;
 
   auto cista_members() const {
     return std::tie(
       instance_name, id, function_name, param_types, return_types,
-      return_payload_type, takes_context);
+      input_payload_type, return_payload_type);
   }
 };
 
@@ -309,18 +309,18 @@ struct RpcMessageAccessor {
 
 // RPC request header (contains all non-tensor parameters)
 struct RpcRequestHeader : public RpcMessageAccessor<RpcRequestHeader> {
-  function_id_t function_id;       // Target function identifier
-  session_id_t session_id;         // RPC session identifier
-  request_id_t request_id;         // Unique request identifier
-  data::vector<ParamMeta> params;  // Parameter list
-  utils::HybridLogicalClock hlc{};
-  utils::workflow_id_t workflow_id{};
+  session_id_t session_id;             // RPC session identifier
+  request_id_t request_id;             // Unique request identifier
+  function_id_t function_id;           // Target function identifier
+  utils::HybridLogicalClock hlc{};     // Hybrid logical clock
+  utils::workflow_id_t workflow_id{};  // Workflow identifier
+  data::vector<ParamMeta> params;      // Parameter list
 
   RpcRequestHeader() = default;
 
   auto cista_members() const {
     return std::tie(
-      function_id, session_id, request_id, params, hlc, workflow_id);
+      session_id, request_id, function_id, hlc, workflow_id, params);
   }
 
   // Add a parameter to the request
@@ -341,17 +341,28 @@ struct RpcRequestHeader : public RpcMessageAccessor<RpcRequestHeader> {
 
 // RPC response header
 struct RpcResponseHeader : public RpcMessageAccessor<RpcResponseHeader> {
-  session_id_t session_id;          // RPC session identifier
-  request_id_t request_id;          // Unique request identifier
-  data::vector<ParamMeta> results;  // List of result parameters
-  RpcStatus status{};               // Response status
-  utils::HybridLogicalClock hlc{};
-  utils::workflow_id_t workflow_id{};
+  session_id_t session_id;             // RPC session identifier
+  request_id_t request_id;             // Unique request identifier
+  utils::HybridLogicalClock hlc{};     // Hybrid logical clock
+  utils::workflow_id_t workflow_id{};  // Workflow identifier
+  RpcStatus status{};                  // Response status
+  data::vector<ParamMeta> results;     // List of result parameters
 
   RpcResponseHeader() = default;
 
+  RpcResponseHeader(
+    session_id_t session_id, request_id_t request_id,
+    utils::HybridLogicalClock hlc, utils::workflow_id_t workflow_id,
+    RpcStatus status, data::vector<ParamMeta> results)
+    : session_id(session_id),
+      request_id(request_id),
+      hlc(hlc),
+      workflow_id(workflow_id),
+      status(status),
+      results(results) {}
+
   auto cista_members() const {
-    return std::tie(session_id, request_id, results, status, hlc, workflow_id);
+    return std::tie(session_id, request_id, hlc, workflow_id, status, results);
   }
 
   // Add a result to the response
@@ -370,7 +381,13 @@ struct RpcResponseHeader : public RpcMessageAccessor<RpcResponseHeader> {
   utils::workflow_id_t& GetWorkflowId() { return workflow_id; }
 };
 
+template <typename T>
+using UcxHeaderUniquePtr = std::unique_ptr<const T, UcxHeaderDeleter>;
+
+using RequestHeaderUniquePtr = UcxHeaderUniquePtr<RpcRequestHeader>;
+using ResponseHeaderUniquePtr = UcxHeaderUniquePtr<RpcResponseHeader>;
+
 }  // namespace rpc
 }  // namespace eux
 
-#endif  // MEEPO_EMBEDDING_FRAMEWORK_RPC_TYPES_HPP_
+#endif  // RPC_CORE_RPC_TYPES_HPP_

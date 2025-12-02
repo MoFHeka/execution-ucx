@@ -18,11 +18,13 @@
 #ifndef RPC_CORE_RPC_REQUEST_BUILDER_HPP_
 #define RPC_CORE_RPC_REQUEST_BUILDER_HPP_
 
-#include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "rpc_core/rpc_traits.hpp"
 #include "rpc_core/rpc_types.hpp"
@@ -84,25 +86,55 @@ void PackArgs(RpcRequestHeader& header, Args&&... args) {
   (PackArg(header, std::forward<Args>(args)), ...);
 }
 
+template <typename... Args>
+struct first_arg_is_param_meta_vector : std::false_type {};
+
+template <typename First, typename... Rest>
+struct first_arg_is_param_meta_vector<First, Rest...> {
+  static constexpr bool value =
+    std::is_same_v<std::decay_t<First>, data::vector<ParamMeta>>;
+};
+
+template <typename... Args>
+struct first_arg_is_signature : std::false_type {};
+
+template <typename First, typename... Rest>
+struct first_arg_is_signature<First, Rest...> {
+  static constexpr bool value =
+    std::is_same_v<std::decay_t<First>, RpcFunctionSignature>;
+};
+
 }  // namespace detail
+
+struct RpcRequestBuilderOptions {
+  session_id_t session_id;
+  request_id_t request_id;
+  function_id_t function_id;
+  utils::HybridLogicalClock hlc{};
+  utils::workflow_id_t workflow_id{};
+};
 
 class RpcRequestBuilder {
  public:
   RpcRequestBuilder() = default;
 
   template <typename... Args>
+    requires(
+      !detail::first_arg_is_param_meta_vector<Args...>::value
+      && !detail::first_arg_is_signature<Args...>::value)
   auto PrepareRequest(
-    function_id_t function_id, session_id_t session_id, request_id_t request_id,
-    Args&&... args) const {
+    const RpcRequestBuilderOptions& options, Args&&... args) const {
     using Extractor = PayloadExtractor<Args...>;
     static_assert(
       Extractor::payload_count <= 1,
       "RPC calls can have at most one payload argument.");
 
     RpcRequestHeader header;
-    header.function_id = function_id;
-    header.session_id = session_id;
-    header.request_id = request_id;
+    header.session_id = options.session_id;
+    header.request_id = options.request_id;
+    header.function_id = options.function_id;
+    header.hlc = options.hlc;
+    header.workflow_id = options.workflow_id;
 
     auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
 
@@ -114,41 +146,77 @@ class RpcRequestBuilder {
 
     if constexpr (Extractor::payload_count == 1) {
       auto payload = std::get<Extractor::payload_index>(std::move(args_tuple));
-      return std::make_pair(
-        std::move(header), PayloadVariant(std::move(payload)));
+      return std::make_pair(std::move(header), std::move(payload));
+    } else if constexpr (Extractor::payload_count == 0) {
+      return header;
+    } else {
+      static_assert(
+        Extractor::payload_count == 0,
+        "RPC calls can have at most one payload argument.");
+    }
+  }
+
+  template <typename... Args>
+    requires(!detail::first_arg_is_param_meta_vector<Args...>::value)
+  auto PrepareRequest(
+    const RpcRequestBuilderOptions& options,
+    const RpcFunctionSignature& signature, Args&&... args) const {
+    auto result = PrepareRequest(options, std::forward<Args>(args)...);
+
+    if constexpr (std::is_same_v<
+                    std::decay_t<decltype(result)>, RpcRequestHeader>) {
+      Validate(result.params, signature);
+    } else {
+      Validate(result.first.params, signature);
+    }
+    return result;
+  }
+
+  // Dynamic construction
+  template <typename PayloadT = std::monostate>
+  auto PrepareRequest(
+    const RpcRequestBuilderOptions& options, data::vector<ParamMeta>&& params,
+    PayloadT&& payload = PayloadT{}) const {
+    RpcRequestHeader header;
+    header.session_id = options.session_id;
+    header.request_id = options.request_id;
+    header.function_id = options.function_id;
+    header.hlc = options.hlc;
+    header.workflow_id = options.workflow_id;
+    header.params = std::move(params);
+
+    if constexpr (rpc::is_payload_v<std::decay_t<PayloadT>>) {
+      return std::make_pair(std::move(header), std::forward<PayloadT>(payload));
     } else {
       return header;
     }
   }
 
-  template <typename... Args>
+  template <typename PayloadT = std::monostate>
   auto PrepareRequest(
-    function_id_t function_id, RpcFunctionSignature signature,
-    session_id_t session_id, request_id_t request_id, Args&&... args) const {
-    using Extractor = PayloadExtractor<Args...>;
-    static_assert(
-      Extractor::payload_count <= 1,
-      "RPC calls can have at most one payload argument.");
+    const RpcRequestBuilderOptions& options,
+    const RpcFunctionSignature& signature, data::vector<ParamMeta>&& params,
+    PayloadT&& payload = PayloadT{}) const {
+    Validate(params, signature);
+    return PrepareRequest(
+      options, std::move(params), std::forward<PayloadT>(payload));
+  }
 
-    RpcRequestHeader header;
-    header.function_id = function_id;
-    header.session_id = session_id;
-    header.request_id = request_id;
-
-    auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
-
-    std::apply(
-      [&header](auto&&... a) {
-        detail::PackArgs(header, std::forward<decltype(a)>(a)...);
-      },
-      args_tuple);
-
-    if constexpr (Extractor::payload_count == 1) {
-      auto payload = std::get<Extractor::payload_index>(std::move(args_tuple));
-      return std::make_pair(
-        std::move(header), PayloadVariant(std::move(payload)));
-    } else {
-      return header;
+ private:
+  void Validate(
+    const data::vector<ParamMeta>& params,
+    const RpcFunctionSignature& signature) const {
+    if (params.size() != signature.param_types.size()) {
+      throw std::invalid_argument(
+        "Parameter count mismatch: expected "
+        + std::to_string(signature.param_types.size()) + ", got "
+        + std::to_string(params.size()));
+    }
+    for (size_t i = 0; i < params.size(); ++i) {
+      if (params[i].type != signature.param_types[i]) {
+        throw std::invalid_argument(
+          "Parameter type mismatch at index " + std::to_string(i));
+      }
     }
   }
 };

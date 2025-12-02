@@ -13,15 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "gtest/gtest.h"
+#include "rpc_core/rpc_dispatcher.hpp"
 
+#include <gtest/gtest.h>
+
+#include <cstddef>
+#include <cstring>
 #include <map>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <system_error>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
-#include "rpc_core/rpc_dispatcher.hpp"
 #include "rpc_core/rpc_status.hpp"
 #include "ucx_context/ucx_context_data.hpp"
 #include "ucx_context/ucx_memory_resource.hpp"
@@ -47,6 +54,31 @@ ucxx::UcxBuffer return_ucx_buffer(ucxx::UcxMemoryResourceManager& mr) {
 ucxx::UcxBufferVec return_ucx_buffer_vec(ucxx::UcxMemoryResourceManager& mr) {
   return ucxx::UcxBufferVec(mr, ucx_memory_type::HOST, {128, 256});
 }
+
+class TrackingMemoryResourceManager
+  : public ucxx::DefaultUcxMemoryResourceManager {
+ public:
+  void* allocate(
+    ucx_memory_type_t type, size_t bytes, size_t alignment = 8) override {
+    auto* ptr =
+      ucxx::DefaultUcxMemoryResourceManager::allocate(type, bytes, alignment);
+    outstanding_bytes_ += bytes;
+    return ptr;
+  }
+
+  void deallocate(
+    ucx_memory_type_t type, void* p, size_t bytes,
+    size_t alignment = 8) override {
+    outstanding_bytes_ -= bytes;
+    ucxx::DefaultUcxMemoryResourceManager::deallocate(
+      type, p, bytes, alignment);
+  }
+
+  size_t outstanding_bytes() const { return outstanding_bytes_; }
+
+ private:
+  size_t outstanding_bytes_ = 0;
+};
 
 // A test function that takes mixed inputs and returns mixed outputs.
 std::pair<RpcResponseHeader, ucxx::UcxBufferVec> process_mixed_request(
@@ -356,6 +388,72 @@ TEST_F(RpcDispatcherTest, DispatchReturnRpcResponseHeader) {
   EXPECT_EQ(response_header.GetString(0), data::string("custom_header"));
 }
 
+TEST_F(RpcDispatcherTest, DeerializeResponse) {
+  RpcResponseHeader response{};
+  response.session_id = session_id_t{555};
+  response.request_id = request_id_t{42};
+
+  ParamMeta result_meta{};
+  result_meta.type = ParamType::PRIMITIVE_INT32;
+  result_meta.value.emplace<PrimitiveValue>(1234);
+  response.results.emplace_back(std::move(result_meta));
+
+  auto serialized = cista::serialize<utils::SerializerMode>(response);
+
+  ucxx::DefaultUcxMemoryResourceManager mr;
+  ucxx::UcxHeader ucx_header(mr, serialized.size());
+  std::memcpy(ucx_header.data(), serialized.data(), serialized.size());
+
+  auto response_ptr = RpcDispatcher::DeerializeResponse(std::move(ucx_header));
+
+  ASSERT_NE(response_ptr, nullptr);
+  EXPECT_EQ(response_ptr->session_id.v_, 555);
+  EXPECT_EQ(response_ptr->request_id.v_, 42);
+  ASSERT_EQ(response_ptr->results.size(), 1);
+  EXPECT_EQ(response_ptr->results[0].type, ParamType::PRIMITIVE_INT32);
+  EXPECT_EQ(response_ptr->GetPrimitive<int32_t>(0), 1234);
+}
+
+TEST_F(RpcDispatcherTest, DeerializeResponseTransfersOwnership) {
+  RpcResponseHeader response{};
+  response.session_id = session_id_t{777};
+  response.request_id = request_id_t{88};
+
+  ParamMeta result_meta{};
+  result_meta.type = ParamType::PRIMITIVE_INT32;
+  result_meta.value.emplace<PrimitiveValue>(4321);
+  response.results.emplace_back(std::move(result_meta));
+
+  auto serialized = cista::serialize<utils::SerializerMode>(response);
+
+  TrackingMemoryResourceManager mr;
+  const auto payload_size = serialized.size();
+  {
+    ucxx::UcxHeader ucx_header(mr, payload_size);
+    std::memcpy(ucx_header.data(), serialized.data(), payload_size);
+    EXPECT_EQ(mr.outstanding_bytes(), payload_size);
+
+    auto response_ptr =
+      RpcDispatcher::DeerializeResponse(std::move(ucx_header));
+    ASSERT_NE(response_ptr, nullptr);
+    EXPECT_EQ(mr.outstanding_bytes(), payload_size);
+    EXPECT_EQ(ucx_header.data(), nullptr);
+    EXPECT_EQ(ucx_header.size(), 0U);
+
+    auto moved_response_ptr = std::move(response_ptr);
+    EXPECT_EQ(moved_response_ptr->session_id.v_, 777);
+    EXPECT_EQ(moved_response_ptr->request_id.v_, 88);
+    ASSERT_EQ(moved_response_ptr->results.size(), 1);
+    EXPECT_EQ(moved_response_ptr->results[0].type, ParamType::PRIMITIVE_INT32);
+    EXPECT_EQ(moved_response_ptr->GetPrimitive<int32_t>(0), 4321);
+
+    moved_response_ptr.reset();
+    EXPECT_EQ(mr.outstanding_bytes(), 0U);
+  }
+
+  EXPECT_EQ(mr.outstanding_bytes(), 0U);
+}
+
 TEST_F(RpcDispatcherTest, FunctionNotFound) {
   RpcRequestHeader request{};
   request.function_id = function_id_t{999};  // Not registered
@@ -368,7 +466,8 @@ TEST_F(RpcDispatcherTest, FunctionNotFound) {
 
   EXPECT_EQ(response_header.session_id.v_, 109);
   EXPECT_EQ(
-    response_header.status, std::make_error_code(std::errc::invalid_argument));
+    response_header.status,
+    std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT));
 }
 
 TEST_F(RpcDispatcherTest, TypeMismatch) {
@@ -395,7 +494,7 @@ TEST_F(RpcDispatcherTest, TypeMismatch) {
 
   EXPECT_EQ(response_header.session_id.v_, 110);
   EXPECT_EQ(
-    response_header.status, std::make_error_code(std::errc::invalid_argument));
+    response_header.status, std::make_error_code(rpc::RpcErrc::INTERNAL));
 }
 
 int64_t tensor_meta_volume(const TensorMeta& meta) {
@@ -426,7 +525,7 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
   EXPECT_EQ(add_sig.id.v_, 1);
   EXPECT_EQ(add_sig.function_name, data::string("add_func"));
   EXPECT_EQ(add_sig.instance_name, data::string("test_instance"));
-  EXPECT_FALSE(add_sig.takes_context);
+  EXPECT_EQ(add_sig.input_payload_type, PayloadType::NO_PAYLOAD);
   ASSERT_EQ(add_sig.param_types.size(), 2);
   EXPECT_EQ(add_sig.param_types[0], ParamType::PRIMITIVE_INT32);
   EXPECT_EQ(add_sig.param_types[1], ParamType::PRIMITIVE_INT32);
@@ -438,7 +537,7 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
   ASSERT_TRUE(no_op_sig_opt.has_value());
   auto& no_op_sig = no_op_sig_opt.value();
   EXPECT_EQ(no_op_sig.id.v_, 2);
-  EXPECT_FALSE(no_op_sig.takes_context);
+  EXPECT_EQ(no_op_sig.input_payload_type, PayloadType::NO_PAYLOAD);
   EXPECT_EQ(no_op_sig.param_types.size(), 0);
   EXPECT_TRUE(no_op_sig.return_types.empty());
 
@@ -448,16 +547,18 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
   auto& tensor_sig = tensor_sig_opt.value();
   EXPECT_EQ(tensor_sig.id.v_, 11);
   EXPECT_EQ(tensor_sig.function_name, data::string("tensor_meta_volume"));
+  EXPECT_EQ(tensor_sig.input_payload_type, PayloadType::NO_PAYLOAD);
   ASSERT_EQ(tensor_sig.param_types.size(), 1);
   EXPECT_EQ(tensor_sig.param_types[0], ParamType::TENSOR_META);
   ASSERT_EQ(tensor_sig.return_types.size(), 1);
   EXPECT_EQ(tensor_sig.return_types[0], ParamType::PRIMITIVE_INT64);
-  EXPECT_EQ(tensor_sig.return_payload_type, PayloadType::MONOSTATE);
+  EXPECT_EQ(tensor_sig.return_payload_type, PayloadType::NO_PAYLOAD);
 
   // Test signature for 'return_ucx_buffer'
   auto buffer_sig_opt = dispatcher.GetSignature(function_id_t{12});
   ASSERT_TRUE(buffer_sig_opt.has_value());
   auto& buffer_sig = buffer_sig_opt.value();
+  EXPECT_EQ(buffer_sig.input_payload_type, PayloadType::NO_PAYLOAD);
   EXPECT_TRUE(buffer_sig.return_types.empty());
   EXPECT_EQ(buffer_sig.return_payload_type, PayloadType::UCX_BUFFER);
 
@@ -465,14 +566,14 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
   auto buffer_vec_sig_opt = dispatcher.GetSignature(function_id_t{13});
   ASSERT_TRUE(buffer_vec_sig_opt.has_value());
   auto& buffer_vec_sig = buffer_vec_sig_opt.value();
+  EXPECT_EQ(buffer_vec_sig.input_payload_type, PayloadType::NO_PAYLOAD);
   EXPECT_TRUE(buffer_vec_sig.return_types.empty());
   EXPECT_EQ(buffer_vec_sig.return_payload_type, PayloadType::UCX_BUFFER_VEC);
 
   // Test getting all signatures
   auto serialized_sigs = dispatcher.GetAllSignatures();
-  auto deserialized_sigs =
-    cista::deserialize<data::vector<RpcFunctionSignature>, MODE>(
-      serialized_sigs);
+  auto deserialized_sigs = cista::deserialize<
+    data::vector<RpcFunctionSignature>, utils::SerializerMode>(serialized_sigs);
 
   ASSERT_NE(deserialized_sigs, nullptr);
   EXPECT_EQ(deserialized_sigs->size(), 5);
@@ -503,6 +604,13 @@ TEST_F(RpcDispatcherTest, DispatchWithMixedInputsAndOutputs) {
       return process_mixed_request(mr, req, multiplier, tag, input_vec);
     },
     data::string("process_mixed"));
+
+  // Verify signature reflects input payload type (expects UCX_BUFFER_VEC)
+  {
+    auto sig_opt = dispatcher.GetSignature(function_id_t{15});
+    ASSERT_TRUE(sig_opt.has_value());
+    EXPECT_EQ(sig_opt->input_payload_type, PayloadType::UCX_BUFFER_VEC);
+  }
 
   // 1. Prepare inputs
   // Serializable inputs for the header
@@ -535,8 +643,7 @@ TEST_F(RpcDispatcherTest, DispatchWithMixedInputsAndOutputs) {
   EXPECT_EQ(result.header.GetString(1), data::string("processed"));
 
   // Verify non-serializable context output
-  ASSERT_TRUE(result.context.has_value());
-  auto& output_vec = result.context.value();
+  auto& output_vec = result.payload;
   EXPECT_EQ(output_vec.size(), 1);
   EXPECT_EQ(output_vec[0].size, 300);
 }
@@ -555,7 +662,6 @@ TEST_F(RpcDispatcherTest, DispatchDynamic) {
 
     // Call the non-template overload
     auto result = dispatcher.Dispatch(std::move(request_buffer));
-    ASSERT_TRUE(result.context.has_value());
 
     // Use std::visit to inspect the variant at runtime
     std::visit(
@@ -567,7 +673,7 @@ TEST_F(RpcDispatcherTest, DispatchDynamic) {
           FAIL() << "Expected UcxBuffer, but got another type.";
         }
       },
-      result.context.value());
+      result.payload);
   }
 
   // Test dynamically dispatching a function that returns monostate
@@ -578,8 +684,7 @@ TEST_F(RpcDispatcherTest, DispatchDynamic) {
 
     // Call the non-template overload
     auto result = dispatcher.Dispatch(std::move(request_buffer));
-    ASSERT_TRUE(result.context.has_value());
-    ASSERT_TRUE(std::holds_alternative<std::monostate>(result.context.value()));
+    ASSERT_TRUE(std::holds_alternative<std::monostate>(result.payload));
   }
 }
 
@@ -599,20 +704,11 @@ TEST_F(RpcDispatcherTest, DispatchWithReturnContext) {
     auto result =
       dispatcher.Dispatch<ucxx::UcxBuffer>(std::move(request_buffer));
 
-    if (!result.context.has_value()) {
-      if (
-        !result.header.results.empty()
-        && result.header.results[0].type == ParamType::STRING) {
-        FAIL() << "RPC failed with message: "
-               << result.header.GetString(0).str();
-      } else {
-        FAIL() << "RPC failed with no error message. Status: "
-               << static_cast<std::error_code>(result.header.status).message();
-      }
+    if (result.header.status.value) {
+      FAIL() << "RPC failed with message: " << result.header.GetString(0).str();
     }
 
-    ASSERT_TRUE(result.context.has_value());
-    auto& buffer = result.context.value();
+    auto& buffer = result.payload;
     EXPECT_EQ(buffer.size(), 1024);
   }
 
@@ -625,8 +721,11 @@ TEST_F(RpcDispatcherTest, DispatchWithReturnContext) {
     auto result =
       dispatcher.Dispatch<ucxx::UcxBufferVec>(std::move(request_buffer));
 
-    ASSERT_TRUE(result.context.has_value());
-    auto& buffer_vec = result.context.value();
+    if (result.header.status.value) {
+      FAIL() << "RPC failed with message: " << result.header.GetString(0).str();
+    }
+
+    auto& buffer_vec = result.payload;
     EXPECT_EQ(buffer_vec.size(), 2);
     EXPECT_EQ(buffer_vec[0].size, 128);
     EXPECT_EQ(buffer_vec[1].size, 256);
@@ -771,9 +870,9 @@ TEST_F(RpcDispatcherTest, EndToEndRpcWithRegistry) {
     auto serialized_sigs_it = registry.find("client_B_instance");
     ASSERT_NE(serialized_sigs_it, registry.end());
 
-    auto deserialized_sigs =
-      cista::deserialize<data::vector<RpcFunctionSignature>, MODE>(
-        serialized_sigs_it->second);
+    auto deserialized_sigs = cista::deserialize<
+      data::vector<RpcFunctionSignature>, utils::SerializerMode>(
+      serialized_sigs_it->second);
     ASSERT_NE(deserialized_sigs, nullptr);
 
     std::optional<function_id_t> target_function_id;
@@ -828,7 +927,8 @@ TEST_F(RpcDispatcherTest, DispatchWithTupleReturn) {
   ucxx::DefaultUcxMemoryResourceManager mr;
   dispatcher.RegisterFunction(function_id_t{1}, &return_multiple_values);
   dispatcher.RegisterFunction(
-    function_id_t{2}, [&mr]() { return return_multiple_with_payload(mr); });
+    function_id_t{2},  //
+    [&mr]() { return return_multiple_with_payload(mr); });
 
   // Test case 1: Multiple serializable return values, no payload
   {
@@ -840,7 +940,7 @@ TEST_F(RpcDispatcherTest, DispatchWithTupleReturn) {
     EXPECT_EQ(result.header.GetPrimitive<int>(0), 123);
     EXPECT_EQ(result.header.GetString(1), "hello");
     EXPECT_EQ(result.header.GetPrimitive<float>(2), 3.14f);
-    EXPECT_FALSE(result.context.has_value());
+    EXPECT_FALSE(result.header.status.value);
   }
 
   // Test case 2: Multiple return values with a payload
@@ -851,8 +951,7 @@ TEST_F(RpcDispatcherTest, DispatchWithTupleReturn) {
 
     ASSERT_EQ(result.header.results.size(), 1);
     EXPECT_EQ(result.header.GetPrimitive<int>(0), 456);
-    ASSERT_TRUE(result.context.has_value());
-    auto& payload = result.context.value();
+    auto& payload = result.payload;
     EXPECT_EQ(payload.size(), 2);
     EXPECT_EQ(payload[0].size, 16);
     EXPECT_EQ(payload[1].size, 32);
@@ -885,7 +984,8 @@ TEST_F(RpcDispatcherTest, DispatchWithManualResponse) {
   ucxx::DefaultUcxMemoryResourceManager mr;
   dispatcher.RegisterFunction(function_id_t{3}, &return_manual_header);
   dispatcher.RegisterFunction(
-    function_id_t{4}, [&mr]() { return return_manual_pair(mr); });
+    function_id_t{4},  // NOLINT(readability-magic-numbers)
+    [&mr]() { return return_manual_pair(mr); });
 
   // Test case 1: Function returns RpcResponseHeader directly
   {
@@ -899,7 +999,7 @@ TEST_F(RpcDispatcherTest, DispatchWithManualResponse) {
       std::make_error_code(std::errc::function_not_supported));
     ASSERT_EQ(result.header.results.size(), 1);
     EXPECT_EQ(result.header.GetString(0), "manual_header");
-    EXPECT_FALSE(result.context.has_value());
+    EXPECT_EQ(result.payload, std::monostate{});
   }
 
   // Test case 2: Function returns std::pair<RpcResponseHeader, Payload>
@@ -911,8 +1011,7 @@ TEST_F(RpcDispatcherTest, DispatchWithManualResponse) {
     EXPECT_EQ(result.header.session_id.v_, 888);
     ASSERT_EQ(result.header.results.size(), 1);
     EXPECT_EQ(result.header.GetPrimitive<int64_t>(0), 1337);
-    ASSERT_TRUE(result.context.has_value());
-    EXPECT_EQ(result.context.value().size(), 256);
+    EXPECT_EQ(result.payload.size(), 256);
   }
 }
 
@@ -1140,7 +1239,7 @@ TEST_F(RpcDispatcherTest, DispatchDynamicFunction) {
 
   auto dynamic_fn_impl = [&mr](
                            const data::vector<ParamMeta>& params,
-                           InputPayloadVariant input_payload)
+                           const ucxx::UcxBufferVec& input_payload)
     -> std::pair<data::vector<ParamMeta>, ReturnedPayload> {
     // Verify inputs
     EXPECT_EQ(params.size(), 2);
@@ -1150,14 +1249,8 @@ TEST_F(RpcDispatcherTest, DispatchDynamicFunction) {
     EXPECT_EQ(params[1].type, ParamType::STRING);
     EXPECT_EQ(cista::get<data::string>(params[1].value), "test_param");
 
-    EXPECT_TRUE(std::holds_alternative<ucxx::UcxBufferVec*>(input_payload));
-    auto* input_vec = std::get<ucxx::UcxBufferVec*>(input_payload);
-    EXPECT_NE(input_vec, nullptr);
-    if (!input_vec) {
-      return {};
-    }
     uint64_t total_input_size = 0;
-    for (const auto& buf : *input_vec) {
+    for (const auto& buf : input_payload) {
       total_input_size += buf.size;
     }
 
@@ -1185,7 +1278,7 @@ TEST_F(RpcDispatcherTest, DispatchDynamicFunction) {
   ASSERT_TRUE(sig_opt.has_value());
   auto& sig = sig_opt.value();
   EXPECT_EQ(sig.function_name, function_name);
-  EXPECT_TRUE(sig.takes_context);
+  EXPECT_EQ(sig.input_payload_type, input_payload_type);
   EXPECT_EQ(sig.param_types, param_types);
   EXPECT_EQ(sig.return_types, return_types);
   EXPECT_EQ(sig.return_payload_type, return_payload_type);
@@ -1207,8 +1300,129 @@ TEST_F(RpcDispatcherTest, DispatchDynamicFunction) {
   EXPECT_EQ(result.header.session_id.v_, 500);
   ASSERT_EQ(result.header.results.size(), 1);
   EXPECT_EQ(result.header.GetPrimitive<bool>(0), true);
-  ASSERT_TRUE(result.context.has_value());
-  EXPECT_EQ(result.context.value().size(), expected_size);
+  EXPECT_EQ(result.payload.size(), expected_size);
+}
+
+TEST_F(RpcDispatcherTest, SerializeResponseWithFixedBufferWriter) {
+  // 1. Create a test RpcResponseHeader with various data types
+  RpcResponseHeader response_header;
+  response_header.session_id = session_id_t{123};
+  response_header.request_id = request_id_t{456};
+  response_header.status = std::error_code{};
+
+  // Add different types of results
+  ParamMeta p1;
+  p1.type = ParamType::PRIMITIVE_INT32;
+  p1.value.emplace<PrimitiveValue>(42);
+  response_header.results.emplace_back(std::move(p1));
+
+  ParamMeta p2;
+  p2.type = ParamType::STRING;
+  p2.value.emplace<data::string>("test_string");
+  response_header.results.emplace_back(std::move(p2));
+
+  ParamMeta p3;
+  p3.type = ParamType::PRIMITIVE_UINT64;
+  p3.value.emplace<PrimitiveValue>(uint64_t{999});
+  response_header.results.emplace_back(std::move(p3));
+
+  // 2. Calculate the required buffer size
+  size_t required_size = utils::GetSerializedSize(response_header);
+  ASSERT_GT(required_size, 0);
+
+  // 3. Allocate a buffer with some extra space for safety
+  std::vector<std::byte> buffer(required_size);
+  utils::FixedBufferWriter writer(buffer.data(), buffer.size());
+
+  // 4. Serialize the response header into the buffer
+  RpcDispatcher::SerializeResponse(response_header, writer);
+
+  // 5. Verify the serialized data can be deserialized correctly
+  const RpcResponseHeader* deserialized =
+    cista::deserialize<const RpcResponseHeader, utils::SerializerMode>(
+      std::string_view{reinterpret_cast<char*>(buffer.data()), required_size});
+
+  ASSERT_NE(deserialized, nullptr);
+  EXPECT_EQ(deserialized->session_id.v_, 123);
+  EXPECT_EQ(deserialized->request_id.v_, 456);
+  EXPECT_EQ(deserialized->status.value, 0);
+  ASSERT_EQ(deserialized->results.size(), 3);
+
+  // Verify first result (int32)
+  EXPECT_EQ(deserialized->results[0].type, ParamType::PRIMITIVE_INT32);
+  EXPECT_EQ(deserialized->GetPrimitive<int32_t>(0), 42);
+
+  // Verify second result (string)
+  EXPECT_EQ(deserialized->results[1].type, ParamType::STRING);
+  EXPECT_EQ(deserialized->GetString(1), data::string("test_string"));
+
+  // Verify third result (uint64)
+  EXPECT_EQ(deserialized->results[2].type, ParamType::PRIMITIVE_UINT64);
+  EXPECT_EQ(deserialized->GetPrimitive<uint64_t>(2), 999);
+}
+
+TEST_F(RpcDispatcherTest, SerializeResponseWithFixedBufferWriterEmptyResults) {
+  // Test with an empty response header
+  RpcResponseHeader response_header;
+  response_header.session_id = session_id_t{789};
+  response_header.request_id = request_id_t{101112};
+  response_header.status = std::make_error_code(std::errc::invalid_argument);
+
+  // Calculate the required buffer size
+  size_t required_size = utils::GetSerializedSize(response_header);
+  ASSERT_GT(required_size, 0);
+
+  // Allocate buffer
+  std::vector<std::byte> buffer(required_size);
+  utils::FixedBufferWriter writer(buffer.data(), buffer.size());
+
+  // Serialize
+  RpcDispatcher::SerializeResponse(response_header, writer);
+
+  // Deserialize and verify
+  const RpcResponseHeader* deserialized =
+    cista::deserialize<const RpcResponseHeader, utils::SerializerMode>(
+      std::string_view{reinterpret_cast<char*>(buffer.data()), required_size});
+
+  ASSERT_NE(deserialized, nullptr);
+  EXPECT_EQ(deserialized->session_id.v_, 789);
+  EXPECT_EQ(deserialized->request_id.v_, 101112);
+  EXPECT_EQ(
+    deserialized->status, std::make_error_code(std::errc::invalid_argument));
+  EXPECT_EQ(deserialized->results.size(), 0);
+}
+
+TEST_F(
+  RpcDispatcherTest, SerializeResponseWithFixedBufferWriterCompareWithByteBuf) {
+  // Test that FixedBufferWriter produces the same result as the byte_buf
+  // version
+  RpcResponseHeader response_header;
+  response_header.session_id = session_id_t{555};
+  response_header.request_id = request_id_t{666};
+
+  ParamMeta p1;
+  p1.type = ParamType::PRIMITIVE_INT64;
+  p1.value.emplace<PrimitiveValue>(int64_t{777});
+  response_header.results.emplace_back(std::move(p1));
+
+  size_t required_size = utils::GetSerializedSize(response_header);
+
+  // Serialize using the byte_buf version
+  auto byte_buf_result = RpcDispatcher::SerializeResponse(response_header);
+
+  // Serialize using FixedBufferWriter
+  // Use the fixed size array to ensure consistency
+  auto buffer = std::unique_ptr<std::byte[]>(new std::byte[required_size]);
+  utils::FixedBufferWriter writer(buffer.get(), required_size);
+  RpcDispatcher::SerializeResponse(response_header, writer);
+
+  // Compare the serialized data
+  size_t actual_written = writer.written_size();
+  EXPECT_EQ(byte_buf_result.size(), actual_written);
+  EXPECT_EQ(byte_buf_result.size(), required_size);
+
+  EXPECT_EQ(
+    std::memcmp(byte_buf_result.data(), buffer.get(), required_size), 0);
 }
 
 }  // namespace rpc
