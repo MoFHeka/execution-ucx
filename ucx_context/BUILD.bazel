@@ -1,3 +1,4 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 load("@rules_cuda//cuda:defs.bzl", "cuda_library", "requires_cuda")
 
@@ -131,6 +132,16 @@ cc_library(
 )
 
 cc_test(
+    name = "ucx_context_data_test",
+    srcs = ["ucx_context_data_test.cpp"],
+    copts = ["-std=c++17"],
+    deps = [
+        ":ucx_context_data_lib",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "ucx_am_connection_test",
     srcs = ["ucx_am_context/ucx_am_connection_test.cpp"],
     copts = ["-std=c++17"],
@@ -156,19 +167,19 @@ cc_test(
     deps = select({
         "@rules_cuda//cuda:is_enabled": [
             ":ucx_am_context",
-            ":ucx_cuda_memory_manager",
-            ":ucx_cuda_context",
-            ":ucx_am_context_test_host_helper",
             ":ucx_am_context_test_cuda_helper",
+            ":ucx_am_context_test_host_helper",
+            ":ucx_cuda_context",
+            ":ucx_cuda_memory_manager",
             "@googletest//:gtest_main",
-            "@unifex//:unifex",
             "@local_cuda//:cuda",
+            "@unifex",
         ],
         "//conditions:default": [
             ":ucx_am_context",
             ":ucx_am_context_test_host_helper",
             "@googletest//:gtest_main",
-            "@unifex//:unifex",
+            "@unifex",
         ],
     }),
 )

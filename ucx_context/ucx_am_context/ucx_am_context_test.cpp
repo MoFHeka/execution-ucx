@@ -24,7 +24,6 @@ limitations under the License.
 #include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -65,7 +64,6 @@ limitations under the License.
 #include "ucx_context/ucx_connection.hpp"
 #include "ucx_context/ucx_context_def.h"
 #include "ucx_context/ucx_memory_resource.hpp"
-#include "ucx_context/ucx_status.hpp"
 
 #if CUDA_ENABLED
 #include "ucx_context/cuda/ucx_cuda_context.hpp"
@@ -75,6 +73,7 @@ limitations under the License.
 
 using eux::ucxx::accept_endpoint;
 using eux::ucxx::active_message_bundle;
+using eux::ucxx::active_message_header_buffer_bundle;
 using eux::ucxx::connect_endpoint;
 using eux::ucxx::connection_recv;
 using eux::ucxx::connection_recv_buffer;
@@ -135,7 +134,8 @@ static constexpr size_t kUcxRndvThreshold = 8192;
 class UcxContextRunner {
  public:
   explicit UcxContextRunner(
-    std::string name, std::chrono::seconds timeout = std::chrono::seconds(300))
+    std::string name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(300))
     : name_(name), timeout_(timeout) {}
 
   virtual ~UcxContextRunner() { cleanup(); }
@@ -162,14 +162,15 @@ class UcxContextRunner {
   inplace_stop_source stopSource_;
   std::thread thread_;
   std::string name_;
-  std::chrono::seconds timeout_;
+  std::chrono::milliseconds timeout_;
   bool isCleanedUp_ = false;
 };
 
 class UcxContextHostRunner : public UcxContextRunner {
  public:
   UcxContextHostRunner(
-    std::string name, std::chrono::seconds timeout = std::chrono::seconds(300))
+    std::string name,
+    std::chrono::milliseconds timeout = std::chrono::seconds(300))
     : UcxContextRunner(name, timeout) {
     init();
   }
@@ -192,7 +193,7 @@ class UcxContextCUDARunner : public UcxContextRunner {
  public:
   UcxContextCUDARunner(
     std::string name, bool use_ucp_address,
-    std::chrono::seconds timeout = std::chrono::seconds(300))
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(300))
     : UcxContextRunner(name, timeout), use_ucp_address_(use_ucp_address) {
     init();
   }
@@ -221,7 +222,7 @@ class UcxContextCUDARunner : public UcxContextRunner {
     }
     memoryResource_.reset(new UcxCudaMemoryResourceManager());
     context_.reset(new ucx_am_context(
-      *memoryResource_, ucp_context_, timeout_,
+      *memoryResource_, ucp_context_, name_, timeout_,
       /*connectionHandleError=*/!use_ucp_address_,
       /*clientId=*/eux::ucxx::CLIENT_ID_UNDEFINED,
       std::move(auto_cuda_context_)));
@@ -438,6 +439,22 @@ class UcxAmTest : public ::testing::Test {
     co_return;
   }
 
+  task<void> biDiServerRecvSendTaskImpl(
+    ucx_am_context::scheduler& ucxScheduler,
+    static_thread_pool::scheduler& processScheduler,
+    active_message_header_buffer_bundle& data) {
+    auto conn_id = data.connection().id();
+    ucx_am_data recvData = {
+      .header = {const_cast<void*>(data.header().data()), data.header().size()},
+      .buffer = {const_cast<void*>(data.buffer().data()), data.buffer().size()},
+      .buffer_type = data.buffer().type(),
+      .mem_h = data.buffer().mem_h(),
+    };
+    co_await launchProcessTask(processScheduler, recvData);
+    co_await connection_send(ucxScheduler, conn_id, recvData);
+    co_return;
+  }
+
   task<void> biDiServerRecvSendTask(
     ucx_am_context::scheduler& ucxScheduler,
     static_thread_pool::scheduler& processScheduler,
@@ -511,7 +528,7 @@ class UcxAmTest : public ::testing::Test {
       // Receive buffer by key with auto allocation per memory type
       auto buffer_bundle =
         co_await connection_recv_buffer(ucxScheduler, key, recvDataType);
-      const auto& buffer = buffer_bundle.data();
+      const auto& buffer = buffer_bundle.buffer();
 
       ucx_am_data reply{};
       reply.header.data = const_cast<void*>(header.data());
@@ -525,8 +542,8 @@ class UcxAmTest : public ::testing::Test {
       co_await connection_send(ucxScheduler, conn_id, reply);
       co_return;
     } else {
-      auto bundle =
-        std::get<active_message_bundle>(std::move(header_or_bundle));
+      auto bundle = std::get<active_message_header_buffer_bundle>(
+        std::move(header_or_bundle));
       // Fallback to existing AM bundle path (likely eager)
       co_await biDiServerRecvSendTaskImpl(
         ucxScheduler, processScheduler, bundle);
@@ -1122,7 +1139,7 @@ TEST_F(UcxAmTest, ConnectionEstablishmentWithStopToken) {
         accept_endpoint(
           scheduler, std::move(serverSocket), sizeof(sockaddr_in)),
         [&stoped](auto&&) { stoped = false; }),
-      schedule_after(scheduler, std::chrono::milliseconds{1000})),
+      schedule_after(scheduler, std::chrono::milliseconds{100})),
     [&stoped]() { stoped = true; }));
   EXPECT_TRUE(stoped);
 }
@@ -1147,8 +1164,7 @@ TEST_F(UcxAmTest, ConnectionEstablishment) {
       take_until(
         accept_endpoint(
           serverScheduler, std::move(serverSocket), sizeof(sockaddr_in)),
-        single(
-          schedule_after(serverScheduler, std::chrono::milliseconds{1000}))),
+        single(schedule_after(serverScheduler, std::chrono::seconds{2}))),
       [&listened](auto&&) { listened = true; }),
     then(
       connect_endpoint(
@@ -1724,7 +1740,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
                    // Receive as a single contiguous buffer by memory type
                    auto buffer_bundle = co_await connection_recv_buffer(
                      serverScheduler, key, test_memory_type);
-                   const auto& buffer = buffer_bundle.data();
+                   const auto& buffer = buffer_bundle.buffer();
 
                    ucx_am_data reply{};
                    reply.header.data = const_cast<void*>(header.data());
@@ -1744,7 +1760,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
 
                    auto buffer_bundle = co_await connection_recv_buffer(
                      serverScheduler, key, std::move(buffers));
-                   const auto& buffer_vec = buffer_bundle.data();
+                   const auto& buffer_vec = buffer_bundle.buffer();
 
                    // Combine into a single buffer for processing
                    auto combined_buffer = server_mr_ptr->allocate(
@@ -1785,7 +1801,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
                  // Receive buffer by key
                  auto buffer_bundle = co_await connection_recv_buffer(
                    serverScheduler, key, test_memory_type);
-                 const auto& buffer = buffer_bundle.data();
+                 const auto& buffer = buffer_bundle.buffer();
 
                  ucx_am_data reply{};
                  reply.header.data = const_cast<void*>(header.data());
@@ -1800,9 +1816,18 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
                }
              } else {
                // Eager protocol: receive complete bundle
-               auto bundle =
-                 std::get<active_message_bundle>(std::move(header_or_bundle));
-               auto recvData = bundle.get_raw_data();
+               auto bundle = std::get<active_message_header_buffer_bundle>(
+                 std::move(header_or_bundle));
+               ucx_am_data recvData{
+                 .header =
+                   {const_cast<void*>(bundle.header().data()),
+                    bundle.header().size()},
+                 .buffer =
+                   {const_cast<void*>(bundle.buffer().data()),
+                    bundle.buffer().size()},
+                 .buffer_type = bundle.buffer().type(),
+                 .mem_h = bundle.buffer().mem_h(),
+               };
                co_await launchProcessTask(processScheduler, recvData);
                co_await connection_send(
                  serverScheduler, bundle.connection().id(), recvData);

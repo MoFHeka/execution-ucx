@@ -17,6 +17,7 @@ limitations under the License.
 #include "ucx_context/ucx_am_context/ucx_am_context.hpp"
 
 #include <arpa/inet.h>
+#include <chrono>
 #include <signal.h>
 #include <time.h>
 #include <ucp/api/ucp.h>
@@ -68,8 +69,12 @@ static constexpr uint64_t remote_queue_event_user_data = 0;
 //
 //
 
+namespace {
+using ucx_memory_resource = UcxMemoryResourceManager;
+}  // namespace
+
 ucx_am_context::ucx_am_context(
-  ucx_memory_resource& memoryResource,
+  std::reference_wrapper<ucx_memory_resource> memoryResource,
   const std::string_view ucxContextName,
   const time_duration connectionTimeout,
   const bool connectionHandleError,
@@ -95,7 +100,7 @@ ucx_am_context::ucx_am_context(
   UCX_CTX_DEBUG << "UCX Context construction done\n";
 }
 
-std::string context_name_from_ucp_context_(ucp_context_h ucpContext) {
+static std::string context_name_from_ucp_context_(ucp_context_h ucpContext) {
   assert(ucpContext != nullptr);
   ucp_context_attr_t ucpCtxAttr;
   ucs_status_t status = ucp_context_query(ucpContext, &ucpCtxAttr);
@@ -107,15 +112,18 @@ std::string context_name_from_ucp_context_(ucp_context_h ucpContext) {
 }
 
 ucx_am_context::ucx_am_context(
-  ucx_memory_resource& memoryResource,
+  std::reference_wrapper<ucx_memory_resource> memoryResource,
   const ucp_context_h ucpContext,
+  const std::string_view ucxAmContextName,
   const time_duration connectionTimeout,
   const bool connectionHandleError,
   const uint64_t clientId,
   const std::unique_ptr<UcxAutoDeviceContext>
     deviceContext)
   : mr_(memoryResource),
-    ucxAmContextName_(context_name_from_ucp_context_(ucpContext)),
+    ucxAmContextName_(
+      ucxAmContextName.empty() ? context_name_from_ucp_context_(ucpContext)
+                               : std::string(ucxAmContextName)),
     connTimeout_(connectionTimeout),
     connectionHandleError_(connectionHandleError),
     clientId_(clientId),
@@ -142,6 +150,34 @@ ucx_am_context::~ucx_am_context() {
     ucx_am_context::destroy_ucp_context(ucpContext_);
   }
 
+  // Clean up amDescQueue_ - release allocated memory for unprocessed messages
+  while (!amDescQueue_.empty()) {
+    auto& amDesc = amDescQueue_.front();
+    // Release header memory if allocated
+    if (amDesc.header != nullptr && amDesc.header_length > 0) {
+      mr_.get().deallocate(
+        ucx_memory_type::HOST, amDesc.header, amDesc.header_length);
+    }
+    // Release data memory if allocated (eager protocol without FLAG_DATA and
+    // FLAG_RNDV)
+    if (
+      amDesc.desc != nullptr && amDesc.data_length > 0
+      && !(amDesc.recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV)) {
+      if (amDesc.recv_attr & UCP_AM_RECV_ATTR_FLAG_DATA) {
+        try {
+          ucp_am_data_release(this->ucpWorker_, amDesc.desc);
+        } catch (const std::exception& e) {
+          UCX_CTX_ERROR << "Failed to release data " << amDesc.desc << ": "
+                        << e.what() << std::endl;
+        }
+      } else {
+        mr_.get().deallocate(
+          ucx_memory_type::HOST, amDesc.desc, amDesc.data_length);
+      }
+    }
+    amDescQueue_.pop_front();
+  }
+
   // Clean up pending queue, Assume the items are already completed
   while (!pendingIoQueue_.empty()) {
     auto* item = pendingIoQueue_.pop_front();
@@ -166,17 +202,19 @@ ucx_am_context::~ucx_am_context() {
 }
 
 void ucx_am_context::run_impl(const bool& shouldStop) {
-  LOG("run loop started");
+  LOGX("%s: run loop started\n", ucxAmContextName_.c_str());
 
   auto* oldContext = std::exchange(currentThreadContext, this);
   scope_guard g = [=]() noexcept {
     std::exchange(currentThreadContext, oldContext);
-    LOG("run loop exited");
+    LOGX("%s: run loop exited\n", ucxAmContextName_.c_str());
   };
 
   if (ucpContextInitialized_) {
     [[maybe_unused]] unsigned result = progress_worker_event();
-    LOGX("ucp_worker_progress() returned - finished %u callbacks\n", result);
+    LOGX(
+      "%s: ucp_worker_progress() returned - finished %u callbacks\n",
+      ucxAmContextName_.c_str(), result);
   }
 
   // Activate the device context if it is provided.
@@ -200,7 +238,9 @@ void ucx_am_context::run_impl(const bool& shouldStop) {
       update_timers();
     }
 
-    LOGX("sqUnflushedCount_ %u\n", sqUnflushedCount_);
+    LOGX(
+      "%s: sqUnflushedCount_ %u\n", ucxAmContextName_.c_str(),
+      sqUnflushedCount_);
 
     // Check for remotely-queued items.
     // Only do this if we haven't submitted a poll operation for the
@@ -217,23 +257,25 @@ void ucx_am_context::run_impl(const bool& shouldStop) {
       item->execute_(item);
     }
 
-    if (localQueue_.empty() || sqUnflushedCount_ > 0) {
-      const bool isIdle = sqUnflushedCount_ == 0 && localQueue_.empty();
-      if (isIdle) {
-        if (!remoteQueueReadSubmitted_) {
-          LOG("try_register_remote_queue_notification()");
-          remoteQueueReadSubmitted_ = try_register_remote_queue_notification();
-        }
+    const bool isIdle = sqUnflushedCount_ == 0 && localQueue_.empty();
+    if (isIdle) {
+      if (!remoteQueueReadSubmitted_) {
+        LOGX(
+          "%s: try_register_remote_queue_notification()\n",
+          ucxAmContextName_.c_str());
+        remoteQueueReadSubmitted_ = try_register_remote_queue_notification();
       }
-
-      LOGX(
-        "ucx_am_context::run_impl() - submit %u, pending %u\n",
-        sqUnflushedCount_, pending_operation_count());
-
-      [[maybe_unused]] unsigned result = progress_worker_event();
-
-      LOGX("ucp_worker_progress() returned - finished %u callbacks\n", result);
     }
+
+    LOGX(
+      "%s: ucx_am_context::run_impl() - submit %u, pending %u\n",
+      ucxAmContextName_.c_str(), sqUnflushedCount_, pending_operation_count());
+
+    [[maybe_unused]] unsigned result = progress_worker_event();
+
+    LOGX(
+      "%s: ucp_worker_progress() returned - finished %u callbacks\n",
+      ucxAmContextName_.c_str(), result);
   }
 }
 
@@ -333,6 +375,14 @@ void ucx_am_context::acquire_completion_queue_items() noexcept {
         // Skip processing this item and let the loop check
         // for the remote-queued items next time around.
         remoteQueueReadSubmitted_ = false;
+
+        // Remote thread does not update counts to avoid race.
+        // We update them here on the I/O thread.
+        --sqUnflushedCount_;
+        // Increment pending count to offset the decrement that happens
+        // at the end of this function (cqPendingCount_ -= count)
+        ++cqPendingCount_;
+
         continue;
       } else if (cqe.user_data == timer_user_data()) {
         LOGX("got timer completion result %i\n", cqe.res);
@@ -387,13 +437,14 @@ bool ucx_am_context::try_register_remote_queue_notification() noexcept {
   // Check that we haven't already hit the limit of pending
   // I/O completion events.
   const auto populateRemoteQueueSqe = [this]() noexcept {
+    remoteQueueEventEntry_.store(true, std::memory_order_release);
     auto queuedItems = remoteQueue_.try_mark_inactive_or_dequeue_all();
     if (!queuedItems.empty()) {
+      remoteQueueEventEntry_.store(false, std::memory_order_relaxed);
       schedule_local(std::move(queuedItems));
       return false;
     }
 
-    remoteQueueEventEntry_.store(true, std::memory_order_release);
     // Waiting for remoteQueueEventEntry_ to be set by the I/O thread
     return true;
   };
@@ -406,13 +457,22 @@ bool ucx_am_context::try_register_remote_queue_notification() noexcept {
   return false;
 }
 
+void ucx_am_context::submit_remote_queue_event() {
+  const auto tail = cqTail_.load(std::memory_order_relaxed);
+  const auto index = tail & cqMask_;
+  auto& entry = cqEntries_.at(index);
+
+  entry.user_data = remote_queue_event_user_data;
+  entry.res = 0;
+
+  cqTail_.store(tail + 1, std::memory_order_release);
+}
+
 void ucx_am_context::signal_remote_queue() {
   LOG("notifying remote queue");
 
   if (remoteQueueEventEntry_.load(std::memory_order_acquire)) {
-    auto& entry = get_completion_queue_entry();
-    entry.user_data = remote_queue_event_user_data;
-    entry.res = 0;
+    submit_remote_queue_event();
 
     // Reset remoteQueueEventEntry_.
     remoteQueueEventEntry_.store(false, std::memory_order_relaxed);
@@ -515,35 +575,41 @@ void ucx_am_context::timer_timeout_callback(union sigval sv) noexcept {
 }
 */
 
+void ucx_am_context::submit_timer_completion_queue_entry() {
+  --sqUnflushedCount_;
+  ++cqPendingCount_;
+  const auto tail = cqTail_.load(std::memory_order_relaxed);
+  const auto index = tail & cqMask_;
+  auto& cqe = cqEntries_.at(index);
+  cqe.user_data = timer_user_data();
+  cqe.res = 0;
+  cqTail_.store(tail + 1, std::memory_order_release);
+}
+
 void ucx_am_context::timer_timeout_callback(
   int signo, siginfo_t* info, void* _) {
   if (signo == SIGUSR2) {
     ucx_am_context* self =
       static_cast<ucx_am_context*>(info->si_value.sival_ptr);
 
-    auto& entry = self->get_completion_queue_entry();
-    entry.user_data = self->timer_user_data();
-    entry.res = 0;
-
-    UNIFEX_ASSERT(self->timers_.top());
-    (self->timers_.top())->cq_entry_ref_ = std::ref(entry);
+    self->submit_timer_completion_queue_entry();
   }
 }
 
 bool ucx_am_context::try_submit_timer_io(const time_point& dueTime) noexcept {
   auto populateSqe = [&]() noexcept {
-    auto fail_fn = [this]() {
-      auto& entry = this->get_completion_queue_entry();
-      entry.user_data = timer_user_data();
-      entry.res = ECANCELED;
-    };
+    auto fail_fn = [this]() { this->submit_timer_completion_queue_entry(); };
 
     auto succ_fn = [this]() {
-      auto& entry = this->get_completion_queue_entry();
-      entry.user_data = timer_user_data();
-      entry.res = 0;
-
-      lastTimerOp_->cq_entry_ref_ = std::ref(entry);
+      --this->sqUnflushedCount_;
+      ++this->cqPendingCount_;
+      const auto tail = this->cqTail_.load(std::memory_order_relaxed);
+      const auto index = tail & this->cqMask_;
+      auto& cqe = this->cqEntries_.at(index);
+      cqe.user_data = this->timer_user_data();
+      cqe.res = 0;
+      this->lastTimerOp_->cq_entry_ref_ = std::ref(cqe);
+      this->cqTail_.store(tail + 1, std::memory_order_release);
     };
 
     lastTimerOp_ = timers_.top();
@@ -590,9 +656,7 @@ bool ucx_am_context::try_submit_timer_io(const time_point& dueTime) noexcept {
 
 bool ucx_am_context::try_submit_timer_io_cancel() noexcept {
   auto populateSqe = [&]() noexcept {
-    auto& entry = this->get_completion_queue_entry();
-    entry.user_data = remove_timer_user_data();
-    entry.res = 0;
+    this->submit_timer_completion_queue_entry();
 
     if (timerId_) {
       timer_delete(timerId_);
@@ -619,9 +683,11 @@ std::error_code ucx_am_context::init_ucp_context(
   ucp_params_t ucp_params;
   ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES
                           | UCP_PARAM_FIELD_REQUEST_INIT
+                          | UCP_PARAM_FIELD_REQUEST_CLEANUP
                           | UCP_PARAM_FIELD_REQUEST_SIZE | UCP_PARAM_FIELD_NAME;
   ucp_params.features = UCP_FEATURE_AM;
   ucp_params.request_init = ucx_connection::request_init;
+  ucp_params.request_cleanup = ucx_connection::request_cleanup;
   ucp_params.request_size = sizeof(ucx_request);
   ucp_params.name = name.data();
   if (mtWorkersShared) {
@@ -664,6 +730,37 @@ std::error_code ucx_am_context::init_ucp_worker() {
   ucs_status_t status =
     ucp_worker_create(ucpContext_, &worker_params, &ucpWorker_);
   return eux::ucxx::make_error_code(status);
+}
+
+void ucx_am_context::release_rndv_am_desc(
+  UcxAmDesc&& desc, std::reference_wrapper<UcxMemoryResourceManager> mr,
+  bool release_header) {
+  /*
+  For RNDV, release the descriptor using ucp_am_data_release
+
+  IMPORTANT: This function should ONLY be called when we are certain that
+  ucp_am_recv_data_nbx has NOT been called for this descriptor yet.
+  If ucp_am_recv_data_nbx has been called, UCX will automatically release
+  the descriptor upon completion (even if canceled), and we should NOT release
+  it here to avoid double free.
+  */
+  if (UcxConnection::ucx_am_is_rndv(desc)) {
+    // Release header memory if allocated and release_header is true
+    if (release_header && desc.header != nullptr && desc.header_length > 0) {
+      mr.get().deallocate(
+        ucx_memory_type::HOST, desc.header, desc.header_length);
+    }
+    if (desc.desc != nullptr) {
+      if (ucpWorker_ != nullptr) {
+        try {
+          ucp_am_data_release(ucpWorker_, desc.desc);
+        } catch (const std::exception& e) {
+          UCX_CTX_ERROR << "Failed to release RNDV AM descriptor " << desc.desc
+                        << ": " << e.what() << std::endl;
+        }
+      }
+    }
+  }
 }
 
 std::error_code ucx_am_context::get_ucp_address(
@@ -742,15 +839,6 @@ void ucx_am_context::set_am_handler(ucp_am_recv_callback_t cb, void* arg) {
   param.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID
                      | UCP_AM_HANDLER_PARAM_FIELD_CB
                      | UCP_AM_HANDLER_PARAM_FIELD_ARG;
-  /*
-  // BACKUP(He Jia): use UCP_AM_RECV_ATTR_FLAG_DATA to indicate eager message
-  // That means handle data body outside of the callback
-  param.field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID
-                     | UCP_AM_HANDLER_PARAM_FIELD_CB
-                     | UCP_AM_HANDLER_PARAM_FIELD_ARG
-                     | UCP_AM_HANDLER_PARAM_FIELD_FLAGS;
-  param.flags = UCP_AM_RECV_ATTR_FLAG_DATA;
-  */
   param.id = DEFAULT_AM_MSG_ID;
   param.cb = cb;
   param.arg = arg;
@@ -761,17 +849,17 @@ ucs_status_t ucx_am_context::am_recv_callback(
   void* arg, const void* header, size_t header_length, void* data,
   size_t data_length, const ucp_am_recv_param_t* param) {
   ucx_am_context* self = reinterpret_cast<ucx_am_context*>(arg);
-  ucs_status_t status = UCS_OK;
+  // Set status to INPROGRESS to indicate that the message is being processed
+  // data descriptor is not released yet
+  ucs_status_t status = UCS_INPROGRESS;
 
   assert(param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP);
 
+  LOGX(
+    "[ucx_am_context] %s am_recv_callback, header_length=%zu, "
+    "data_length=%zu\n",
+    self->ucxAmContextName_.c_str(), header_length, data_length);
   uint64_t conn_id = reinterpret_cast<uint64_t>(param->reply_ep);
-  if (self->isRejectingMessages_.load(std::memory_order_acquire)) {
-    self->rejectedMessagesInfo_.emplace_back(
-      conn_id,
-      std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()));
-    return UCS_ERR_REJECTED;
-  }
 
   auto conn_opt = self->conn_manager_.get_connection(conn_id);
   if (!conn_opt.has_value()) {
@@ -788,21 +876,48 @@ ucs_status_t ucx_am_context::am_recv_callback(
 
   // Allocate and copy header in host memory before it is freed
   // TODO(He Jia): Make it more efficient and safe
-  void* new_header = self->mr_.allocate(ucx_memory_type::HOST, header_length);
-  self->mr_.memcpy(
-    ucx_memory_type::HOST, new_header, ucx_memory_type::HOST, header,
-    header_length);
+  // Only allocate if header_length > 0
+  void* new_header = nullptr;
+  if (header_length > 0) {
+    new_header = self->mr_.get().allocate(ucx_memory_type::HOST, header_length);
+    if (new_header == nullptr) {
+      return UCS_ERR_NO_MEMORY;
+    }
+    self->mr_.get().memcpy(
+      ucx_memory_type::HOST, new_header, ucx_memory_type::HOST, header,
+      header_length);
+  }
 
-  if (
-    !(param->recv_attr & UCP_AM_RECV_ATTR_FLAG_DATA)
-    && !(param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV)) {
-    void* new_data = self->mr_.allocate(ucx_memory_type::HOST, data_length);
-    self->mr_.memcpy(
-      ucx_memory_type::HOST, new_data, ucx_memory_type::HOST, data,
-      data_length);
-    data = new_data;
-  } else {
-    status = UCS_INPROGRESS;
+  /*
+  If Rejecting Messages is enabled, we also return UCS_OK here, let
+  application logic handle the rejected messages. When client receive a rejected
+  response, it should call the stop_token to stop the operation and call
+  cancel_request to stop sending request. This is a workaround for the fact that
+  UCX does not provide a way to reject messages.
+  */
+
+  if (!(param->recv_attr
+        & (UCP_AM_RECV_ATTR_FLAG_RNDV | UCP_AM_RECV_ATTR_FLAG_DATA))) {
+    // Allocate data buffer if not president data and data_length > 0
+    if (data_length > 0) {
+      auto new_data =
+        self->mr_.get().allocate(ucx_memory_type::HOST, data_length);
+      if (new_data == nullptr) {
+        // Clean up allocated header before returning
+        if (new_header != nullptr) {
+          self->mr_.get().deallocate(
+            ucx_memory_type::HOST, new_header, header_length);
+        }
+        return UCS_ERR_NO_MEMORY;
+      }
+      self->mr_.get().memcpy(
+        ucx_memory_type::HOST, new_data, ucx_memory_type::HOST, data,
+        data_length);
+      data = new_data;
+    }
+    // Only one stituation return UCS_OK: when all data was copied out of the
+    // UCX inner buffer and UCS will not keep the data after this callback
+    status = UCS_OK;
   }
 
   // Here data is actually a pointer to the data descriptor, maybe not the
@@ -826,9 +941,16 @@ ucx_am_context::time_duration ucx_am_context::get_conn_timeout()
   return connTimeout_;
 }
 
+ucx_am_context::time_duration ucx_am_context::get_remaining_timeout(
+  time_point timestamp, time_duration timeout) const noexcept {
+  auto now = monotonic_clock::now();
+  auto elapsed = now - timestamp;
+  return timeout - elapsed;
+}
+
 bool ucx_am_context::is_timeout_elapsed(
   time_point timestamp, time_duration timeout) const noexcept {
-  return (monotonic_clock::now() - timestamp) > timeout;
+  return get_remaining_timeout(timestamp, timeout) <= time_duration{0};
 }
 
 ucx_am_cqe& ucx_am_context::get_and_update_cq_entry() noexcept {
@@ -1019,13 +1141,23 @@ std::tuple<ucs_status_t, std::uint64_t> ucx_am_context::progress_conn_request(
   ucs_status_t status = UCS_OK;
   std::uint64_t conn_id = std::uintptr_t(nullptr);
 
-  if (is_timeout_elapsed(epConnReq.arrival_time, get_conn_timeout())) {
-    UCX_CTX_INFO << "reject connection request " << epConnReq.conn_request
-                 << " since server's timeout ("
-                 << std::chrono::duration_cast<std::chrono::seconds>(
-                      get_conn_timeout())
-                      .count()
-                 << " seconds) elapsed\n";
+  // Calculate remaining timeout when processing the connection request
+  // This check happens when we start processing the request,
+  // not when it arrives
+  auto timeout = get_conn_timeout();
+  auto remaining_timeout =
+    get_remaining_timeout(epConnReq.arrival_time, timeout);
+
+  // Reject connection request if timeout has elapsed
+  if (remaining_timeout <= time_duration{0}) {
+    auto elapsed = monotonic_clock::now() - epConnReq.arrival_time;
+    UCX_CTX_INFO
+      << "reject connection request " << epConnReq.conn_request
+      << " since server's timeout ("
+      << std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count()
+      << " ms) elapsed. Elapsed time: "
+      << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
+      << " ms\n";
     status = ucp_listener_reject(ucpListener_, epConnReq.conn_request);
   } else {
     auto conn = std::make_unique<ucx_connection>(
@@ -1286,7 +1418,7 @@ ucx_am_context::connect_sender tag_invoke(
 ucx_am_context::connect_sender tag_invoke(
   tag_t<connect_endpoint>,
   ucx_am_context::scheduler scheduler,
-  std::vector<std::byte>& address_buffer) {
+  const std::vector<std::byte>& address_buffer) {
   assert(address_buffer.size() > 0);
   std::vector<std::byte> ucp_address_buffer(
     address_buffer.begin(), address_buffer.end());

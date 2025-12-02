@@ -19,10 +19,7 @@ limitations under the License.
 #pragma once
 
 #include <atomic>
-#include <memory>
-#include <optional>
-#include <utility>
-#include <vector>
+#include <cstddef>
 
 namespace eux {
 

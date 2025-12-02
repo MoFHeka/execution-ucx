@@ -70,6 +70,10 @@ class UcxAutoCudaDeviceContext : public UcxAutoDeviceContext {
     return op;
   }
 
+  std::unique_ptr<UcxAutoDeviceContext> clone() const override {
+    return std::make_unique<UcxAutoCudaDeviceContext>(cuda_context_);
+  }
+
  private:
   CUcontext cuda_context_;
 };

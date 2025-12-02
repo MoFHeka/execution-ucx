@@ -43,11 +43,13 @@ DefaultUcxMemoryResourceManager::DefaultUcxMemoryResourceManager() {
 
 // Register memory resource by reference (more efficient)
 void UcxMemoryResourceManager::register_memory_resource(
-  ucx_memory_type_t type, std::pmr::memory_resource& resource) {
+  ucx_memory_type_t type,
+  std::reference_wrapper<std::pmr::memory_resource>
+    resource) {
   if (__builtin_expect(type >= UCX_MEMORY_TYPE_COUNT, 0)) {
     throw std::invalid_argument("Invalid memory type");
   }
-  memory_resources_[type] = std::ref(resource);
+  memory_resources_[type] = resource;
 }
 
 // Register memcpy function
@@ -62,13 +64,13 @@ void UcxMemoryResourceManager::register_memcpy_fn(
   memcpy_fns_[dest_type][src_type] = std::move(memcpy_fn);
 }
 
-std::pmr::memory_resource& UcxMemoryResourceManager::get_memory_resource(
+std::pmr::memory_resource* UcxMemoryResourceManager::get_memory_resource(
   ucx_memory_type_t type) const {
   if (__builtin_expect(type >= UCX_MEMORY_TYPE_COUNT, 0)) {
     throw std::invalid_argument("Invalid memory type");
   }
   try {
-    return memory_resources_[type].value().get();
+    return &memory_resources_[type].value().get();
   } catch (const std::bad_optional_access&) {
     throw std::runtime_error(
       "Memory resource not registered for type: " + std::to_string(type));
@@ -94,12 +96,12 @@ UcxMemoryResourceManager::get_memcpy_fn(
 
 void* DefaultUcxMemoryResourceManager::allocate(
   ucx_memory_type_t type, size_t bytes, size_t alignment) {
-  return get_memory_resource(type).allocate(bytes, alignment);
+  return get_memory_resource(type)->allocate(bytes, alignment);
 }
 
 void DefaultUcxMemoryResourceManager::deallocate(
   ucx_memory_type_t type, void* p, size_t bytes, size_t alignment) {
-  get_memory_resource(type).deallocate(p, bytes, alignment);
+  get_memory_resource(type)->deallocate(p, bytes, alignment);
 }
 
 void* DefaultUcxMemoryResourceManager::memcpy(

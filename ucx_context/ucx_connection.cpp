@@ -21,13 +21,13 @@ limitations under the License.
 #include <ucs/sys/sock.h>
 
 #include <array>
-#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <new>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -134,12 +134,14 @@ UcxConnection::UcxConnection(
     ep_(ep),
     close_request_(nullptr),
     ucx_status_(UCS_INPROGRESS) {
-  if (ep_ != nullptr) {
+  if (handle_err_cb_ && ep_ != nullptr) {
+    // Only modify endpoint if it already exists
+    // If ep_ is nullptr, error handling will be set in connect_common()
     ucp_ep_params_t ep_params;
-    ep_params.field_mask |=
+    std::memset(&ep_params, 0, sizeof(ep_params));
+    ep_params.field_mask =
       UCP_EP_PARAM_FIELD_ERR_HANDLER | UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
-    ep_params.err_mode =
-      handle_err_cb_ ? UCP_ERR_HANDLING_MODE_PEER : UCP_ERR_HANDLING_MODE_NONE;
+    ep_params.err_mode = UCP_ERR_HANDLING_MODE_PEER;
     ep_params.err_handler.cb = error_callback;
     ep_params.err_handler.arg = reinterpret_cast<void*>(this);
     ucx_status_ = UCS_PTR_STATUS(ucp_ep_modify_nb(ep_, &ep_params));
@@ -148,6 +150,8 @@ UcxConnection::UcxConnection(
                      << " failed: " << ucs_status_string(ucx_status_)
                      << std::endl;
     }
+  } else {
+    ucx_status_ = UCS_OK;
   }
   ++num_instances_;
   struct sockaddr_in in_addr = {0};
@@ -512,7 +516,7 @@ void UcxConnection::handle_connection_error(ucs_status_t status) {
 
 // Private methods implementation
 void UcxConnection::common_request_callback(
-  void* request, ucs_status_t status) {
+  void* request, ucs_status_t status, void* user_data) {
   assert(status != UCS_INPROGRESS);
 
   UcxRequest* r = reinterpret_cast<UcxRequest*>(request);
@@ -531,7 +535,7 @@ void UcxConnection::common_request_callback(
 
 void UcxConnection::am_data_recv_callback(
   void* request, ucs_status_t status, size_t length, void* user_data) {
-  common_request_callback(request, status);
+  common_request_callback(request, status, user_data);
 }
 
 void UcxConnection::error_callback(
@@ -682,19 +686,13 @@ void UcxConnection::invoke_callback(
   }
 }
 
-void UcxConnection::request_init(void* request) {
-  UcxRequest* r = reinterpret_cast<UcxRequest*>(request);
-  request_reset(r);
+void UcxConnection::request_init(void* request) { new (request) UcxRequest(); }
+
+void UcxConnection::request_cleanup(void* request) {
+  static_cast<UcxRequest*>(request)->~UcxRequest();
 }
 
 void UcxConnection::request_reset(UcxRequest* r) {
-  if (
-    r->callback || r->callback.get() != nullptr
-    || r->callback.get()
-         != reinterpret_cast<UcxCallback*>(
-           sizeof(size_t) == 8 ? 0xffffffffffffffff : 0xffffffff)) {
-    r->callback.release();
-  }
   r->callback = nullptr;
   r->conn = std::nullopt;
   r->status = UCS_INPROGRESS;

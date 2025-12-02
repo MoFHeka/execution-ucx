@@ -19,11 +19,13 @@ limitations under the License.
 #define UCX_CONTEXT_CONCEPT_HPP_
 
 #include <netinet/in.h>
+#include <ucp/api/ucp.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -32,7 +34,6 @@ limitations under the License.
 #include <unifex/tag_invoke.hpp>
 
 #include "ucx_context/ucx_context_data.hpp"
-#include "ucx_context/ucx_memory_resource.hpp"
 
 namespace eux {
 namespace ucxx {
@@ -163,7 +164,7 @@ inline constexpr struct connect_endpoint_cpo final {
     std::enable_if_t<
       is_source_socket_address_v<SrcSaddr> && is_length_type_v<SocklenT>, int> =
       0>
-  constexpr auto operator()(
+  auto operator()(
     Scheduler&& sched,
     SrcSaddr src_saddr,
     std::unique_ptr<sockaddr>

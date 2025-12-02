@@ -37,9 +37,7 @@ limitations under the License.
 #include <unifex/sync_wait.hpp>
 #include <unifex/then.hpp>
 
-#include "ucx_context/ucx_connection.hpp"
 #include "ucx_context/ucx_memory_resource.hpp"
-#include "ucx_context/ucx_status.hpp"
 
 using eux::ucxx::connect_endpoint;
 using eux::ucxx::connection_recv;
@@ -64,7 +62,8 @@ using unifex::then;
 class UcxContextRunner {
  public:
   explicit UcxContextRunner(
-    std::string name, std::chrono::seconds timeout = std::chrono::seconds(300))
+    std::string name,
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(300))
     : name_(name), timeout_(timeout) {}
 
   virtual ~UcxContextRunner() { cleanup(); }
@@ -93,14 +92,15 @@ class UcxContextRunner {
   inplace_stop_source stopSource_;
   std::thread thread_;
   std::string name_;
-  std::chrono::seconds timeout_;
+  std::chrono::milliseconds timeout_;
   bool isCleanedUp_ = false;
 };
 
 class UcxContextHostRunner : public UcxContextRunner {
  public:
   UcxContextHostRunner(
-    std::string name, std::chrono::seconds timeout = std::chrono::seconds(300))
+    std::string name,
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(300))
     : UcxContextRunner(name, timeout) {
     init();
   }
