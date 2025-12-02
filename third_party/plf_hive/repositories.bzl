@@ -8,6 +8,6 @@ def plf_hive_repo():
     new_git_repository(
         name = "plf_hive",
         remote = "https://github.com/mattreecebentley/plf_hive.git",
-        branch = "main",
+        commit = "78ab8b7ace1367bc8784e5649628dce80b8afa04",
         build_file = "//third_party/plf_hive:BUILD.bazel",
     )
