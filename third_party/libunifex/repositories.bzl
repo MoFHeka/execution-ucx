@@ -8,6 +8,6 @@ def libunifex_repo():
     new_git_repository(
         name = "unifex",
         remote = "https://github.com/facebookexperimental/libunifex.git",
-        branch = "main",
+        commit = "75180df5f87f2f7f86c0b2137fa84c95849f2240",
         build_file = "//third_party/libunifex:BUILD.bazel",
     )
