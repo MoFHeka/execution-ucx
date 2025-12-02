@@ -57,11 +57,11 @@ class HybridLogicalClock final {
     return HybridLogicalClock{CurrentPhysicalTimeMs(), 0};
   }
 
-  [[nodiscard]] constexpr uint64_t raw() const noexcept { return raw_; }
-  [[nodiscard]] constexpr uint64_t physical_time_ms() const noexcept {
+  [[nodiscard]] constexpr uint64_t Raw() const noexcept { return raw_; }
+  [[nodiscard]] constexpr uint64_t PhysicalTimeMs() const noexcept {
     return raw_ >> kLogicalBits;
   }
-  [[nodiscard]] constexpr uint16_t logical_counter() const noexcept {
+  [[nodiscard]] constexpr uint16_t LogicalCounter() const noexcept {
     return static_cast<uint16_t>(raw_ & kLogicalMask);
   }
 
@@ -134,8 +134,8 @@ class HybridLogicalClock final {
   }
 
   [[nodiscard]] std::string ToString() const {
-    return std::to_string(physical_time_ms()) + "."
-           + std::to_string(logical_counter());
+    return std::to_string(PhysicalTimeMs()) + "."
+           + std::to_string(LogicalCounter());
   }
 
   [[nodiscard]] constexpr bool operator==(

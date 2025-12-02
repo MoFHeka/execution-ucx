@@ -81,6 +81,22 @@ struct TensorMeta {
   cista::offset::vector<int64_t> strides;
 };
 
+// Helper function to calculate tensor size in bytes
+inline size_t CalculateTensorSize(const TensorMeta& meta) {
+  if (meta.ndim == 0) {
+    return 0;
+  }
+  // Calculate total number of elements
+  int64_t total_elements = 1;
+  for (int32_t i = 0; i < meta.ndim; ++i) {
+    total_elements *= meta.shape[i];
+  }
+  // Calculate bytes per element: dtype.bits / 8
+  size_t bytes_per_element = (meta.dtype.bits + 7) / 8;  // Round up division
+
+  return static_cast<size_t>(total_elements) * bytes_per_element;
+}
+
 }  // namespace utils
 }  // namespace rpc
 }  // namespace eux

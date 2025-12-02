@@ -130,6 +130,15 @@ struct is_std_function<std::function<R(Args...)>> : std::true_type {};
 template <typename Lambda>
 struct function_traits : function_traits<decltype(&Lambda::operator())> {};
 
+template <typename T>
+struct is_reference_wrapper : std::false_type {};
+
+template <typename U>
+struct is_reference_wrapper<std::reference_wrapper<U>> : std::true_type {};
+
+template <typename T>
+constexpr bool is_reference_wrapper_v = is_reference_wrapper<T>::value;
+
 // Helper to check if a type is present in a std::variant.
 template <typename T, typename Variant>
 struct is_in_variant;
@@ -160,7 +169,7 @@ constexpr PayloadType get_payload_type() {
   } else if constexpr (std::is_same_v<DecayedT, ucxx::UcxBufferVec>) {
     return PayloadType::UCX_BUFFER_VEC;
   } else {
-    return PayloadType::MONOSTATE;
+    return PayloadType::NO_PAYLOAD;
   }
 }
 
@@ -213,25 +222,6 @@ constexpr ParamType get_param_type() {
 
 template <typename T>
 constexpr bool is_serializable_v = get_param_type<T>() != ParamType::UNKNOWN;
-
-// template <typename Tuple, size_t Index = 0>
-// struct payload_finder;
-
-// template <typename Tuple, size_t Index>
-// struct payload_finder {
-//   using current_element_raw = std::tuple_element_t<Index, Tuple>;
-//   using current_element = std::decay_t<current_element_raw>;
-
-//   using type = std::conditional_t<
-//     is_payload_type_v<current_element>,
-//     current_element,
-//     typename payload_finder<Tuple, Index + 1>::type>;
-// };
-
-// template <typename Tuple>
-// struct payload_finder<Tuple, std::tuple_size<Tuple>::value> {
-//   using type = void;
-// };
 
 template <typename Tuple, size_t Index = 0>
 struct payload_finder {

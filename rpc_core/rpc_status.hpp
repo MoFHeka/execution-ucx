@@ -156,17 +156,64 @@ class RpcCategoryRegistry {
     categories_;
 };
 
+// RpcException: a std::exception subclass that wraps an error_code
+class RpcException : public std::exception {
+ public:
+  explicit RpcException(const std::error_code& ec, const std::string& msg)
+    : ec_(ec), msg_(msg) {}
+
+  explicit RpcException(const std::error_code& ec, const char* msg)
+    : ec_(ec), msg_(msg) {}
+
+  explicit RpcException(const std::error_code& ec)
+    : ec_(ec), msg_(FormatMsg(ec)) {}
+
+  // Copy constructor/assignment
+  RpcException(const RpcException&) = default;
+  RpcException& operator=(const RpcException&) = default;
+
+  // Move constructor/assignment
+  RpcException(RpcException&&) = default;
+  RpcException& operator=(RpcException&&) = default;
+
+  // ~std::exception
+  ~RpcException() override = default;
+
+  // Return a human-readable message, overrides std::exception
+  const char* what() const noexcept override { return msg_.c_str(); }
+
+  // Access to the status object
+  const std::error_code& code() const noexcept { return ec_; }
+
+ private:
+  static std::string FormatMsg(const std::error_code& ec) {
+    // Format: "<category>: <errc_value> (<errc_message>)"
+    char buf[256];
+    std::snprintf(
+      buf, sizeof(buf), "%s: %d (%s)", ec.category().name(), ec.value(),
+      ec.message().c_str());
+    return std::string(buf);
+  }
+
+  std::error_code ec_;
+  std::string msg_;
+};
+
 // Custom status structure for serialization, compatible with std::error_code.
 struct RpcStatus {
   // Default constructor for success status.
   RpcStatus() = default;
+  RpcStatus(const RpcStatus&) noexcept = default;
+  RpcStatus(RpcStatus&&) noexcept = default;
+  RpcStatus& operator=(const RpcStatus&) noexcept = default;
+  RpcStatus& operator=(RpcStatus&&) noexcept = default;
 
   // Constructor from std::error_code.
-  explicit RpcStatus(const std::error_code& ec)
+  explicit RpcStatus(const std::error_code& ec) noexcept
     : value(ec.value()), category_name(ec.category().name()) {}
 
   // Assignment from std::error_code for convenience.
-  RpcStatus& operator=(const std::error_code& ec) {
+  RpcStatus& operator=(const std::error_code& ec) noexcept {
     value = ec.value();
     category_name = data::string{ec.category().name()};
     return *this;
@@ -185,6 +232,17 @@ struct RpcStatus {
     return {value, std::generic_category()};
   }
 
+  std::string GetErrorMessage() const {
+    auto& registry = RpcCategoryRegistry::GetInstance();
+    // Use string_view to avoid allocation during lookup.
+    std::string_view category_name_sv(
+      category_name.data(), category_name.size());
+    if (const auto* category = registry.FindCategory(category_name_sv)) {
+      return category->message(value);
+    }
+    return std::format("Unknown RPC error code: {}", value);
+  }
+
   bool operator==(const std::error_code& other) const {
     return value == other.value() && category_name == other.category().name();
   }
@@ -194,12 +252,36 @@ struct RpcStatus {
   auto cista_members() const { return std::tie(value, category_name); }
 };
 
+inline std::exception_ptr MakeRpcExceptionPtr(RpcErrc rpc_errc) {
+  return std::make_exception_ptr(RpcException(make_error_code(rpc_errc)));
+}
+
+inline std::exception_ptr MakeRpcExceptionPtr(
+  RpcErrc rpc_errc, const std::string& msg) {
+  return std::make_exception_ptr(RpcException(make_error_code(rpc_errc), msg));
+}
+
+inline std::exception_ptr MakeRpcExceptionPtr(
+  RpcErrc rpc_errc, const char* msg) {
+  return std::make_exception_ptr(RpcException(make_error_code(rpc_errc), msg));
+}
+
+inline std::exception_ptr MakeRpcExceptionPtr(RpcStatus status) {
+  return std::make_exception_ptr(
+    RpcException(std::error_code(status), status.GetErrorMessage()));
+}
+
 }  // namespace rpc
 }  // namespace eux
 
 namespace std {
 template <>
 struct is_error_code_enum<eux::rpc::RpcErrc> : public true_type {};
+
+// Enable std::make_error_code to work with RpcErrc
+inline std::error_code make_error_code(eux::rpc::RpcErrc e) noexcept {
+  return eux::rpc::make_error_code(e);
+}
 }  // namespace std
 
 #endif  // RPC_CORE_RPC_STATUS_HPP_

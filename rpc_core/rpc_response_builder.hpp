@@ -18,6 +18,7 @@
 #ifndef RPC_CORE_RPC_RESPONSE_BUILDER_HPP_
 #define RPC_CORE_RPC_RESPONSE_BUILDER_HPP_
 
+#include <string>
 #include <tuple>
 #include <utility>
 
@@ -49,16 +50,16 @@ void PackResult(RpcResponseHeader& header, T&& value) {
 
   constexpr bool is_arithmetic_or_enum =
     std::is_arithmetic_v<DecayedT> || std::is_enum_v<DecayedT>;
+  constexpr bool is_string_type = std::is_same_v<DecayedT, data::string>
+                                  || std::is_same_v<DecayedT, std::string>
+                                  || std::is_same_v<DecayedT, std::string_view>
+                                  || std::is_same_v<DecayedT, const char*>;
 
   if constexpr (is_arithmetic_or_enum) {
     meta.value.template emplace<PrimitiveValue>(std::forward<T>(value));
   } else if constexpr (is_cista_strong<DecayedT>::value) {
     meta.value.template emplace<PrimitiveValue>(value.v_);
-  } else if constexpr (
-    std::is_same_v<DecayedT, data::string>
-    || std::is_same_v<DecayedT, std::string>
-    || std::is_same_v<DecayedT, std::string_view>
-    || std::is_same_v<DecayedT, const char*>) {
+  } else if constexpr (is_string_type) {
     meta.value.template emplace<data::string>(data::string{value});
   } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
     meta.value.template emplace<TensorMeta>(std::forward<T>(value));
@@ -96,6 +97,7 @@ class RpcResponseBuilder {
     RpcResponseHeader header;
     header.session_id = session_id;
     header.request_id = request_id;
+    header.status = RpcStatus(std::error_code{});
 
     auto args_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
 
@@ -106,9 +108,54 @@ class RpcResponseBuilder {
       args_tuple);
 
     if constexpr (Extractor::payload_count == 1) {
-      auto payload = std::get<Extractor::payload_index>(std::move(args_tuple));
-      return std::make_pair(
-        std::move(header), PayloadVariant(std::move(payload)));
+      using RawTuple = decltype(args_tuple);
+      // Handle both value and (const) reference cases for args_tuple
+      if constexpr (
+        std::is_lvalue_reference_v<RawTuple>
+        || std::is_const_v<std::remove_reference_t<RawTuple>>) {
+        auto&& payload = std::get<Extractor::payload_index>(args_tuple);
+        using PayloadType = std::decay_t<decltype(payload)>;
+        // For move-only types, we need to remove const before moving
+        if constexpr (std::is_const_v<
+                        std::remove_reference_t<decltype(payload)>>) {
+          // Move-only types can't be copied, so we cast away const
+          // and move (safe since we're transferring ownership)
+          auto& non_const_payload =
+            const_cast<std::remove_const_t<PayloadType>&>(payload);
+          return std::make_pair(
+            std::move(header),
+            PayloadVariant(
+              std::in_place_type<PayloadType>, std::move(non_const_payload)));
+        } else {
+          return std::make_pair(
+            std::move(header),
+            PayloadVariant(
+              std::in_place_type<PayloadType>,
+              std::forward<decltype(payload)>(payload)));
+        }
+      } else {
+        auto&& payload =
+          std::get<Extractor::payload_index>(std::move(args_tuple));
+        using PayloadType = std::decay_t<decltype(payload)>;
+        // For move-only types, we need to remove const before moving
+        if constexpr (std::is_const_v<
+                        std::remove_reference_t<decltype(payload)>>) {
+          // Move-only types can't be copied, so we cast away const
+          // and move (safe since we're transferring ownership)
+          auto& non_const_payload =
+            const_cast<std::remove_const_t<PayloadType>&>(payload);
+          return std::make_pair(
+            std::move(header),
+            PayloadVariant(
+              std::in_place_type<PayloadType>, std::move(non_const_payload)));
+        } else {
+          return std::make_pair(
+            std::move(header),
+            PayloadVariant(
+              std::in_place_type<PayloadType>,
+              std::forward<decltype(payload)>(payload)));
+        }
+      }
     } else {
       return header;
     }
