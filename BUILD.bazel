@@ -1,4 +1,31 @@
+"""
+This file is mainly used for storing utility tools for the whole project.
+"""
+
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
 sh_binary(
     name = "format",
     srcs = ["format.sh"],
+)
+
+refresh_compile_commands(
+    name = "refresh_compile_commands",
+    exclude_external_sources = True,
+
+    # Specify the targets of interest.
+    # For example, specify a dict of targets and any flags required to build.
+    targets = {
+        "//ucx_context:ucx_am_context": "",
+        "//ucx_context:ucx_am_context_test": "",
+        "//rpc_core:rpc_dispatcher_test": "--define rpc_enable_natural_call=true",
+        "//rpc_core:rpc_async_dispatcher_test": "",
+        "//rpc_core:rpc_causality_test": "",
+        "//axon:axon_storage_test": "",
+        "//axon:axon_utils": "",
+        "//axon:axon_worker": "",
+        "//axon:axon_worker_test": "",
+        "//axon:axon_worker_basic_test": "",
+    },
 )
