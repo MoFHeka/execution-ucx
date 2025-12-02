@@ -111,7 +111,7 @@ class UcxCallback {
 // Empty callback singleton
 class EmptyCallback : public UcxCallback {
  public:
-  virtual void operator()(ucs_status_t status);
+  void operator()(ucs_status_t status) override;
   void handle_connection_error(
     ucs_status_t status, UcxConnection& conn) override {}
   void handle_connection_error(
@@ -161,9 +161,13 @@ bool is_rdma_transport_available(ucp_ep_h ep);
 bool is_zcopy_available(ucp_context_h context, size_t msg_len);
 
 struct UcxRequest {
+  UcxRequest() {
+    pos.next = nullptr;
+    pos.prev = nullptr;
+  }
   std::unique_ptr<UcxCallback> callback = std::unique_ptr<UcxCallback>(nullptr);
   std::optional<std::reference_wrapper<UcxConnection>> conn = std::nullopt;
-  ucs_status_t status = UCS_ERR_LAST;
+  ucs_status_t status = UCS_INPROGRESS;
   std::uintptr_t conn_id = std::uintptr_t(nullptr);
   UcxRequestType type = UcxRequestType::Unknown;
   ucs_list_link_t pos;
@@ -486,6 +490,13 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
   static void request_release(void* r);
 
   /**
+   * @brief Cleans up a request (calls destructor)
+   *
+   * @param request Pointer to the request
+   */
+  static void request_cleanup(void* request);
+
+  /**
    * @brief Converts socket address to string
    *
    * @param saddr Socket address
@@ -496,7 +507,8 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
     const struct sockaddr* saddr, size_t addrlen);
 
  private:
-  static void common_request_callback(void* request, ucs_status_t status);
+  static void common_request_callback(
+    void* request, ucs_status_t status, void* user_data);
 
   static void am_data_recv_callback(
     void* request, ucs_status_t status, size_t length, void* user_data);

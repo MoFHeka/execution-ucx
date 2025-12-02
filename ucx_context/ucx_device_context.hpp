@@ -20,7 +20,6 @@ limitations under the License.
 
 #include <ucp/api/ucp.h>
 
-#include <iostream>
 #include <memory>
 
 namespace eux {
@@ -76,6 +75,8 @@ class UcxAutoDeviceContext {
   // Factory method to create the specific operation object.
   virtual std::unique_ptr<OperationRAII> operator()(
     const ucp_context_h ucp_context, const ucp_worker_h ucp_worker) = 0;
+
+  virtual std::unique_ptr<UcxAutoDeviceContext> clone() const = 0;
 };
 
 /**
@@ -85,7 +86,7 @@ class UcxAutoDeviceContext {
 class UcxAutoDefaultDeviceContext : public UcxAutoDeviceContext {
  private:
   // Example of a private member specific to this subclass.
-  int private_state_ = 123;
+  [[maybe_unused]] int private_state_ = 0;
 
  public:
   UcxAutoDefaultDeviceContext() = default;
@@ -141,6 +142,10 @@ class UcxAutoDefaultDeviceContext : public UcxAutoDeviceContext {
     auto op = std::make_unique<DefaultOperation>(this, ucp_context, ucp_worker);
     op->activate();  // Activate after the object is fully constructed.
     return op;
+  }
+
+  std::unique_ptr<UcxAutoDeviceContext> clone() const override {
+    return std::make_unique<UcxAutoDefaultDeviceContext>();
   }
 };
 

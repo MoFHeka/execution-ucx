@@ -20,10 +20,8 @@ limitations under the License.
 
 #include <array>
 #include <functional>
-#include <memory>
 #include <memory_resource>
 #include <optional>
-#include <stdexcept>
 #include <type_traits>
 
 #include "ucx_context/ucx_context_def.h"
@@ -55,7 +53,9 @@ class UcxMemoryResourceManager {
    * @throw std::invalid_argument if memory type is invalid
    */
   void register_memory_resource(
-    ucx_memory_type_t type, std::pmr::memory_resource& resource);
+    ucx_memory_type_t type,
+    std::reference_wrapper<std::pmr::memory_resource>
+      resource);
 
   /**
    * @brief Register a memory copy function for specific source and destination
@@ -72,11 +72,11 @@ class UcxMemoryResourceManager {
   /**
    * @brief Get the memory resource for a specific memory type
    * @param type The memory type to get resource for
-   * @return Reference to the registered memory resource
+   * @return Pointer to the registered memory resource
    * @throw std::invalid_argument if memory type is invalid
    * @throw std::runtime_error if no resource is registered for the type
    */
-  std::pmr::memory_resource& get_memory_resource(ucx_memory_type_t type) const;
+  std::pmr::memory_resource* get_memory_resource(ucx_memory_type_t type) const;
 
   /**
    * @brief Get the memory copy function for specific source and destination
