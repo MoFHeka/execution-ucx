@@ -171,60 +171,53 @@ cista::byte_buf AxonWorker::GetLocalSignatures() const {
   return dispatcher_.GetAllSignatures();
 }
 
+auto AxonWorker::ConnectEndpointSender_(
+  const std::vector<std::byte>& ucp_address, const std::string& worker_name) {
+  return ucxx::connect_endpoint(client_ctx_->get_scheduler(), ucp_address)
+         | unifex::then([this, worker_name](uint64_t conn_id) {
+             AssociateConnection(worker_name, conn_id);
+             return std::expected<uint64_t, std::error_code>(conn_id);
+           })
+         | unifex::upon_error(
+           [this](std::variant<std::error_code, std::exception_ptr>&& error)
+             -> std::expected<uint64_t, std::error_code> {
+             std::error_code ec;
+             std::string what;
+             if (std::holds_alternative<std::error_code>(error)) {
+               ec = std::get<std::error_code>(error);
+               what = std::format("ConnectEndpoint failed: {}", ec.message());
+             } else {
+               try {
+                 std::rethrow_exception(std::get<std::exception_ptr>(error));
+               } catch (const std::exception& e) {
+                 ec = std::make_error_code(errors::AxonErrc::CoordinatorError);
+                 what = std::format("ConnectEndpoint failed: {}", e.what());
+               }
+             }
+             ReportClientError_({
+               .conn_id = 0,
+               .session_id = 0,
+               .request_id = 0,
+               .function_id = 0,
+               .status = rpc::RpcStatus(ec),
+               .what = std::move(what),
+               .hlc = hlc_,
+               .workflow_id = 0,
+             });
+             return std::unexpected(ec);
+           });
+}
+
 std::expected<uint64_t, std::error_code> AxonWorker::ConnectEndpoint(
   const std::vector<std::byte>& ucp_address, const std::string& worker_name) {
-  if (ucp_address.empty()) {
-    auto ec = std::make_error_code(errors::AxonErrc::ConnectError);
-    auto what = std::string("ConnectEndpoint failed: empty UCX address");
-    ReportClientError_({
-      .conn_id = 0,
-      .session_id = 0,
-      .request_id = 0,
-      .function_id = 0,
-      .status = rpc::RpcStatus(ec),
-      .what = std::move(what),
-      .hlc = hlc_,
-      .workflow_id = 0,
-    });
-    return std::unexpected(ec);
-  }
-
   auto res =
-    ucxx::connect_endpoint(client_ctx_->get_scheduler(), ucp_address)
-    | unifex::then([this, &worker_name](uint64_t conn_id) {
-        AssociateConnection(worker_name, conn_id);
-        return std::expected<uint64_t, std::error_code>(conn_id);
-      })
-    | unifex::upon_error(
-      [this](std::variant<std::error_code, std::exception_ptr>&& error)
-        -> std::expected<uint64_t, std::error_code> {
-        std::error_code ec;
-        std::string what;
-        if (std::holds_alternative<std::error_code>(error)) {
-          ec = std::get<std::error_code>(error);
-          what = std::format("ConnectEndpoint failed: {}", ec.message());
-        } else {
-          try {
-            std::rethrow_exception(std::get<std::exception_ptr>(error));
-          } catch (const std::exception& e) {
-            ec = std::make_error_code(errors::AxonErrc::CoordinatorError);
-            what = std::format("ConnectEndpoint failed: {}", e.what());
-          }
-        }
-        ReportClientError_({
-          .conn_id = 0,
-          .session_id = 0,
-          .request_id = 0,
-          .function_id = 0,
-          .status = rpc::RpcStatus(ec),
-          .what = std::move(what),
-          .hlc = hlc_,
-          .workflow_id = 0,
-        });
-        return std::unexpected(ec);
-      })
-    | unifex::sync_wait();
+    ConnectEndpointSender_(ucp_address, worker_name) | unifex::sync_wait();
   return res.value();
+}
+
+auto AxonWorker::ConnectEndpointAsync(
+  const std::vector<std::byte>& ucp_address, const std::string& worker_name) {
+  return ConnectEndpointSender_(ucp_address, worker_name);
 }
 
 void AxonWorker::AssociateConnection(
@@ -349,44 +342,58 @@ AXON_INVOKE_RPC_IMPL(
 
 #undef AXON_INVOKE_RPC_IMPL
 
+auto AxonWorker::RegisterEndpointSignaturesSender_(
+  const std::string& worker_name, const cista::byte_buf& signatures_blob) {
+  return unifex::just_from([this, worker_name, signatures_blob]() {
+    // Try to deserialize the remote worker signatures. Any failure (including
+    // overflow) is treated as INVALID_ARGUMENT.
+    const data::vector<rpc::RpcFunctionSignature>* signatures = nullptr;
+    try {
+      signatures = cista::deserialize<
+        data::vector<rpc::RpcFunctionSignature>, rpc::utils::SerializerMode>(
+        signatures_blob);
+    } catch (const std::exception&) {
+      // TODO(He Jia): maybe report error
+      return std::expected<WorkerKey, std::error_code>(
+        std::unexpected(std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT)));
+    }
+
+    if (signatures == nullptr) {
+      // TODO(He Jia): maybe report error
+      return std::expected<WorkerKey, std::error_code>(
+        std::unexpected(std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT)));
+    }
+
+    auto key_it = remote_workers_slot_.find(worker_name);
+    if (key_it == remote_workers_slot_.end()) {
+      return std::expected<WorkerKey, std::error_code>(std::unexpected(
+        std::make_error_code(errors::AxonErrc::WorkerNotFound)));
+    }
+
+    if (auto* worker_info = remote_workers_.access(key_it->second)) {
+      for (auto& sig : *signatures) {
+        worker_info->signatures[sig.id] = sig;
+      }
+    } else {
+      return std::expected<WorkerKey, std::error_code>(std::unexpected(
+        std::make_error_code(errors::AxonErrc::WorkerNotFound)));
+    }
+
+    return std::expected<WorkerKey, std::error_code>(key_it->second);
+  });
+}
+
 std::expected<AxonWorker::WorkerKey, std::error_code>
 AxonWorker::RegisterEndpointSignatures(
   const std::string& worker_name, const cista::byte_buf& signatures_blob) {
-  // Try to deserialize the remote worker signatures. Any failure (including
-  // overflow) is treated as INVALID_ARGUMENT.
-  const data::vector<rpc::RpcFunctionSignature>* signatures = nullptr;
-  try {
-    signatures = cista::deserialize<
-      data::vector<rpc::RpcFunctionSignature>, rpc::utils::SerializerMode>(
-      signatures_blob);
-  } catch (const std::exception&) {
-    // TODO(He Jia): maybe report error
-    return std::unexpected(
-      std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT));
-  }
+  auto res = RegisterEndpointSignaturesSender_(worker_name, signatures_blob)
+             | unifex::sync_wait();
+  return res.value();
+}
 
-  if (signatures == nullptr) {
-    // TODO(He Jia): maybe report error
-    return std::unexpected(
-      std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT));
-  }
-
-  auto key_it = remote_workers_slot_.find(worker_name);
-  if (key_it == remote_workers_slot_.end()) {
-    return std::unexpected(
-      std::make_error_code(errors::AxonErrc::WorkerNotFound));
-  }
-
-  if (auto* worker_info = remote_workers_.access(key_it->second)) {
-    for (auto& sig : *signatures) {
-      worker_info->signatures[sig.id] = sig;
-    }
-  } else {
-    return std::unexpected(
-      std::make_error_code(errors::AxonErrc::WorkerNotFound));
-  }
-
-  return key_it->second;
+auto AxonWorker::RegisterEndpointSignaturesAsync(
+  const std::string& worker_name, const cista::byte_buf& signatures_blob) {
+  return RegisterEndpointSignaturesSender_(worker_name, signatures_blob);
 }
 
 template <typename ReceivedBufferT, typename MemPolicy, typename MsgLcPolicy>

@@ -3356,20 +3356,46 @@ class ucx_am_context::connect_sender {
         this->execute_ = &operation::on_connect;
 
         // Create a new connection using the provided addresses
-        std::visit(
-          [this](auto&& addr) {
+        std::optional<std::uint64_t> validated_conn_id = std::visit(
+          [this](auto& addr) -> std::optional<std::uint64_t> {
             using T = std::decay_t<decltype(addr)>;
             if constexpr (std::is_same_v<T, std::vector<std::byte>>) {
+              if (addr.empty()) {
+                return std::nullopt;
+              }
               // UCP address buffer
-              conn_id_ = context_.create_new_connection(
-                reinterpret_cast<const ucp_address_t*>(addr.data()));
+              try {
+                return std::make_optional(context_.create_new_connection(
+                  reinterpret_cast<const ucp_address_t*>(addr.data())));
+              } catch (const std::exception& e) {
+                UCX_CTX_ERROR << "create_new_connection() failed: " << e.what();
+                return std::nullopt;
+              }
             } else {
+              if (
+                addr.src_saddr == nullptr || addr.dst_saddr == nullptr
+                || addr.addrlen == 0) {
+                return std::nullopt;
+              }
               // sockaddr info
-              conn_id_ = context_.create_new_connection(
-                addr.src_saddr.get(), addr.dst_saddr.get(), addr.addrlen);
+              try {
+                return std::make_optional(context_.create_new_connection(
+                  addr.src_saddr.get(), addr.dst_saddr.get(), addr.addrlen));
+              } catch (const std::exception& e) {
+                UCX_CTX_ERROR << "create_new_connection() failed: " << e.what();
+                return std::nullopt;
+              }
             }
           },
           address_);
+
+        if (validated_conn_id.has_value()) [[likely]] {
+          conn_id_ = validated_conn_id.value();
+        } else [[unlikely]] {
+          entry.res = UCS_ERR_INVALID_PARAM;
+          this->result_ = UCS_ERR_INVALID_PARAM;
+          return true;
+        }
 
         auto conn_opt = context_.conn_manager_.get_connection(conn_id_);
 

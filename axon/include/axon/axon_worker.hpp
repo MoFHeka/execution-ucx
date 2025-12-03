@@ -107,7 +107,12 @@ struct is_dynamic_api : std::true_type {};
 
 }  // namespace detail
 
+// Forward declaration
+class AxonRuntime;
+
 class AxonWorker {
+  friend class AxonRuntime;
+
  public:
   // --- Types ---
   using AxonRequestPtr = std::shared_ptr<utils::AxonRequest>;
@@ -186,8 +191,12 @@ class AxonWorker {
   cista::byte_buf GetLocalSignatures() const;
   std::expected<uint64_t, std::error_code> ConnectEndpoint(
     const std::vector<std::byte>& ucp_address, const std::string& worker_name);
+  auto ConnectEndpointAsync(
+    const std::vector<std::byte>& ucp_address, const std::string& worker_name);
   void AssociateConnection(const std::string& worker_name, uint64_t conn_id);
   std::expected<WorkerKey, std::error_code> RegisterEndpointSignatures(
+    const std::string& worker_name, const cista::byte_buf& signatures_blob);
+  auto RegisterEndpointSignaturesAsync(
     const std::string& worker_name, const cista::byte_buf& signatures_blob);
 
   // --- RPC Client API ---
@@ -1007,6 +1016,14 @@ class AxonWorker {
   }
 
  private:
+  // Helper function to create ConnectEndpoint sender
+  auto ConnectEndpointSender_(
+    const std::vector<std::byte>& ucp_address, const std::string& worker_name);
+
+  // Helper function to create RegisterEndpointSignatures sender
+  auto RegisterEndpointSignaturesSender_(
+    const std::string& worker_name, const cista::byte_buf& signatures_blob);
+
   // A map to store response receivers for pending RPC calls
   // Lock-free: uses request_id as direct index, different request_ids
   // map to different slots, so no locking needed
