@@ -225,17 +225,21 @@ class AsyncRpcDispatcher : public RpcDispatcher {
             DynamicAsyncFuncWrapper<DynamicAsyncRpcFunction>{
               std::move(func), input_payload_type}));
 
-    // Create and store the signature manually from the provided types.
-    signatures_.emplace(
-      id, RpcFunctionSignature{
-            .instance_name = instance_name_,
-            .id = id,
-            .function_name = name,
-            .param_types = param_types,
-            .return_types = return_types,
-            .input_payload_type = input_payload_type,
-            .return_payload_type = return_payload_type,
-          });
+    // Create and validate the signature manually from the provided types.
+    RpcFunctionSignature sig{
+      .instance_name = instance_name_,
+      .id = id,
+      .function_name = name,
+      .param_types = param_types,
+      .return_types = return_types,
+      .input_payload_type = input_payload_type,
+      .return_payload_type = return_payload_type,
+    };
+
+    // Validate tensor and payload constraints
+    RpcDispatcher::ValidateTensorPayloadConstraints(sig);
+
+    signatures_.emplace(id, std::move(sig));
   }
 
   /**

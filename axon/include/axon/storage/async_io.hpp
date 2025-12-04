@@ -145,30 +145,39 @@ class AsyncIO {
   /**
    * @brief Generate a unique filename for a request
    * @param session_id Session ID of the request
-   * @param timestamp Timestamp for uniqueness
+   * @param timestamp Timestamp string for uniqueness (human-readable with
+   * decimal precision)
    * @return Generated filename
    */
   static inline std::string GenerateFilename(
-    uint32_t session_id, std::time_t timestamp) {
+    uint32_t session_id, const std::string& timestamp) {
     return fmt::format("{}_{}.avro", session_id, timestamp);
   }
+
   /**
    * @brief Generate a unique filename for a request
    * @param prefix Prefix for the filename
-   * @param timestamp Timestamp for uniqueness
+   * @param timestamp Timestamp string for uniqueness (human-readable with
+   * decimal precision)
    * @return Generated filename
    */
   static inline std::string GenerateFilename(
-    const std::string& prefix, std::time_t timestamp) {
+    const std::string& prefix, const std::string& timestamp) {
     return fmt::format("{}_{}.avro", prefix, timestamp);
   }
+
   /**
-   * @brief Get the current timestamp
-   * @return Current timestamp
+   * @brief Get the current timestamp as a human-readable string with decimal
+   * precision
+   * @return Current timestamp string in format "seconds.milliseconds"
    */
-  static inline std::time_t get_current_timestamp() {
+  static inline std::string get_current_timestamp() {
     const auto now = std::chrono::system_clock::now();
-    return std::chrono::system_clock::to_time_t(now);
+    const auto time_t = std::chrono::system_clock::to_time_t(now);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      now.time_since_epoch())
+                    % 1000;
+    return fmt::format("{}.{:03d}", time_t, ms.count());
   }
 };
 

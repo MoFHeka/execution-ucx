@@ -15,7 +15,6 @@ limitations under the License.
 
 #pragma once
 
-#include "ucx_context/ucx_context_data.hpp"
 #ifndef RPC_CORE_RPC_DISPATCHER_HPP_
 #define RPC_CORE_RPC_DISPATCHER_HPP_
 
@@ -36,7 +35,7 @@ limitations under the License.
 #include "rpc_core/rpc_traits.hpp"
 #include "rpc_core/rpc_types.hpp"
 #include "rpc_core/utils/cista_serialize_helper.hpp"
-
+#include "ucx_context/ucx_context_data.hpp"
 namespace eux {
 namespace rpc {
 
@@ -152,7 +151,34 @@ T extract_arg(
       "cista::vector must be passed by lvalue reference (e.g., const "
       "cista::vector<T>&) since RpcRequestHeader is const.");
     using ElementType = typename DecayedT::value_type;
-    return req.template GetVector<ElementType>(param_idx++);
+    // Special case: data::vector<TensorMeta> is TensorMetaVec
+    if constexpr (std::is_same_v<ElementType, TensorMeta>) {
+      return req.GetTensorVec(param_idx++);
+    } else {
+      return req.template GetVector<ElementType>(param_idx++);
+    }
+  } else if constexpr (is_std_vector<DecayedT>::value) {
+    using ElementType = typename DecayedT::value_type;
+    // Special case: std::vector<TensorMeta> is TensorMetaVec
+    if constexpr (std::is_same_v<ElementType, TensorMeta>) {
+      static_assert(
+        std::is_lvalue_reference_v<T>,
+        "std::vector<TensorMeta> must be passed by lvalue reference (e.g., "
+        "const std::vector<TensorMeta>&) since RpcRequestHeader is const.");
+      const auto& tensor_vec = req.GetTensorVec(param_idx++);
+      // Convert cista::vector to std::vector
+      std::vector<TensorMeta> result;
+      result.reserve(tensor_vec.size());
+      for (const auto& meta : tensor_vec) {
+        result.push_back(meta);
+      }
+      return result;
+    } else {
+      static_assert(
+        false,
+        "std::vector types other than std::vector<TensorMeta> are not "
+        "supported. Use cista::vector instead.");
+    }
   } else {
     // It's a context type.
     static_assert(
@@ -238,6 +264,11 @@ class RpcDispatcher {
       error_response.request_id = request.request_id;
       error_response.status =
         std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT);
+      // Include error message in response for debugging
+      ParamMeta error_meta;
+      error_meta.type = ParamType::STRING;
+      error_meta.value.emplace<data::string>(e.what());
+      error_response.results.emplace_back(std::move(error_meta));
       return {std::move(error_response), std::monostate{}};
     }
   }
@@ -338,22 +369,26 @@ class RpcDispatcher {
     const data::vector<ParamType>& param_types,
     const data::vector<ParamType>& return_types, PayloadType input_payload_type,
     PayloadType return_payload_type, DynamicRpcFunction&& func) {
+    // Create and validate the signature manually from the provided types.
+    RpcFunctionSignature sig{
+      .instance_name = instance_name_,
+      .id = id,
+      .function_name = name,
+      .param_types = param_types,
+      .return_types = return_types,
+      .input_payload_type = input_payload_type,
+      .return_payload_type = return_payload_type,
+    };
+
+    // Validate tensor and payload constraints
+    ValidateTensorPayloadConstraints(sig);
+
     functions_.emplace(
       id, pro::make_proxy<ErasedRpcFunctionFacade>(
             DynamicFuncWrapper<DynamicRpcFunction>{
               std::move(func), input_payload_type}));
 
-    // Create and store the signature manually from the provided types.
-    signatures_.emplace(
-      id, RpcFunctionSignature{
-            .instance_name = instance_name_,
-            .id = id,
-            .function_name = name,
-            .param_types = param_types,
-            .return_types = return_types,
-            .input_payload_type = input_payload_type,
-            .return_payload_type = return_payload_type,
-          });
+    signatures_.emplace(id, std::move(sig));
   }
 
   /**
@@ -739,6 +774,11 @@ class RpcDispatcher {
       }
       error_response.status =
         std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT);
+      // Include error message in response for debugging
+      ParamMeta error_meta;
+      error_meta.type = ParamType::STRING;
+      error_meta.value.emplace<data::string>(e.what());
+      error_response.results.emplace_back(std::move(error_meta));
       return {std::move(error_response), std::monostate{}};
     }
   }
@@ -833,9 +873,131 @@ class RpcDispatcher {
         sig.return_payload_type = PayloadType::NO_PAYLOAD;
       }
     }
+
+    // Validate tensor and payload constraints
+    ValidateTensorPayloadConstraints(sig);
+
     return sig;
   }
 
+ public:
+  // Validates that RPC signature follows the constraint:
+  // - At most one TensorMeta parameter (can exist without input payload)
+  // - At most one TensorMetaVec parameter (can exist without input payload)
+  // - If input payload is UCX_BUFFER, can have 0 or 1 TensorMeta
+  // - If input payload is UCX_BUFFER_VEC, can have 0 or 1 TensorMetaVec
+  // - Same constraints apply to return types
+  static void ValidateTensorPayloadConstraints(
+    const RpcFunctionSignature& sig) {
+    size_t tensor_meta_count = 0;
+    size_t tensor_meta_vec_count = 0;
+    size_t return_tensor_meta_count = 0;
+    size_t return_tensor_meta_vec_count = 0;
+
+    for (const auto& param_type : sig.param_types) {
+      if (param_type == ParamType::TENSOR_META) {
+        tensor_meta_count++;
+      } else if (param_type == ParamType::TENSOR_META_VEC) {
+        tensor_meta_vec_count++;
+      }
+    }
+
+    for (const auto& return_type : sig.return_types) {
+      if (return_type == ParamType::TENSOR_META) {
+        return_tensor_meta_count++;
+      } else if (return_type == ParamType::TENSOR_META_VEC) {
+        return_tensor_meta_vec_count++;
+      }
+    }
+
+    // Check constraint: cannot have both TensorMeta and TensorMetaVec
+    if (tensor_meta_count > 0 && tensor_meta_vec_count > 0) {
+      throw std::invalid_argument(
+        "RPC signature cannot have both TensorMeta and TensorMetaVec. "
+        "Only one TensorMeta with UcxBuffer OR one TensorMetaVec with "
+        "UcxBufferVec is allowed.");
+    }
+
+    // Check constraint: only one TensorMeta allowed
+    if (tensor_meta_count > 1) {
+      throw std::invalid_argument(
+        "RPC signature can have at most one TensorMeta parameter. "
+        "Found "
+        + std::to_string(tensor_meta_count) + " TensorMeta parameters.");
+    }
+
+    // Check constraint: only one TensorMetaVec allowed
+    if (tensor_meta_vec_count > 1) {
+      throw std::invalid_argument(
+        "RPC signature can have at most one TensorMetaVec parameter. "
+        "Found "
+        + std::to_string(tensor_meta_vec_count) + " TensorMetaVec parameters.");
+    }
+
+    // Check constraint: If input payload is UCX_BUFFER, can have 0 or 1
+    // TensorMeta (TensorMeta is optional when payload is UCX_BUFFER)
+    if (sig.input_payload_type == PayloadType::UCX_BUFFER) {
+      if (tensor_meta_count > 1) {
+        throw std::invalid_argument(
+          "RPC signature with UcxBuffer input payload can have at most one "
+          "TensorMeta parameter. "
+          "Found "
+          + std::to_string(tensor_meta_count) + " TensorMeta parameters.");
+      }
+      // If there's a TensorMeta, it should be the only tensor type
+      if (tensor_meta_count == 1 && tensor_meta_vec_count > 0) {
+        throw std::invalid_argument(
+          "RPC signature cannot have both TensorMeta and TensorMetaVec.");
+      }
+    }
+
+    // Check constraint: If input payload is UCX_BUFFER_VEC, can have 0 or 1
+    // TensorMetaVec (TensorMetaVec is optional when payload is UCX_BUFFER_VEC)
+    if (sig.input_payload_type == PayloadType::UCX_BUFFER_VEC) {
+      if (tensor_meta_vec_count > 1) {
+        throw std::invalid_argument(
+          "RPC signature with UcxBufferVec input payload can have at most one "
+          "TensorMetaVec parameter. "
+          "Found "
+          + std::to_string(tensor_meta_vec_count)
+          + " TensorMetaVec parameters.");
+      }
+      // If there's a TensorMetaVec, it should be the only tensor type
+      if (tensor_meta_vec_count == 1 && tensor_meta_count > 0) {
+        throw std::invalid_argument(
+          "RPC signature cannot have both TensorMeta and TensorMetaVec.");
+      }
+    }
+
+    // Validate return types: same constraints as input parameters
+    // Check constraint: cannot have both TensorMeta and TensorMetaVec in
+    // returns
+    if (return_tensor_meta_count > 0 && return_tensor_meta_vec_count > 0) {
+      throw std::invalid_argument(
+        "RPC signature cannot have both TensorMeta and TensorMetaVec in return "
+        "types. Only one TensorMeta OR one TensorMetaVec is allowed.");
+    }
+
+    // Check constraint: only one TensorMeta allowed in returns
+    if (return_tensor_meta_count > 1) {
+      throw std::invalid_argument(
+        "RPC signature can have at most one TensorMeta return value. "
+        "Found "
+        + std::to_string(return_tensor_meta_count)
+        + " TensorMeta return values. Use TENSOR_META_VEC for multiple TensorMeta.");
+    }
+
+    // Check constraint: only one TensorMetaVec allowed in returns
+    if (return_tensor_meta_vec_count > 1) {
+      throw std::invalid_argument(
+        "RPC signature can have at most one TensorMetaVec return value. "
+        "Found "
+        + std::to_string(return_tensor_meta_vec_count)
+        + " TensorMetaVec return values.");
+    }
+  }
+
+ public:
   template <typename Func>
   static pro::proxy<ErasedRpcFunctionFacade> MakeRpcWrapper(Func&& func) {
     return pro::make_proxy<ErasedRpcFunctionFacade>(

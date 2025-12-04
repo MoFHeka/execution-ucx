@@ -171,9 +171,9 @@ class AxonWorker {
   ~AxonWorker();
 
   // --- Lifecycle ---
-  std::error_code StartServer();
-  std::error_code StartClient();
-  std::error_code Start();
+  std::expected<void, errors::AxonErrorContext> StartServer();
+  std::expected<void, errors::AxonErrorContext> StartClient();
+  std::expected<void, errors::AxonErrorContext> Start();
   void StopServer();
   void StopClient();
   void Stop();
@@ -191,7 +191,7 @@ class AxonWorker {
 
   cista::byte_buf GetLocalSignatures() const;
 
-  std::expected<uint64_t, std::error_code> ConnectEndpoint(
+  std::expected<uint64_t, errors::AxonErrorContext> ConnectEndpoint(
     const std::vector<std::byte>& ucp_address, const std::string& worker_name);
 
   auto ConnectEndpointAsync(
@@ -200,11 +200,11 @@ class AxonWorker {
       ucxx::connect_endpoint(client_ctx_->get_scheduler(), ucp_address)
       | unifex::then([this, worker_name](uint64_t conn_id) {
           AssociateConnection(worker_name, conn_id);
-          return std::expected<uint64_t, std::error_code>(conn_id);
+          return std::expected<uint64_t, errors::AxonErrorContext>(conn_id);
         })
       | unifex::upon_error(
         [this](std::variant<std::error_code, std::exception_ptr>&& error)
-          -> std::expected<uint64_t, std::error_code> {
+          -> std::expected<uint64_t, errors::AxonErrorContext> {
           std::error_code ec;
           std::string what;
           if (std::holds_alternative<std::error_code>(error)) {
@@ -218,30 +218,26 @@ class AxonWorker {
               what = std::format("ConnectEndpoint failed: {}", e.what());
             }
           }
-          ReportClientError_({
-            .conn_id = 0,
-            .session_id = 0,
-            .request_id = 0,
-            .function_id = 0,
+          errors::AxonErrorContext error_ctx{
             .status = rpc::RpcStatus(ec),
             .what = std::move(what),
             .hlc = hlc_,
-            .workflow_id = 0,
-          });
-          return std::unexpected(ec);
+          };
+          ReportClientError_(error_ctx);
+          return std::unexpected(std::move(error_ctx));
         });
     return sender;
   }
 
   void AssociateConnection(const std::string& worker_name, uint64_t conn_id);
-  std::expected<WorkerKey, std::error_code> RegisterEndpointSignatures(
+  std::expected<WorkerKey, errors::AxonErrorContext> RegisterEndpointSignatures(
     const std::string& worker_name, const cista::byte_buf& signatures_blob);
 
   auto RegisterEndpointSignaturesAsync(
     const std::string& worker_name, const cista::byte_buf& signatures_blob) {
     return unifex::just_from(
-      [this, worker_name,
-       signatures_blob]() -> std::expected<WorkerKey, std::error_code> {
+      [this, worker_name, signatures_blob]()
+        -> std::expected<WorkerKey, errors::AxonErrorContext> {
         return RegisterEndpointSignatures(worker_name, signatures_blob);
       });
   }
@@ -483,26 +479,26 @@ class AxonWorker {
     const rpc::RpcRequestHeader& request_header);
 
   // --- Advanced API for Hybrid Policy ---
-  std::expected<void, std::error_code> ProcessStoredRequests(
+  std::expected<void, errors::AxonErrorContext> ProcessStoredRequests(
     AxonRequestID req_id, rpc::DynamicAsyncRpcFunctionView func,
     RequestVisitor visitor);
   template <typename Func>
-  std::expected<void, std::error_code> ProcessStoredRequests(
+  std::expected<void, errors::AxonErrorContext> ProcessStoredRequests(
     AxonRequestID req_id, Func&& func, RequestVisitor visitor);
-  std::expected<void, std::error_code> ProcessStoredRequests(
+  std::expected<void, errors::AxonErrorContext> ProcessStoredRequests(
     AxonRequestID req_id, StorageIteratorVisitor visitor);
   template <typename Func>
     requires std::is_copy_constructible_v<Func>
-  std::expected<void, std::error_code> ProcessStoredRequests(
+  std::expected<void, errors::AxonErrorContext> ProcessStoredRequests(
     Func&& func, RequestVisitor visitor);
-  std::expected<void, std::error_code> ProcessStoredRequests(
+  std::expected<void, errors::AxonErrorContext> ProcessStoredRequests(
     rpc::DynamicAsyncRpcFunctionView func, RequestVisitor visitor);
-  std::expected<void, std::error_code> ProcessStoredRequests(
+  std::expected<void, errors::AxonErrorContext> ProcessStoredRequests(
     StorageIteratorVisitor visitor);
   void EraseStoredRequest(StorageRequestIt&& it);
   std::optional<AxonRequestPtr> FindStoredRequest(AxonRequestID request_id);
   // Helper function to process a single stored request
-  std::expected<void, std::error_code> ProcessSingleStoredRequest(
+  std::expected<void, errors::AxonErrorContext> ProcessSingleStoredRequest(
     StorageRequestIt storage_it, rpc::DynamicAsyncRpcFunctionView func,
     RequestVisitor& visitor);
 
@@ -784,7 +780,7 @@ class AxonWorker {
   template <typename Func>
   Executor ServerMakeProcessStorageExecutor_(
     StorageRequestIt storage_it, Func&& func);
-  std::expected<void, std::error_code> ProcessLifecycleStatus_(
+  std::expected<void, errors::AxonErrorContext> ProcessLifecycleStatus_(
     StorageRequestIt storage_it, LifecycleStatus lifecycle_status);
 
   UcxSendCombinedSender ServerHandleSendResponse_(
@@ -997,8 +993,21 @@ class AxonWorker {
               auto&& [resp_header_ptr, payload_or_key] =
                 std::move(resp_handler_expected.value());
               if (std::error_code(resp_header_ptr->status)) [[unlikely]] {
-                receiver.set_error(
-                  rpc::MakeRpcExceptionPtr(resp_header_ptr->status));
+                // Extract error message from response results if available
+                std::string error_msg =
+                  resp_header_ptr->status.GetErrorMessage();
+                if (
+                  !resp_header_ptr->results.empty()
+                  && resp_header_ptr->results[0].type
+                       == rpc::ParamType::STRING) {
+                  const auto& error_str =
+                    cista::get<data::string>(resp_header_ptr->results[0].value);
+                  if (!error_str.empty()) {
+                    error_msg = std::string(error_str.data(), error_str.size());
+                  }
+                }
+                receiver.set_error(std::make_exception_ptr(rpc::RpcException(
+                  std::error_code(resp_header_ptr->status), error_msg)));
                 return;
               }
               receiver.set_value(
@@ -1358,11 +1367,17 @@ void AxonWorker::SetBypassRejectionFunction(Checker&& checker) {
 }
 
 template <typename Func>
-std::expected<void, std::error_code> AxonWorker::ProcessStoredRequests(
+std::expected<void, errors::AxonErrorContext> AxonWorker::ProcessStoredRequests(
   AxonRequestID req_id, Func&& func, RequestVisitor visitor) {
   auto it = request_id_to_iterator_.find(req_id);
   if (it == request_id_to_iterator_.end()) {
-    return std::unexpected(std::make_error_code(rpc::RpcErrc::NOT_FOUND));
+    // If request not found, we can't extract header info, use default values
+    return std::unexpected(errors::AxonErrorContext{
+      .request_id = static_cast<uint32_t>(req_id),
+      .status = rpc::RpcStatus(std::make_error_code(rpc::RpcErrc::NOT_FOUND)),
+      .what = "Request not found in storage",
+      .hlc = hlc_,
+    });
   }
   auto storage_it = it->second;
   auto executor =
@@ -1373,7 +1388,7 @@ std::expected<void, std::error_code> AxonWorker::ProcessStoredRequests(
 
 template <typename Func>
   requires std::is_copy_constructible_v<Func>
-std::expected<void, std::error_code> AxonWorker::ProcessStoredRequests(
+std::expected<void, errors::AxonErrorContext> AxonWorker::ProcessStoredRequests(
   Func&& func, RequestVisitor visitor) {
   for (auto it = storage_->begin(); it != storage_->end();) {
     auto executor = ServerMakeProcessStorageExecutor_(it, func);
@@ -1388,7 +1403,7 @@ std::expected<void, std::error_code> AxonWorker::ProcessStoredRequests(
       ++it;
     }
   }
-  return std::expected<void, std::error_code>(std::in_place);
+  return std::expected<void, errors::AxonErrorContext>(std::in_place);
 }
 
 // Helper function implementations
@@ -1411,19 +1426,29 @@ AxonWorker::Executor AxonWorker::ServerMakeProcessStorageExecutor_(
     });
 }
 
-inline std::expected<void, std::error_code> AxonWorker::ProcessLifecycleStatus_(
+inline std::expected<void, errors::AxonErrorContext>
+AxonWorker::ProcessLifecycleStatus_(
   StorageRequestIt storage_it, LifecycleStatus lifecycle_status) {
   if (
     lifecycle_status == LifecycleStatus::Discard
     || lifecycle_status == LifecycleStatus::Error) {
     auto axon_req_id = GetMessageID((*storage_it)->header);
+    const auto& req_header = (*storage_it)->header;
     request_id_to_iterator_.erase(axon_req_id);
     storage_->erase(storage_it);
     if (lifecycle_status == LifecycleStatus::Error) {
-      return std::unexpected(std::make_error_code(rpc::RpcErrc::INTERNAL));
+      return std::unexpected(errors::AxonErrorContext{
+        .session_id = cista::to_idx(req_header.session_id),
+        .request_id = cista::to_idx(req_header.request_id),
+        .function_id = cista::to_idx(req_header.function_id),
+        .status = rpc::RpcStatus(std::make_error_code(rpc::RpcErrc::INTERNAL)),
+        .what = "Error processing stored request",
+        .hlc = hlc_,
+        .workflow_id = cista::to_idx(req_header.workflow_id),
+      });
     }
   }
-  return std::expected<void, std::error_code>(std::in_place);
+  return std::expected<void, errors::AxonErrorContext>(std::in_place);
 }
 
 template <typename RespBufferT, typename MemPolicyT>

@@ -70,12 +70,25 @@ void PackArg(RpcRequestHeader& header, T&& value) {
   } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
     meta.value.template emplace<TensorMeta>(std::forward<T>(value));
   } else if constexpr (is_data_vector<DecayedT>::value) {
-    meta.value.template emplace<VectorValue>(std::forward<T>(value));
+    using ElementType = typename DecayedT::value_type;
+    // Special case: data::vector<TensorMeta> is TensorMetaVec
+    if constexpr (std::is_same_v<ElementType, TensorMeta>) {
+      meta.value.template emplace<TensorMetaVecValue>(std::forward<T>(value));
+    } else {
+      meta.value.template emplace<VectorValue>(std::forward<T>(value));
+    }
   } else if constexpr (is_std_vector<DecayedT>::value) {
     using ElementType = typename DecayedT::value_type;
-    data::vector<ElementType> cista_vec;
-    cista_vec.set(value.begin(), value.end());
-    meta.value.template emplace<VectorValue>(std::move(cista_vec));
+    // Special case: std::vector<TensorMeta> is TensorMetaVec
+    if constexpr (std::is_same_v<ElementType, TensorMeta>) {
+      TensorMetaVecValue cista_vec;
+      cista_vec.set(value.begin(), value.end());
+      meta.value.template emplace<TensorMetaVecValue>(std::move(cista_vec));
+    } else {
+      data::vector<ElementType> cista_vec;
+      cista_vec.set(value.begin(), value.end());
+      meta.value.template emplace<VectorValue>(std::move(cista_vec));
+    }
   }
 
   header.AddParam(std::move(meta));

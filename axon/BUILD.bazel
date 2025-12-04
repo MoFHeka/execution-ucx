@@ -1,27 +1,24 @@
 # Defines the Axon core library, a dynamic callback dispatch mechanism.
 
-load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
-load("//axon:build_defs/utils_libs.bzl", "axon_utils_libs")
+load("//axon:build_defs/core_libs.bzl", "axon_core_libs")
 load("//axon:build_defs/errors_libs.bzl", "axon_errors_libs")
 load("//axon:build_defs/metrics_libs.bzl", "axon_metrics_libs")
 load("//axon:build_defs/storage_libs.bzl", "axon_storage_libs")
-load("//axon:build_defs/core_libs.bzl", "axon_core_libs")
 load("//axon:build_defs/tests.bzl", "axon_tests")
+load("//axon:build_defs/utils_libs.bzl", "axon_utils_libs")
 
 package(default_visibility = ["//visibility:public"])
 
 # Load all library definitions
 axon_utils_libs()
+
 axon_errors_libs()
+
 axon_metrics_libs()
+
 axon_storage_libs()
+
 axon_core_libs()
 
 # Load all test definitions
 axon_tests()
-
-# Utilities
-sh_binary(
-    name = "format",
-    srcs = ["format.sh"],
-)

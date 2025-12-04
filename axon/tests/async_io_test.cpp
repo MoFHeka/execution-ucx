@@ -253,6 +253,9 @@ TEST_F(AsyncUnifexAvroIOTest, SaveMultipleBatches) {
   std::error_code save_ec2 = avro_io.Save(requests2, *mr_, test_dir_, "test");
   ASSERT_FALSE(save_ec2);
 
+  // Wait for all async save operations to complete before checking file count
+  avro_io.sync();
+
   int file_count = 0;
   for (const auto& entry : std::filesystem::directory_iterator(test_dir_)) {
     (void)entry;  // Suppress unused variable warning

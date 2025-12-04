@@ -105,12 +105,14 @@ AxonWorker::~AxonWorker() {
   }
 }
 
-std::error_code AxonWorker::Start() {
-  if (StartServer() != std::error_code{}) {
-    return std::make_error_code(errors::AxonErrc::WorkerStartFailed);
+std::expected<void, errors::AxonErrorContext> AxonWorker::Start() {
+  auto server_result = StartServer();
+  if (!server_result.has_value()) {
+    return server_result;
   }
-  if (StartClient() != std::error_code{}) {
-    return std::make_error_code(errors::AxonErrc::WorkerStartFailed);
+  auto client_result = StartClient();
+  if (!client_result.has_value()) {
+    return client_result;
   }
   return {};
 }
@@ -171,15 +173,33 @@ cista::byte_buf AxonWorker::GetLocalSignatures() const {
   return dispatcher_.GetAllSignatures();
 }
 
-std::expected<uint64_t, std::error_code> AxonWorker::ConnectEndpoint(
+std::expected<uint64_t, errors::AxonErrorContext> AxonWorker::ConnectEndpoint(
   const std::vector<std::byte>& ucp_address, const std::string& worker_name) {
   try {
     auto res =
       ConnectEndpointAsync(ucp_address, worker_name) | unifex::sync_wait();
-    return res.value();
+    if (!res.has_value()) {
+      return std::unexpected(errors::AxonErrorContext{
+        .status = rpc::RpcStatus(
+          std::make_error_code(errors::AxonErrc::CoordinatorError)),
+        .what =
+          "ConnectEndpoint failed: ConnectEndpointAsync returned no value",
+        .hlc = hlc_,
+      });
+    }
+    auto expected_res = res.value();
+    if (expected_res.has_value()) {
+      return expected_res.value();
+    } else {
+      return std::unexpected(expected_res.error());
+    }
   } catch (const std::exception& e) {
-    return std::unexpected(
-      std::make_error_code(errors::AxonErrc::CoordinatorError));
+    return std::unexpected(errors::AxonErrorContext{
+      .status = rpc::RpcStatus(
+        std::make_error_code(errors::AxonErrc::CoordinatorError)),
+      .what = std::format("ConnectEndpoint failed: {}", e.what()),
+      .hlc = hlc_,
+    });
   }
 }
 
@@ -305,7 +325,7 @@ AXON_INVOKE_RPC_IMPL(
 
 #undef AXON_INVOKE_RPC_IMPL
 
-std::expected<AxonWorker::WorkerKey, std::error_code>
+std::expected<AxonWorker::WorkerKey, errors::AxonErrorContext>
 AxonWorker::RegisterEndpointSignatures(
   const std::string& worker_name, const cista::byte_buf& signatures_blob) {
   // Try to deserialize the remote worker signatures. Any failure (including
@@ -315,22 +335,32 @@ AxonWorker::RegisterEndpointSignatures(
     signatures = cista::deserialize<
       data::vector<rpc::RpcFunctionSignature>, rpc::utils::SerializerMode>(
       signatures_blob);
-  } catch (const std::exception&) {
-    // TODO(He Jia): maybe report error
-    return std::expected<WorkerKey, std::error_code>(
-      std::unexpected(std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT)));
+  } catch (const std::exception& e) {
+    return std::unexpected(errors::AxonErrorContext{
+      .status =
+        rpc::RpcStatus(std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT)),
+      .what = std::format("Failed to deserialize signatures: {}", e.what()),
+      .hlc = hlc_,
+    });
   }
 
   if (signatures == nullptr) {
-    // TODO(He Jia): maybe report error
-    return std::expected<WorkerKey, std::error_code>(
-      std::unexpected(std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT)));
+    return std::unexpected(errors::AxonErrorContext{
+      .status =
+        rpc::RpcStatus(std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT)),
+      .what = "Failed to deserialize signatures: null result",
+      .hlc = hlc_,
+    });
   }
 
   auto key_it = remote_workers_slot_.find(worker_name);
   if (key_it == remote_workers_slot_.end()) {
-    return std::expected<WorkerKey, std::error_code>(
-      std::unexpected(std::make_error_code(errors::AxonErrc::WorkerNotFound)));
+    return std::unexpected(errors::AxonErrorContext{
+      .status =
+        rpc::RpcStatus(std::make_error_code(errors::AxonErrc::WorkerNotFound)),
+      .what = std::format("Worker '{}' not found", worker_name),
+      .hlc = hlc_,
+    });
   }
 
   if (auto* worker_info = remote_workers_.access(key_it->second)) {
@@ -338,11 +368,15 @@ AxonWorker::RegisterEndpointSignatures(
       worker_info->signatures[sig.id] = sig;
     }
   } else {
-    return std::expected<WorkerKey, std::error_code>(
-      std::unexpected(std::make_error_code(errors::AxonErrc::WorkerNotFound)));
+    return std::unexpected(errors::AxonErrorContext{
+      .status =
+        rpc::RpcStatus(std::make_error_code(errors::AxonErrc::WorkerNotFound)),
+      .what = std::format("Worker '{}' not accessible", worker_name),
+      .hlc = hlc_,
+    });
   }
 
-  return std::expected<WorkerKey, std::error_code>(key_it->second);
+  return key_it->second;
 }
 
 template <typename ReceivedBufferT, typename MemPolicyT, typename MsgLcPolicyT>
@@ -1513,7 +1547,7 @@ auto AxonWorker::ClientCtxLoop_(
     [stop_source]() { return stop_source.get().stop_requested(); });
 }
 
-std::error_code AxonWorker::StartServer() {
+std::expected<void, errors::AxonErrorContext> AxonWorker::StartServer() {
   if (server_running_.exchange(true)) {
     return {};
   }
@@ -1529,13 +1563,18 @@ std::error_code AxonWorker::StartServer() {
   } catch (const std::exception& e) {
     std::cerr << "StartServer failed: " << e.what() << std::endl;
     server_running_.exchange(false);
-    return std::make_error_code(errors::AxonErrc::WorkerStartFailed);
+    return std::unexpected(errors::AxonErrorContext{
+      .status = rpc::RpcStatus(
+        std::make_error_code(errors::AxonErrc::WorkerStartFailed)),
+      .what = std::format("StartServer failed: {}", e.what()),
+      .hlc = hlc_,
+    });
   }
 
   return {};
 }
 
-std::error_code AxonWorker::StartClient() {
+std::expected<void, errors::AxonErrorContext> AxonWorker::StartClient() {
   if (client_running_.exchange(true)) {
     return {};
   }
@@ -1551,13 +1590,19 @@ std::error_code AxonWorker::StartClient() {
   } catch (const std::exception& e) {
     std::cerr << "StartClient failed: " << e.what() << std::endl;
     client_running_.exchange(false);
-    return std::make_error_code(errors::AxonErrc::WorkerStartFailed);
+    return std::unexpected(errors::AxonErrorContext{
+      .status = rpc::RpcStatus(
+        std::make_error_code(errors::AxonErrc::WorkerStartFailed)),
+      .what = std::format("StartClient failed: {}", e.what()),
+      .hlc = hlc_,
+    });
   }
 
   return {};
 }
 
-std::expected<void, std::error_code> AxonWorker::ProcessSingleStoredRequest(
+std::expected<void, errors::AxonErrorContext>
+AxonWorker::ProcessSingleStoredRequest(
   StorageRequestIt storage_it, rpc::DynamicAsyncRpcFunctionView func,
   RequestVisitor& visitor) {
   auto executor = pro::make_proxy<ExecutorFacade>(
@@ -1591,26 +1636,41 @@ std::expected<void, std::error_code> AxonWorker::ProcessSingleStoredRequest(
     lifecycle_status == LifecycleStatus::Discard
     || lifecycle_status == LifecycleStatus::Error) {
     auto axon_req_id = GetMessageID((*storage_it)->header);
+    const auto& req_header = (*storage_it)->header;
     request_id_to_iterator_.erase(axon_req_id);
     storage_->erase(storage_it);
     if (lifecycle_status == LifecycleStatus::Error) {
-      return std::unexpected(std::make_error_code(rpc::RpcErrc::INTERNAL));
+      return std::unexpected(errors::AxonErrorContext{
+        .session_id = cista::to_idx(req_header.session_id),
+        .request_id = cista::to_idx(req_header.request_id),
+        .function_id = cista::to_idx(req_header.function_id),
+        .status = rpc::RpcStatus(std::make_error_code(rpc::RpcErrc::INTERNAL)),
+        .what = "Error processing single stored request",
+        .hlc = hlc_,
+        .workflow_id = cista::to_idx(req_header.workflow_id),
+      });
     }
   }
-  return std::expected<void, std::error_code>(std::in_place);
+  return std::expected<void, errors::AxonErrorContext>(std::in_place);
 }
 
-std::expected<void, std::error_code> AxonWorker::ProcessStoredRequests(
+std::expected<void, errors::AxonErrorContext> AxonWorker::ProcessStoredRequests(
   AxonRequestID req_id, rpc::DynamicAsyncRpcFunctionView func,
   RequestVisitor visitor) {
   auto it = request_id_to_iterator_.find(req_id);
   if (it == request_id_to_iterator_.end()) {
-    return std::unexpected(std::make_error_code(rpc::RpcErrc::NOT_FOUND));
+    // If request not found, we can't extract header info, use default values
+    return std::unexpected(errors::AxonErrorContext{
+      .request_id = static_cast<uint32_t>(req_id),
+      .status = rpc::RpcStatus(std::make_error_code(rpc::RpcErrc::NOT_FOUND)),
+      .what = "Request not found in storage",
+      .hlc = hlc_,
+    });
   }
   return ProcessSingleStoredRequest(it->second, func, visitor);
 }
 
-std::expected<void, std::error_code> AxonWorker::ProcessStoredRequests(
+std::expected<void, errors::AxonErrorContext> AxonWorker::ProcessStoredRequests(
   rpc::DynamicAsyncRpcFunctionView func, RequestVisitor visitor) {
   for (auto it = storage_->begin(); it != storage_->end(); ++it) {
     auto result = ProcessSingleStoredRequest(it, func, visitor);
@@ -1618,7 +1678,7 @@ std::expected<void, std::error_code> AxonWorker::ProcessStoredRequests(
       return result;
     }
   }
-  return std::expected<void, std::error_code>(std::in_place);
+  return std::expected<void, errors::AxonErrorContext>(std::in_place);
 }
 
 void AxonWorker::EraseStoredRequest(StorageRequestIt&& it) {

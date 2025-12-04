@@ -73,6 +73,7 @@ enum class ParamType : uint8_t {
   STRING = 22,
   VOID = 23,
   TENSOR_META = 24,
+  TENSOR_META_VEC = 25,
   UNKNOWN = 255,
   LAST = UNKNOWN,
 };
@@ -97,9 +98,12 @@ using VectorValue = data::variant<
   data::vector<uint16_t>, data::vector<uint32_t>, data::vector<uint64_t>,
   data::vector<float>, data::vector<double>>;
 
+using TensorMetaVecValue = data::vector<TensorMeta>;
+
 // Top-level variant for parameter values
 using ParamValue = data::variant<
-  PrimitiveValue, VectorValue, data::string, std::nullptr_t, TensorMeta>;
+  PrimitiveValue, VectorValue, data::string, std::nullptr_t, TensorMeta,
+  TensorMetaVecValue>;
 
 // Optimized parameter metadata for RPC header
 struct ParamMeta {
@@ -257,6 +261,17 @@ struct RpcMessageAccessor {
     return cista::get<TensorMeta>(container[index].value);
   }
 
+  const TensorMetaVecValue& GetTensorVec(size_t index) const {
+    const auto& container = derived().GetParamsContainer();
+    if (
+      index >= container.size()
+      || container[index].type != ParamType::TENSOR_META_VEC) {
+      throw std::runtime_error(
+        "Invalid item access for tensor metadata vector");
+    }
+    return cista::get<TensorMetaVecValue>(container[index].value);
+  }
+
   // --- Move-based accessors for taking ownership ---
 
   template <typename T>
@@ -283,6 +298,17 @@ struct RpcMessageAccessor {
       throw std::runtime_error("Invalid item access for tensor metadata");
     }
     return std::move(cista::get<TensorMeta>(container[index].value));
+  }
+
+  TensorMetaVecValue&& MoveTensorVec(size_t index) {
+    auto& container = derived().GetParamsContainer();
+    if (
+      index >= container.size()
+      || container[index].type != ParamType::TENSOR_META_VEC) {
+      throw std::runtime_error(
+        "Invalid item access for tensor metadata vector");
+    }
+    return std::move(cista::get<TensorMetaVecValue>(container[index].value));
   }
 
   // --- Temporal metadata helpers

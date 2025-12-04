@@ -19,6 +19,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -37,6 +38,7 @@ using eux::rpc::ParamType;
 using eux::rpc::PrimitiveValue;
 using eux::rpc::request_id_t;
 using eux::rpc::RpcRequestHeader;
+using eux::rpc::TensorMetaVecValue;
 using eux::rpc::VectorValue;
 using eux::rpc::utils::HybridLogicalClock;
 using eux::rpc::utils::TensorMeta;
@@ -145,7 +147,7 @@ TEST_F(AvroSerializationTest, SerializeDeserializeAllTypes) {
   params.push_back(
     {ParamType::VECTOR_FLOAT64, VectorValue{data::vector<double>{10.5, 20.5}},
      "vec_float64_param"});
-  // TENSOR_META
+  // TENSOR_META_VEC (only one tensor parameter allowed now)
   TensorMeta tm1{};
   tm1.device = {kDLCPU, 1};
   tm1.ndim = 2;
@@ -153,7 +155,6 @@ TEST_F(AvroSerializationTest, SerializeDeserializeAllTypes) {
   tm1.shape = data::vector<int64_t>{10, 20};
   tm1.strides = data::vector<int64_t>{20, 1};
   tm1.byte_offset = 0;
-  params.push_back({ParamType::TENSOR_META, tm1, "tensor_param_1"});
 
   TensorMeta tm2{};
   tm2.device = {kDLCPU, 0};
@@ -162,7 +163,12 @@ TEST_F(AvroSerializationTest, SerializeDeserializeAllTypes) {
   tm2.shape = data::vector<int64_t>{20};
   tm2.strides = data::vector<int64_t>{1};
   tm2.byte_offset = 10;
-  params.push_back({ParamType::TENSOR_META, tm2, "tensor_param_2"});
+
+  data::vector<TensorMeta> tensor_meta_vec;
+  tensor_meta_vec.push_back(tm1);
+  tensor_meta_vec.push_back(tm2);
+  params.push_back(
+    {ParamType::TENSOR_META_VEC, tensor_meta_vec, "tensor_param_vec"});
 
   RpcRequestHeader original_header;
   original_header.function_id = rpc::function_id_t{12345};
@@ -188,10 +194,10 @@ TEST_F(AvroSerializationTest, SerializeDeserializeAllTypes) {
   auto test_header = RpcRequestHeader(original_header);
   auto test_payload =
     UcxBufferVec(*mr_, ucx_memory_type::HOST, payload_buffers, nullptr, false);
+  // Extract tensor param index (should be the last parameter)
+  auto tensor_param_index = utils::ExtractTensorParamIndex(test_header.params);
   AxonRequest request(
-    std::move(test_header), std::move(test_payload),
-    {static_cast<size_t>(original_header.params.size() - 2),
-     static_cast<size_t>(original_header.params.size() - 1)});
+    std::move(test_header), std::move(test_payload), tensor_param_index);
 
   // 2. Serialize
   avro::GenericDatum datum = AvroSerialization::Serialize(request, *mr_);
@@ -318,6 +324,31 @@ TEST_F(AvroSerializationTest, SerializeDeserializeAllTypes) {
         }
         break;
       }
+      case ParamType::TENSOR_META_VEC: {
+        const auto& vec1 = cista::get<rpc::TensorMetaVecValue>(p1.value);
+        const auto& vec2 = cista::get<rpc::TensorMetaVecValue>(p2.value);
+        ASSERT_EQ(vec1.size(), vec2.size());
+        for (size_t i = 0; i < vec1.size(); ++i) {
+          const auto& tm1 = vec1[i];
+          const auto& tm2 = vec2[i];
+          EXPECT_EQ(tm1.device.device_type, tm2.device.device_type);
+          EXPECT_EQ(tm1.device.device_id, tm2.device.device_id);
+          EXPECT_EQ(tm1.ndim, tm2.ndim);
+          EXPECT_EQ(tm1.dtype.code, tm2.dtype.code);
+          EXPECT_EQ(tm1.dtype.bits, tm2.dtype.bits);
+          EXPECT_EQ(tm1.dtype.lanes, tm2.dtype.lanes);
+          EXPECT_EQ(tm1.byte_offset, tm2.byte_offset);
+          ASSERT_EQ(tm1.shape.size(), tm2.shape.size());
+          for (size_t j = 0; j < tm1.shape.size(); ++j) {
+            EXPECT_EQ(tm1.shape[j], tm2.shape[j]);
+          }
+          ASSERT_EQ(tm1.strides.size(), tm2.strides.size());
+          for (size_t j = 0; j < tm1.strides.size(); ++j) {
+            EXPECT_EQ(tm1.strides[j], tm2.strides[j]);
+          }
+        }
+        break;
+      }
       default:
         FAIL() << "Unhandled ParamType in test verification: "
                << static_cast<int>(p1.type);
@@ -374,7 +405,8 @@ TEST_F(AvroSerializationTest, SerializeDeserialize_SingleBuffer) {
   test_payload_buffer.size = payload_buffer.size;
   UcxBuffer test_payload(
     *mr_, ucx_memory_type::HOST, test_payload_buffer, nullptr, false);
-  AxonRequest request(std::move(test_header), std::move(test_payload), {0});
+  AxonRequest request(
+    std::move(test_header), std::move(test_payload), std::optional<size_t>(0));
 
   // 2. Serialize
   avro::GenericDatum datum = AvroSerialization::Serialize(request, *mr_);
@@ -424,7 +456,7 @@ TEST_F(AvroSerializationTest, SerializeDeserialize_NoPayload) {
   original_header.workflow_id = rpc::workflow_id_t{4};
 
   AxonRequest request(
-    std::move(original_header), std::monostate{}, std::vector<size_t>{});
+    std::move(original_header), std::monostate{}, std::nullopt);
 
   // 2. Serialize
   avro::GenericDatum datum = AvroSerialization::Serialize(request, *mr_);

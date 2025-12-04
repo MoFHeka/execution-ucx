@@ -14,4 +14,3 @@ def axon_metrics_libs():
             "@proxy",
         ],
     )
-
