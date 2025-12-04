@@ -35,7 +35,7 @@ limitations under the License.
 #include "ucx_context/ucx_device_context.hpp"
 #include "ucx_context/ucx_memory_resource.hpp"
 
-// #define LOGGING_ENABLED
+#define LOGGING_ENABLED
 
 #ifdef LOGGING_ENABLED
 #define LOG(S)             \
@@ -111,7 +111,7 @@ TEST_F(AxonWorkerIntegrationTest, ClientServerInteraction) {
         },
         "echo");
 
-      if (worker.StartServer() != std::error_code{}) {
+      if (!worker.StartServer().has_value()) {
         LOGX("[Server] Failed to start server\n");
         std::exit(1);
       }
@@ -171,7 +171,7 @@ TEST_F(AxonWorkerIntegrationTest, ClientServerInteraction) {
       AxonWorker worker(
         *mr_, "client_worker", 2, std::chrono::milliseconds(10),
         std::move(device_ctx));
-      if (worker.StartClient() != std::error_code{}) {
+      if (!worker.StartClient().has_value()) {
         LOGX("[Client] Failed to start client\n");
         std::exit(1);
       }
@@ -339,7 +339,7 @@ TEST_F(AxonWorkerIntegrationTest, DynamicApiAndErrorHandling) {
         },
         "always_fail");
 
-      if (worker.StartServer() != std::error_code{}) {
+      if (!worker.StartServer().has_value()) {
         LOGX("[Server-Dyn] Failed to start server\n");
         std::exit(1);
       }
@@ -398,7 +398,7 @@ TEST_F(AxonWorkerIntegrationTest, DynamicApiAndErrorHandling) {
         *mr_, "client_worker_dyn", 2, std::chrono::milliseconds(10),
         std::move(device_ctx));
 
-      if (worker.StartClient() != std::error_code{}) {
+      if (!worker.StartClient().has_value()) {
         LOGX("[Client-Dyn] Failed to start client\n");
         std::exit(1);
       }
@@ -620,7 +620,7 @@ TEST_F(AxonWorkerIntegrationTest, RobustnessAndConcurrency) {
         },
         "echo");
 
-      ASSERT_EQ(worker.StartServer(), std::error_code{})
+      ASSERT_TRUE(worker.StartServer().has_value())
         << "[Server-Rob] Failed to start server";
 
       std::vector<std::byte> addr = worker.GetLocalAddress();
@@ -659,7 +659,7 @@ TEST_F(AxonWorkerIntegrationTest, RobustnessAndConcurrency) {
       AxonWorker worker(
         *mr_, "client_worker_rob", 4, std::chrono::milliseconds(10),
         std::move(device_ctx));
-      ASSERT_EQ(worker.StartClient(), std::error_code{})
+      ASSERT_TRUE(worker.StartClient().has_value())
         << "[Client-Rob] Failed to start client";
       auto conn_result = worker.ConnectEndpoint(addr, "server_worker_rob");
       ASSERT_TRUE(conn_result.has_value())
@@ -892,7 +892,7 @@ TEST_F(AxonWorkerIntegrationTest, BackpressureLargeMessage) {
         },
         "echo");
 
-      ASSERT_EQ(worker.StartServer(), std::error_code{})
+      ASSERT_TRUE(worker.StartServer().has_value())
         << "[Server-BPL] Failed to start server";
 
       std::vector<std::byte> addr = worker.GetLocalAddress();
@@ -931,7 +931,7 @@ TEST_F(AxonWorkerIntegrationTest, BackpressureLargeMessage) {
       AxonWorker worker(
         *mr_, "client_worker_bpl", 4, std::chrono::milliseconds(10),
         std::move(device_ctx));
-      ASSERT_EQ(worker.StartClient(), std::error_code{})
+      ASSERT_TRUE(worker.StartClient().has_value())
         << "[Client-BPL] Failed to start client";
       auto conn_result = worker.ConnectEndpoint(addr, "server_worker_bpl");
       ASSERT_TRUE(conn_result.has_value())
@@ -1078,22 +1078,26 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
         },
         "echo_buffer");
 
-      // Register function that handles UcxBufferVec with TensorMeta
+      // Register function that handles UcxBufferVec with TensorMetaVec
       worker.RegisterFunction<ucxx::UcxBufferVec>(
         rpc::function_id_t{5002},
         [](
-          const TensorMeta& tm1, const TensorMeta& tm2, int batch_size,
+          const rpc::TensorMetaVecValue& tensor_metas, int batch_size,
           float threshold, ucxx::UcxBufferVec&& payload) {
           // Verify TensorMeta and primitive parameters
+          // tensor_metas should have 2 elements for this test
           LOGX(
             "[Server-TM] Received TensorMeta for Vec: tm1.ndim=%d, "
             "tm1.shape[0]=%ld, tm2.ndim=%d, tm2.shape[0]=%ld, "
             "batch_size=%d, threshold=%.2f\n",
-            tm1.ndim, tm1.shape.size() > 0 ? tm1.shape[0] : 0, tm2.ndim,
-            tm2.shape.size() > 0 ? tm2.shape[0] : 0, batch_size, threshold);
+            tensor_metas[0].ndim,
+            tensor_metas[0].shape.size() > 0 ? tensor_metas[0].shape[0] : 0,
+            tensor_metas[1].ndim,
+            tensor_metas[1].shape.size() > 0 ? tensor_metas[1].shape[0] : 0,
+            batch_size, threshold);
           // Echo TensorMeta, primitive parameters and payload back
           return unifex::just(std::make_tuple(
-            tm1, tm2, batch_size, threshold, std::move(payload)));
+            tensor_metas, batch_size, threshold, std::move(payload)));
         },
         "echo_buffer_vec");
 
@@ -1102,7 +1106,7 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
       worker.RegisterFunction<ucxx::UcxBufferVec>(
         rpc::function_id_t{5003},
         [&worker](
-          const TensorMeta& tm1, const TensorMeta& tm2, int batch_size,
+          const rpc::TensorMetaVecValue& tensor_metas, int batch_size,
           float threshold, ucxx::UcxBufferVec&& payload) {
           LOGX(
             "[Server-TM] Received UcxBufferVec to convert to UcxBuffer: "
@@ -1127,10 +1131,12 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
             offset += payload[i].size;
           }
 
-          // Create combined TensorMeta (use tm1 as base, adjust shape)
-          TensorMeta combined_tm = tm1;
-          combined_tm.shape = cista::offset::vector<int64_t>{
-            static_cast<int64_t>(total_size / (tm1.dtype.bits / 8))};
+          // Create combined TensorMeta (use first tensor meta as base,
+          // adjust shape).
+          TensorMeta combined_tm = tensor_metas[0];
+          combined_tm.shape =
+            cista::offset::vector<int64_t>{static_cast<int64_t>(
+              total_size / (tensor_metas[0].dtype.bits / 8))};
 
           return unifex::just(std::make_tuple(
             combined_tm, batch_size, threshold, std::move(result)));
@@ -1169,25 +1175,20 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
           }
 
           // Create TensorMeta for each split (fixed to 4 splits)
-          TensorMeta split_tm1 = tm;
-          split_tm1.shape = cista::offset::vector<int64_t>{
-            static_cast<int64_t>(sizes[0] / (tm.dtype.bits / 8))};
-          TensorMeta split_tm2 = tm;
-          split_tm2.shape = cista::offset::vector<int64_t>{
-            static_cast<int64_t>(sizes[1] / (tm.dtype.bits / 8))};
-          TensorMeta split_tm3 = tm;
-          split_tm3.shape = cista::offset::vector<int64_t>{
-            static_cast<int64_t>(sizes[2] / (tm.dtype.bits / 8))};
-          TensorMeta split_tm4 = tm;
-          split_tm4.shape = cista::offset::vector<int64_t>{
-            static_cast<int64_t>(sizes[3] / (tm.dtype.bits / 8))};
-          return unifex::just(std::make_tuple(
-            split_tm1, split_tm2, split_tm3, split_tm4, scale,
-            std::move(result)));
+          // Use TENSOR_META_VEC instead of multiple separate TensorMeta
+          rpc::TensorMetaVecValue split_tensor_metas;
+          for (size_t i = 0; i < static_cast<size_t>(num_splits); ++i) {
+            TensorMeta split_tm = tm;
+            split_tm.shape = cista::offset::vector<int64_t>{
+              static_cast<int64_t>(sizes[i] / (tm.dtype.bits / 8))};
+            split_tensor_metas.push_back(split_tm);
+          }
+          return unifex::just(
+            std::make_tuple(split_tensor_metas, scale, std::move(result)));
         },
         "buffer_to_vec");
 
-      ASSERT_EQ(worker.StartServer(), std::error_code{})
+      ASSERT_TRUE(worker.StartServer().has_value())
         << "[Server-TM] Failed to start server";
 
       std::vector<std::byte> addr = worker.GetLocalAddress();
@@ -1213,536 +1214,590 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
 
   if (client_pid == 0) {
     // Child 2 - Client
-    mr_ = std::make_unique<ucxx::DefaultUcxMemoryResourceManager>();
-    close(pipe_fd[1]);
-    size_t addr_size;
-    read(pipe_fd[0], &addr_size, sizeof(size_t));
-    std::vector<std::byte> addr(addr_size);
-    read(pipe_fd[0], addr.data(), addr_size);
-    close(pipe_fd[0]);
+    try {
+      mr_ = std::make_unique<ucxx::DefaultUcxMemoryResourceManager>();
+      close(pipe_fd[1]);
+      size_t addr_size;
+      read(pipe_fd[0], &addr_size, sizeof(size_t));
+      std::vector<std::byte> addr(addr_size);
+      read(pipe_fd[0], addr.data(), addr_size);
+      close(pipe_fd[0]);
 
-    {
-      auto device_ctx = std::make_unique<ucxx::UcxAutoDefaultDeviceContext>();
-      AxonWorker worker(
-        *mr_, "client_worker_tm", 4, std::chrono::milliseconds(10),
-        std::move(device_ctx));
-      ASSERT_EQ(worker.StartClient(), std::error_code{})
-        << "[Client-TM] Failed to start client";
-      auto conn_result = worker.ConnectEndpoint(addr, "server_worker_tm");
-      ASSERT_TRUE(conn_result.has_value())
-        << "[Client-TM] Failed to connect to server";
-
-      // Test 1: UcxBuffer with TensorMeta
       {
-        LOGX("[Client-TM] Testing UcxBuffer with TensorMeta\n");
-
-        // Create TensorMeta
-        TensorMeta tm{};
-        tm.device = {kDLCPU, 0};
-        tm.ndim = 1;
-        tm.dtype = {kDLFloat, 32, 1};
-        tm.shape = cista::offset::vector<int64_t>{1024};
-        tm.strides = cista::offset::vector<int64_t>{1};
-        tm.byte_offset = 0;
-
-        // Calculate payload size from TensorMeta
-        size_t data_size = rpc::utils::CalculateTensorSize(tm);
-
-        // Create payload buffer
-        ucxx::UcxBuffer payload(*mr_, ucx_memory_type::HOST, data_size);
-        // Fill with test data
-        float* data_ptr = static_cast<float*>(payload.data());
-        for (size_t i = 0; i < data_size / sizeof(float); ++i) {
-          data_ptr[i] = static_cast<float>(i);
-        }
-
-        // Create request header with TensorMeta and primitive parameters
-        rpc::RpcRequestHeader header{};
-        header.session_id = rpc::session_id_t{1};
-        header.request_id = rpc::request_id_t{0};
-        header.function_id = rpc::function_id_t{5001};
-        header.workflow_id = rpc::utils::workflow_id_t{0};
-        header.hlc.TickLocal();
-
-        int multiplier = 42;
-        float scale = 3.14f;
-
-        cista::offset::vector<ParamMeta> params;
-        params.push_back(
-          {ParamType::TENSOR_META, tm, cista::offset::string{"tensor"}});
-        params.push_back(
-          {ParamType::PRIMITIVE_INT32, rpc::PrimitiveValue{multiplier},
-           cista::offset::string{"multiplier"}});
-        params.push_back(
-          {ParamType::PRIMITIVE_FLOAT32, rpc::PrimitiveValue{scale},
-           cista::offset::string{"scale"}});
-        header.params = std::move(params);
-
-        // Invoke RPC
-        auto res =
-          unifex::sync_wait(worker.InvokeRpc<ucxx::UcxBuffer, ucxx::UcxBuffer>(
-            "server_worker_tm", std::move(header),
-            std::optional<ucxx::UcxBuffer>(std::move(payload))));
-
-        ASSERT_TRUE(res.has_value()) << "UcxBuffer RPC with TensorMeta failed";
-        auto& [resp_header, resp_payload] = res.value();
-        ASSERT_EQ(resp_header->status, std::error_code{});
-        ASSERT_EQ(resp_payload.size(), data_size);
-
-        // Verify response has TensorMeta and primitive parameters
-        ASSERT_GE(resp_header->results.size(), 3);
-        ASSERT_EQ(resp_header->results[0].type, ParamType::TENSOR_META);
-        const auto& resp_tm =
-          cista::get<TensorMeta>(resp_header->results[0].value);
-        ASSERT_EQ(resp_tm.ndim, 1);
-        ASSERT_EQ(resp_tm.shape.size(), 1);
-        ASSERT_EQ(resp_tm.shape[0], 1024);
-
-        // Verify int parameter
-        ASSERT_EQ(resp_header->results[1].type, ParamType::PRIMITIVE_INT32);
-        const auto& resp_multiplier =
-          cista::get<rpc::PrimitiveValue>(resp_header->results[1].value);
-        ASSERT_EQ(cista::get<int32_t>(resp_multiplier), multiplier);
-
-        // Verify float parameter
-        ASSERT_EQ(resp_header->results[2].type, ParamType::PRIMITIVE_FLOAT32);
-        const auto& resp_scale =
-          cista::get<rpc::PrimitiveValue>(resp_header->results[2].value);
-        ASSERT_FLOAT_EQ(cista::get<float>(resp_scale), scale);
-
-        // Verify payload data
-        float* resp_data = static_cast<float*>(resp_payload.data());
-        for (size_t i = 0; i < data_size / sizeof(float); ++i) {
-          ASSERT_EQ(resp_data[i], static_cast<float>(i));
-        }
-
-        LOGX("[Client-TM] UcxBuffer with TensorMeta test passed\n");
-      }
-
-      // Test 2: UcxBufferVec with TensorMeta
-      {
-        LOGX("[Client-TM] Testing UcxBufferVec with TensorMeta\n");
-
-        // Create TensorMeta for multiple tensors
-        TensorMeta tm1{};
-        tm1.device = {kDLCPU, 0};
-        tm1.ndim = 1;
-        tm1.dtype = {kDLInt, 32, 1};
-        tm1.shape = cista::offset::vector<int64_t>{512};
-        tm1.strides = cista::offset::vector<int64_t>{1};
-        tm1.byte_offset = 0;
-
-        TensorMeta tm2{};
-        tm2.device = {kDLCPU, 0};
-        tm2.ndim = 1;
-        tm2.dtype = {kDLInt, 32, 1};
-        tm2.shape = cista::offset::vector<int64_t>{256};
-        tm2.strides = cista::offset::vector<int64_t>{1};
-        tm2.byte_offset = 0;
-
-        // Calculate payload sizes from TensorMeta
-        size_t data_size1 = rpc::utils::CalculateTensorSize(tm1);
-        size_t data_size2 = rpc::utils::CalculateTensorSize(tm2);
-
-        // Create payload buffer vec
-        ucxx::UcxBufferVec payload(
-          *mr_, ucx_memory_type::HOST, {data_size1, data_size2});
-
-        // Fill with test data
-        int32_t* data1 = static_cast<int32_t*>(payload[0].data);
-        for (size_t i = 0; i < data_size1 / sizeof(int32_t); ++i) {
-          data1[i] = static_cast<int32_t>(i);
-        }
-
-        int32_t* data2 = static_cast<int32_t*>(payload[1].data);
-        for (size_t i = 0; i < data_size2 / sizeof(int32_t); ++i) {
-          data2[i] = static_cast<int32_t>(i + 1000);
-        }
-
-        // Create request header with TensorMeta and primitive parameters
-        rpc::RpcRequestHeader header{};
-        header.session_id = rpc::session_id_t{1};
-        header.request_id = rpc::request_id_t{1};
-        header.function_id = rpc::function_id_t{5002};
-        header.workflow_id = rpc::utils::workflow_id_t{0};
-        header.hlc.TickLocal();
-
-        int batch_size = 128;
-        float threshold = 0.95f;
-
-        cista::offset::vector<ParamMeta> params;
-        params.push_back(
-          {ParamType::TENSOR_META, tm1, cista::offset::string{"tensor1"}});
-        params.push_back(
-          {ParamType::TENSOR_META, tm2, cista::offset::string{"tensor2"}});
-        params.push_back(
-          {ParamType::PRIMITIVE_INT32, rpc::PrimitiveValue{batch_size},
-           cista::offset::string{"batch_size"}});
-        params.push_back(
-          {ParamType::PRIMITIVE_FLOAT32, rpc::PrimitiveValue{threshold},
-           cista::offset::string{"threshold"}});
-        header.params = std::move(params);
-
-        // Invoke RPC
-        auto res = unifex::sync_wait(
-          worker.InvokeRpc<ucxx::UcxBufferVec, ucxx::UcxBufferVec>(
-            "server_worker_tm", std::move(header),
-            std::optional<ucxx::UcxBufferVec>(std::move(payload))));
-
-        ASSERT_TRUE(res.has_value())
-          << "UcxBufferVec RPC with TensorMeta failed";
-        auto& [resp_header, resp_payload] = res.value();
-        ASSERT_EQ(resp_header->status, std::error_code{});
-        ASSERT_EQ(resp_payload.size(), 2);
-        ASSERT_EQ(resp_payload[0].size, data_size1);
-        ASSERT_EQ(resp_payload[1].size, data_size2);
-
-        // Verify response has TensorMeta and primitive parameters
-        ASSERT_GE(resp_header->results.size(), 4);
-        ASSERT_EQ(resp_header->results[0].type, ParamType::TENSOR_META);
-        ASSERT_EQ(resp_header->results[1].type, ParamType::TENSOR_META);
-
-        const auto& resp_tm1 =
-          cista::get<TensorMeta>(resp_header->results[0].value);
-        ASSERT_EQ(resp_tm1.ndim, 1);
-        ASSERT_EQ(resp_tm1.shape[0], 512);
-
-        const auto& resp_tm2 =
-          cista::get<TensorMeta>(resp_header->results[1].value);
-        ASSERT_EQ(resp_tm2.ndim, 1);
-        ASSERT_EQ(resp_tm2.shape[0], 256);
-
-        // Verify int parameter
-        ASSERT_EQ(resp_header->results[2].type, ParamType::PRIMITIVE_INT32);
-        const auto& resp_batch_size =
-          cista::get<rpc::PrimitiveValue>(resp_header->results[2].value);
-        ASSERT_EQ(cista::get<int32_t>(resp_batch_size), batch_size);
-
-        // Verify float parameter
-        ASSERT_EQ(resp_header->results[3].type, ParamType::PRIMITIVE_FLOAT32);
-        const auto& resp_threshold =
-          cista::get<rpc::PrimitiveValue>(resp_header->results[3].value);
-        ASSERT_FLOAT_EQ(cista::get<float>(resp_threshold), threshold);
-
-        // Verify payload data
-        int32_t* resp_data1 = static_cast<int32_t*>(resp_payload[0].data);
-        for (size_t i = 0; i < data_size1 / sizeof(int32_t); ++i) {
-          ASSERT_EQ(resp_data1[i], static_cast<int32_t>(i));
-        }
-
-        int32_t* resp_data2 = static_cast<int32_t*>(resp_payload[1].data);
-        for (size_t i = 0; i < data_size2 / sizeof(int32_t); ++i) {
-          ASSERT_EQ(resp_data2[i], static_cast<int32_t>(i + 1000));
-        }
-
-        LOGX("[Client-TM] UcxBufferVec with TensorMeta test passed\n");
-      }
-
-      // Test 3: UcxBufferVec with large message
-      {
-        LOGX("[Client-TM] Testing UcxBufferVec with large message\n");
-
-        // Create large TensorMeta for multiple tensors
-        TensorMeta tm1{};
-        tm1.device = {kDLCPU, 0};
-        tm1.ndim = 1;
-        tm1.dtype = {kDLFloat, 32, 1};
-        // Large size: 5MB per tensor
-        size_t large_size1 = 5 * 1024 * 1024;
-        tm1.shape = cista::offset::vector<int64_t>{
-          static_cast<int64_t>(large_size1 / sizeof(float))};
-        tm1.strides = cista::offset::vector<int64_t>{1};
-        tm1.byte_offset = 0;
-
-        TensorMeta tm2{};
-        tm2.device = {kDLCPU, 0};
-        tm2.ndim = 1;
-        tm2.dtype = {kDLFloat, 32, 1};
-        // Large size: 3MB per tensor
-        size_t large_size2 = 3 * 1024 * 1024;
-        tm2.shape = cista::offset::vector<int64_t>{
-          static_cast<int64_t>(large_size2 / sizeof(float))};
-        tm2.strides = cista::offset::vector<int64_t>{1};
-        tm2.byte_offset = 0;
-
-        // Calculate payload sizes from TensorMeta
-        size_t data_size1 = rpc::utils::CalculateTensorSize(tm1);
-        size_t data_size2 = rpc::utils::CalculateTensorSize(tm2);
-
-        // Create payload buffer vec
-        ucxx::UcxBufferVec payload(
-          *mr_, ucx_memory_type::HOST, {data_size1, data_size2});
-
-        // Fill with test data
-        float* data1 = static_cast<float*>(payload[0].data);
-        for (size_t i = 0; i < data_size1 / sizeof(float); ++i) {
-          data1[i] = static_cast<float>(i % 1000);
-        }
-
-        float* data2 = static_cast<float*>(payload[1].data);
-        for (size_t i = 0; i < data_size2 / sizeof(float); ++i) {
-          data2[i] = static_cast<float>((i + 5000) % 1000);
-        }
-
-        // Create request header with TensorMeta and primitive parameters
-        rpc::RpcRequestHeader header{};
-        header.session_id = rpc::session_id_t{1};
-        header.request_id = rpc::request_id_t{2};
-        header.function_id = rpc::function_id_t{5002};
-        header.workflow_id = rpc::utils::workflow_id_t{0};
-        header.hlc.TickLocal();
-
-        int batch_size = 256;
-        float threshold = 0.99f;
-
-        cista::offset::vector<ParamMeta> params;
-        params.push_back(
-          {ParamType::TENSOR_META, tm1, cista::offset::string{"tensor1"}});
-        params.push_back(
-          {ParamType::TENSOR_META, tm2, cista::offset::string{"tensor2"}});
-        params.push_back(
-          {ParamType::PRIMITIVE_INT32, rpc::PrimitiveValue{batch_size},
-           cista::offset::string{"batch_size"}});
-        params.push_back(
-          {ParamType::PRIMITIVE_FLOAT32, rpc::PrimitiveValue{threshold},
-           cista::offset::string{"threshold"}});
-        header.params = std::move(params);
-
-        // Invoke RPC
-        auto res = unifex::sync_wait(
-          worker.InvokeRpc<ucxx::UcxBufferVec, ucxx::UcxBufferVec>(
-            "server_worker_tm", std::move(header),
-            std::optional<ucxx::UcxBufferVec>(std::move(payload))));
-
-        ASSERT_TRUE(res.has_value()) << "UcxBufferVec large message RPC failed";
-        auto& [resp_header, resp_payload] = res.value();
-        ASSERT_EQ(resp_header->status, std::error_code{});
-        ASSERT_EQ(resp_payload.size(), 2);
-        ASSERT_EQ(resp_payload[0].size, data_size1);
-        ASSERT_EQ(resp_payload[1].size, data_size2);
-
-        // Verify payload data
-        float* resp_data1 = static_cast<float*>(resp_payload[0].data);
-        for (size_t i = 0; i < data_size1 / sizeof(float); ++i) {
-          ASSERT_EQ(resp_data1[i], static_cast<float>(i % 1000));
-        }
-
-        float* resp_data2 = static_cast<float*>(resp_payload[1].data);
-        for (size_t i = 0; i < data_size2 / sizeof(float); ++i) {
-          ASSERT_EQ(resp_data2[i], static_cast<float>((i + 5000) % 1000));
-        }
-
-        LOGX(
-          "[Client-TM] UcxBufferVec large message test passed (total size: "
-          "%zu bytes)\n",
-          data_size1 + data_size2);
-      }
-
-      // Test 4: Send UcxBufferVec, return UcxBuffer
-      {
-        LOGX("[Client-TM] Testing UcxBufferVec -> UcxBuffer conversion\n");
-
-        // Create TensorMeta for multiple tensors
-        TensorMeta tm1{};
-        tm1.device = {kDLCPU, 0};
-        tm1.ndim = 1;
-        tm1.dtype = {kDLInt, 32, 1};
-        tm1.shape = cista::offset::vector<int64_t>{1024};
-        tm1.strides = cista::offset::vector<int64_t>{1};
-        tm1.byte_offset = 0;
-
-        TensorMeta tm2{};
-        tm2.device = {kDLCPU, 0};
-        tm2.ndim = 1;
-        tm2.dtype = {kDLInt, 32, 1};
-        tm2.shape = cista::offset::vector<int64_t>{512};
-        tm2.strides = cista::offset::vector<int64_t>{1};
-        tm2.byte_offset = 0;
-
-        // Calculate payload sizes from TensorMeta
-        size_t data_size1 = rpc::utils::CalculateTensorSize(tm1);
-        size_t data_size2 = rpc::utils::CalculateTensorSize(tm2);
-
-        // Create payload buffer vec
-        ucxx::UcxBufferVec payload(
-          *mr_, ucx_memory_type::HOST, {data_size1, data_size2});
-
-        // Fill with test data
-        int32_t* data1 = static_cast<int32_t*>(payload[0].data);
-        for (size_t i = 0; i < data_size1 / sizeof(int32_t); ++i) {
-          data1[i] = static_cast<int32_t>(i);
-        }
-
-        int32_t* data2 = static_cast<int32_t*>(payload[1].data);
-        for (size_t i = 0; i < data_size2 / sizeof(int32_t); ++i) {
-          data2[i] = static_cast<int32_t>(i + 2000);
-        }
-
-        // Create request header
-        rpc::RpcRequestHeader header{};
-        header.session_id = rpc::session_id_t{1};
-        header.request_id = rpc::request_id_t{3};
-        header.function_id = rpc::function_id_t{5003};
-        header.workflow_id = rpc::utils::workflow_id_t{0};
-        header.hlc.TickLocal();
-
-        int batch_size = 64;
-        float threshold = 0.85f;
-
-        cista::offset::vector<ParamMeta> params;
-        params.push_back(
-          {ParamType::TENSOR_META, tm1, cista::offset::string{"tensor1"}});
-        params.push_back(
-          {ParamType::TENSOR_META, tm2, cista::offset::string{"tensor2"}});
-        params.push_back(
-          {ParamType::PRIMITIVE_INT32, rpc::PrimitiveValue{batch_size},
-           cista::offset::string{"batch_size"}});
-        params.push_back(
-          {ParamType::PRIMITIVE_FLOAT32, rpc::PrimitiveValue{threshold},
-           cista::offset::string{"threshold"}});
-        header.params = std::move(params);
-
-        // Invoke RPC: UcxBufferVec -> UcxBuffer
-        auto res = unifex::sync_wait(
-          worker.InvokeRpc<ucxx::UcxBufferVec, ucxx::UcxBuffer>(
-            "server_worker_tm", std::move(header),
-            std::optional<ucxx::UcxBufferVec>(std::move(payload))));
-
-        ASSERT_TRUE(res.has_value()) << "UcxBufferVec -> UcxBuffer RPC failed";
-        auto& [resp_header, resp_payload] = res.value();
-        ASSERT_EQ(resp_header->status, std::error_code{});
-        ASSERT_EQ(resp_payload.size(), data_size1 + data_size2);
-
-        // Verify response has TensorMeta and primitive parameters
-        ASSERT_GE(resp_header->results.size(), 3);
-        ASSERT_EQ(resp_header->results[0].type, ParamType::TENSOR_META);
-
-        // Verify int parameter
-        ASSERT_EQ(resp_header->results[1].type, ParamType::PRIMITIVE_INT32);
-        const auto& resp_batch_size =
-          cista::get<rpc::PrimitiveValue>(resp_header->results[1].value);
-        ASSERT_EQ(cista::get<int32_t>(resp_batch_size), batch_size);
-
-        // Verify float parameter
-        ASSERT_EQ(resp_header->results[2].type, ParamType::PRIMITIVE_FLOAT32);
-        const auto& resp_threshold =
-          cista::get<rpc::PrimitiveValue>(resp_header->results[2].value);
-        ASSERT_FLOAT_EQ(cista::get<float>(resp_threshold), threshold);
-
-        // Verify payload data (concatenated)
-        int32_t* resp_data = static_cast<int32_t*>(resp_payload.data());
-        for (size_t i = 0; i < data_size1 / sizeof(int32_t); ++i) {
-          ASSERT_EQ(resp_data[i], static_cast<int32_t>(i));
-        }
-        for (size_t i = 0; i < data_size2 / sizeof(int32_t); ++i) {
-          ASSERT_EQ(
-            resp_data[data_size1 / sizeof(int32_t) + i],
-            static_cast<int32_t>(i + 2000));
-        }
-
-        LOGX("[Client-TM] UcxBufferVec -> UcxBuffer test passed\n");
-      }
-
-      // Test 5: Send UcxBuffer, return UcxBufferVec
-      {
-        LOGX("[Client-TM] Testing UcxBuffer -> UcxBufferVec conversion\n");
-
-        // Create TensorMeta
-        TensorMeta tm{};
-        tm.device = {kDLCPU, 0};
-        tm.ndim = 1;
-        tm.dtype = {kDLFloat, 32, 1};
-        tm.shape = cista::offset::vector<int64_t>{2048};
-        tm.strides = cista::offset::vector<int64_t>{1};
-        tm.byte_offset = 0;
-
-        // Calculate payload size from TensorMeta
-        size_t data_size = rpc::utils::CalculateTensorSize(tm);
-
-        // Create payload buffer
-        ucxx::UcxBuffer payload(*mr_, ucx_memory_type::HOST, data_size);
-        // Fill with test data
-        float* data_ptr = static_cast<float*>(payload.data());
-        for (size_t i = 0; i < data_size / sizeof(float); ++i) {
-          data_ptr[i] = static_cast<float>(i);
-        }
-
-        // Create request header
-        rpc::RpcRequestHeader header{};
-        header.session_id = rpc::session_id_t{1};
-        header.request_id = rpc::request_id_t{4};
-        header.function_id = rpc::function_id_t{5004};
-        header.workflow_id = rpc::utils::workflow_id_t{0};
-        header.hlc.TickLocal();
-
-        constexpr int32_t num_splits = 4;
-        float scale = 2.5f;
-
-        cista::offset::vector<ParamMeta> params;
-        params.push_back(
-          {ParamType::TENSOR_META, tm, cista::offset::string{"tensor"}});
-        params.push_back(
-          {ParamType::PRIMITIVE_FLOAT32, rpc::PrimitiveValue{scale},
-           cista::offset::string{"scale"}});
-        header.params = std::move(params);
-
-        // Invoke RPC: UcxBuffer -> UcxBufferVec
-        auto res = unifex::sync_wait(
-          worker.InvokeRpc<ucxx::UcxBuffer, ucxx::UcxBufferVec>(
-            "server_worker_tm", std::move(header),
-            std::optional<ucxx::UcxBuffer>(std::move(payload))));
-
-        ASSERT_TRUE(res.has_value()) << "UcxBuffer -> UcxBufferVec RPC failed";
-        auto& [resp_header, resp_payload] = res.value();
-        ASSERT_EQ(resp_header->status, std::error_code{});
-        ASSERT_EQ(resp_payload.size(), static_cast<size_t>(num_splits));
-
-        // Verify total size matches
-        size_t total_resp_size = 0;
-        for (size_t i = 0; i < resp_payload.size(); ++i) {
-          total_resp_size += resp_payload[i].size;
-        }
-        ASSERT_EQ(total_resp_size, data_size);
-
-        // Verify response has TensorMeta and primitive parameters
-        // Should have num_splits TensorMetas + scale = num_splits + 1
-        ASSERT_GE(
-          resp_header->results.size(), static_cast<size_t>(num_splits + 1));
-        // Verify all TensorMetas
-        for (int32_t i = 0; i < num_splits; ++i) {
-          ASSERT_EQ(resp_header->results[i].type, ParamType::TENSOR_META);
-        }
-
-        // Verify float parameter (should be at index num_splits)
-        ASSERT_EQ(
-          resp_header->results[num_splits].type, ParamType::PRIMITIVE_FLOAT32);
-        const auto& resp_scale = cista::get<rpc::PrimitiveValue>(
-          resp_header->results[num_splits].value);
-        ASSERT_FLOAT_EQ(cista::get<float>(resp_scale), scale);
-
-        // Verify payload data (split and concatenated back should match
-        // original)
-        size_t offset = 0;
-        for (size_t split_idx = 0; split_idx < resp_payload.size();
-             ++split_idx) {
-          float* split_data = static_cast<float*>(resp_payload[split_idx].data);
-          size_t split_elements = resp_payload[split_idx].size / sizeof(float);
-          for (size_t i = 0; i < split_elements; ++i) {
-            ASSERT_EQ(split_data[i], static_cast<float>(offset + i));
+        auto device_ctx = std::make_unique<ucxx::UcxAutoDefaultDeviceContext>();
+        AxonWorker worker(
+          *mr_, "client_worker_tm", 4, std::chrono::milliseconds(10),
+          std::move(device_ctx));
+        ASSERT_TRUE(worker.StartClient().has_value())
+          << "[Client-TM] Failed to start client";
+        auto conn_result = worker.ConnectEndpoint(addr, "server_worker_tm");
+        ASSERT_TRUE(conn_result.has_value())
+          << "[Client-TM] Failed to connect to server";
+
+        // Test 1: UcxBuffer with TensorMeta
+        {
+          LOGX("[Client-TM] Testing UcxBuffer with TensorMeta\n");
+
+          // Create TensorMeta
+          TensorMeta tm{};
+          tm.device = {kDLCPU, 0};
+          tm.ndim = 1;
+          tm.dtype = {kDLFloat, 32, 1};
+          tm.shape = cista::offset::vector<int64_t>{1024};
+          tm.strides = cista::offset::vector<int64_t>{1};
+          tm.byte_offset = 0;
+
+          // Calculate payload size from TensorMeta
+          size_t data_size = rpc::utils::CalculateTensorSize(tm);
+
+          // Create payload buffer
+          ucxx::UcxBuffer payload(*mr_, ucx_memory_type::HOST, data_size);
+          // Fill with test data
+          float* data_ptr = static_cast<float*>(payload.data());
+          for (size_t i = 0; i < data_size / sizeof(float); ++i) {
+            data_ptr[i] = static_cast<float>(i);
           }
-          offset += split_elements;
+
+          // Create request header with TensorMeta and primitive parameters
+          rpc::RpcRequestHeader header{};
+          header.session_id = rpc::session_id_t{1};
+          header.request_id = rpc::request_id_t{0};
+          header.function_id = rpc::function_id_t{5001};
+          header.workflow_id = rpc::utils::workflow_id_t{0};
+          header.hlc.TickLocal();
+
+          int multiplier = 42;
+          float scale = 3.14f;
+
+          cista::offset::vector<ParamMeta> params;
+          params.push_back(
+            {ParamType::TENSOR_META, tm, cista::offset::string{"tensor"}});
+          params.push_back(
+            {ParamType::PRIMITIVE_INT32, rpc::PrimitiveValue{multiplier},
+             cista::offset::string{"multiplier"}});
+          params.push_back(
+            {ParamType::PRIMITIVE_FLOAT32, rpc::PrimitiveValue{scale},
+             cista::offset::string{"scale"}});
+          header.params = std::move(params);
+
+          // Invoke RPC
+          auto res = unifex::sync_wait(
+            worker.InvokeRpc<ucxx::UcxBuffer, ucxx::UcxBuffer>(
+              "server_worker_tm", std::move(header),
+              std::optional<ucxx::UcxBuffer>(std::move(payload))));
+
+          ASSERT_TRUE(res.has_value())
+            << "UcxBuffer RPC with TensorMeta failed";
+          auto& [resp_header, resp_payload] = res.value();
+          ASSERT_EQ(resp_header->status, std::error_code{});
+          ASSERT_EQ(resp_payload.size(), data_size);
+
+          // Verify response has TensorMeta and primitive parameters
+          ASSERT_GE(resp_header->results.size(), 3);
+          ASSERT_EQ(resp_header->results[0].type, ParamType::TENSOR_META);
+          const auto& resp_tm =
+            cista::get<TensorMeta>(resp_header->results[0].value);
+          ASSERT_EQ(resp_tm.ndim, 1);
+          ASSERT_EQ(resp_tm.shape.size(), 1);
+          ASSERT_EQ(resp_tm.shape[0], 1024);
+
+          // Verify int parameter
+          ASSERT_EQ(resp_header->results[1].type, ParamType::PRIMITIVE_INT32);
+          const auto& resp_multiplier =
+            cista::get<rpc::PrimitiveValue>(resp_header->results[1].value);
+          ASSERT_EQ(cista::get<int32_t>(resp_multiplier), multiplier);
+
+          // Verify float parameter
+          ASSERT_EQ(resp_header->results[2].type, ParamType::PRIMITIVE_FLOAT32);
+          const auto& resp_scale =
+            cista::get<rpc::PrimitiveValue>(resp_header->results[2].value);
+          ASSERT_FLOAT_EQ(cista::get<float>(resp_scale), scale);
+
+          // Verify payload data
+          float* resp_data = static_cast<float*>(resp_payload.data());
+          for (size_t i = 0; i < data_size / sizeof(float); ++i) {
+            ASSERT_EQ(resp_data[i], static_cast<float>(i));
+          }
+
+          LOGX("[Client-TM] UcxBuffer with TensorMeta test passed\n");
         }
 
-        LOGX("[Client-TM] UcxBuffer -> UcxBufferVec test passed\n");
+        // Test 2: UcxBufferVec with TensorMeta
+        {
+          LOGX("[Client-TM] Testing UcxBufferVec with TensorMeta\n");
+
+          // Create TensorMeta for multiple tensors
+          TensorMeta tm1{};
+          tm1.device = {kDLCPU, 0};
+          tm1.ndim = 1;
+          tm1.dtype = {kDLInt, 32, 1};
+          tm1.shape = cista::offset::vector<int64_t>{512};
+          tm1.strides = cista::offset::vector<int64_t>{1};
+          tm1.byte_offset = 0;
+
+          TensorMeta tm2{};
+          tm2.device = {kDLCPU, 0};
+          tm2.ndim = 1;
+          tm2.dtype = {kDLInt, 32, 1};
+          tm2.shape = cista::offset::vector<int64_t>{256};
+          tm2.strides = cista::offset::vector<int64_t>{1};
+          tm2.byte_offset = 0;
+
+          // Calculate payload sizes from TensorMeta
+          size_t data_size1 = rpc::utils::CalculateTensorSize(tm1);
+          size_t data_size2 = rpc::utils::CalculateTensorSize(tm2);
+
+          // Create payload buffer vec
+          ucxx::UcxBufferVec payload(
+            *mr_, ucx_memory_type::HOST, {data_size1, data_size2});
+
+          // Fill with test data
+          int32_t* data1 = static_cast<int32_t*>(payload[0].data);
+          for (size_t i = 0; i < data_size1 / sizeof(int32_t); ++i) {
+            data1[i] = static_cast<int32_t>(i);
+          }
+
+          int32_t* data2 = static_cast<int32_t*>(payload[1].data);
+          for (size_t i = 0; i < data_size2 / sizeof(int32_t); ++i) {
+            data2[i] = static_cast<int32_t>(i + 1000);
+          }
+
+          // Create request header with TensorMeta and primitive parameters
+          rpc::RpcRequestHeader header{};
+          header.session_id = rpc::session_id_t{1};
+          header.request_id = rpc::request_id_t{1};
+          header.function_id = rpc::function_id_t{5002};
+          header.workflow_id = rpc::utils::workflow_id_t{0};
+          header.hlc.TickLocal();
+
+          int batch_size = 128;
+          float threshold = 0.95f;
+
+          cista::offset::vector<ParamMeta> params;
+          // Use TENSOR_META_VEC instead of two separate TENSOR_META parameters
+          rpc::TensorMetaVecValue tensor_metas;
+          tensor_metas.push_back(tm1);
+          tensor_metas.push_back(tm2);
+          params.push_back(
+            {ParamType::TENSOR_META_VEC, tensor_metas,
+             cista::offset::string{"tensors"}});
+          params.push_back(
+            {ParamType::PRIMITIVE_INT32, rpc::PrimitiveValue{batch_size},
+             cista::offset::string{"batch_size"}});
+          params.push_back(
+            {ParamType::PRIMITIVE_FLOAT32, rpc::PrimitiveValue{threshold},
+             cista::offset::string{"threshold"}});
+          header.params = std::move(params);
+
+          // Invoke RPC
+          auto res = unifex::sync_wait(
+            worker.InvokeRpc<ucxx::UcxBufferVec, ucxx::UcxBufferVec>(
+              "server_worker_tm", std::move(header),
+              std::optional<ucxx::UcxBufferVec>(std::move(payload))));
+
+          ASSERT_TRUE(res.has_value())
+            << "UcxBufferVec RPC with TensorMeta failed";
+          auto& [resp_header, resp_payload] = res.value();
+          ASSERT_EQ(resp_header->status, std::error_code{});
+          ASSERT_EQ(resp_payload.size(), 2);
+          ASSERT_EQ(resp_payload[0].size, data_size1);
+          ASSERT_EQ(resp_payload[1].size, data_size2);
+
+          // Verify response has TensorMetaVec and primitive parameters
+          ASSERT_GE(resp_header->results.size(), 3);
+          ASSERT_EQ(resp_header->results[0].type, ParamType::TENSOR_META_VEC);
+
+          const auto& resp_tensor_metas =
+            cista::get<rpc::TensorMetaVecValue>(resp_header->results[0].value);
+          ASSERT_EQ(resp_tensor_metas.size(), 2);
+          ASSERT_EQ(resp_tensor_metas[0].ndim, 1);
+          ASSERT_EQ(resp_tensor_metas[0].shape[0], 512);
+          ASSERT_EQ(resp_tensor_metas[1].ndim, 1);
+          ASSERT_EQ(resp_tensor_metas[1].shape[0], 256);
+
+          // Verify int parameter
+          ASSERT_EQ(resp_header->results[1].type, ParamType::PRIMITIVE_INT32);
+          const auto& resp_batch_size =
+            cista::get<rpc::PrimitiveValue>(resp_header->results[1].value);
+          ASSERT_EQ(cista::get<int32_t>(resp_batch_size), batch_size);
+
+          // Verify float parameter
+          ASSERT_EQ(resp_header->results[2].type, ParamType::PRIMITIVE_FLOAT32);
+          const auto& resp_threshold =
+            cista::get<rpc::PrimitiveValue>(resp_header->results[2].value);
+          ASSERT_FLOAT_EQ(cista::get<float>(resp_threshold), threshold);
+
+          // Verify payload data
+          int32_t* resp_data1 = static_cast<int32_t*>(resp_payload[0].data);
+          for (size_t i = 0; i < data_size1 / sizeof(int32_t); ++i) {
+            ASSERT_EQ(resp_data1[i], static_cast<int32_t>(i));
+          }
+
+          int32_t* resp_data2 = static_cast<int32_t*>(resp_payload[1].data);
+          for (size_t i = 0; i < data_size2 / sizeof(int32_t); ++i) {
+            ASSERT_EQ(resp_data2[i], static_cast<int32_t>(i + 1000));
+          }
+
+          LOGX("[Client-TM] UcxBufferVec with TensorMeta test passed\n");
+        }
+
+        // Test 3: UcxBufferVec with large message
+        {
+          LOGX("[Client-TM] Testing UcxBufferVec with large message\n");
+
+          // Create large TensorMeta for multiple tensors
+          TensorMeta tm1{};
+          tm1.device = {kDLCPU, 0};
+          tm1.ndim = 1;
+          tm1.dtype = {kDLFloat, 32, 1};
+          // Large size: 5MB per tensor
+          size_t large_size1 = 5 * 1024 * 1024;
+          tm1.shape = cista::offset::vector<int64_t>{
+            static_cast<int64_t>(large_size1 / sizeof(float))};
+          tm1.strides = cista::offset::vector<int64_t>{1};
+          tm1.byte_offset = 0;
+
+          TensorMeta tm2{};
+          tm2.device = {kDLCPU, 0};
+          tm2.ndim = 1;
+          tm2.dtype = {kDLFloat, 32, 1};
+          // Large size: 3MB per tensor
+          size_t large_size2 = 3 * 1024 * 1024;
+          tm2.shape = cista::offset::vector<int64_t>{
+            static_cast<int64_t>(large_size2 / sizeof(float))};
+          tm2.strides = cista::offset::vector<int64_t>{1};
+          tm2.byte_offset = 0;
+
+          // Calculate payload sizes from TensorMeta
+          size_t data_size1 = rpc::utils::CalculateTensorSize(tm1);
+          size_t data_size2 = rpc::utils::CalculateTensorSize(tm2);
+
+          // Create payload buffer vec
+          ucxx::UcxBufferVec payload(
+            *mr_, ucx_memory_type::HOST, {data_size1, data_size2});
+
+          // Fill with test data
+          float* data1 = static_cast<float*>(payload[0].data);
+          for (size_t i = 0; i < data_size1 / sizeof(float); ++i) {
+            data1[i] = static_cast<float>(i % 1000);
+          }
+
+          float* data2 = static_cast<float*>(payload[1].data);
+          for (size_t i = 0; i < data_size2 / sizeof(float); ++i) {
+            data2[i] = static_cast<float>((i + 5000) % 1000);
+          }
+
+          // Create request header with TensorMeta and primitive parameters
+          rpc::RpcRequestHeader header{};
+          header.session_id = rpc::session_id_t{1};
+          header.request_id = rpc::request_id_t{2};
+          header.function_id = rpc::function_id_t{5002};
+          header.workflow_id = rpc::utils::workflow_id_t{0};
+          header.hlc.TickLocal();
+
+          int batch_size = 256;
+          float threshold = 0.99f;
+
+          cista::offset::vector<ParamMeta> params;
+          // Use TENSOR_META_VEC instead of two separate TENSOR_META parameters
+          rpc::TensorMetaVecValue tensor_metas;
+          tensor_metas.push_back(tm1);
+          tensor_metas.push_back(tm2);
+          params.push_back(
+            {ParamType::TENSOR_META_VEC, tensor_metas,
+             cista::offset::string{"tensors"}});
+          params.push_back(
+            {ParamType::PRIMITIVE_INT32, rpc::PrimitiveValue{batch_size},
+             cista::offset::string{"batch_size"}});
+          params.push_back(
+            {ParamType::PRIMITIVE_FLOAT32, rpc::PrimitiveValue{threshold},
+             cista::offset::string{"threshold"}});
+          header.params = std::move(params);
+
+          // Invoke RPC
+          auto res = unifex::sync_wait(
+            worker.InvokeRpc<ucxx::UcxBufferVec, ucxx::UcxBufferVec>(
+              "server_worker_tm", std::move(header),
+              std::optional<ucxx::UcxBufferVec>(std::move(payload))));
+
+          ASSERT_TRUE(res.has_value())
+            << "UcxBufferVec large message RPC failed";
+          auto& [resp_header, resp_payload] = res.value();
+          ASSERT_EQ(resp_header->status, std::error_code{});
+          ASSERT_EQ(resp_payload.size(), 2);
+          ASSERT_EQ(resp_payload[0].size, data_size1);
+          ASSERT_EQ(resp_payload[1].size, data_size2);
+
+          // Verify payload data
+          float* resp_data1 = static_cast<float*>(resp_payload[0].data);
+          for (size_t i = 0; i < data_size1 / sizeof(float); ++i) {
+            ASSERT_EQ(resp_data1[i], static_cast<float>(i % 1000));
+          }
+
+          float* resp_data2 = static_cast<float*>(resp_payload[1].data);
+          for (size_t i = 0; i < data_size2 / sizeof(float); ++i) {
+            ASSERT_EQ(resp_data2[i], static_cast<float>((i + 5000) % 1000));
+          }
+
+          LOGX(
+            "[Client-TM] UcxBufferVec large message test passed (total size: "
+            "%zu bytes)\n",
+            data_size1 + data_size2);
+        }
+
+        // Test 4: Send UcxBufferVec, return UcxBuffer
+        {
+          LOGX("[Client-TM] Testing UcxBufferVec -> UcxBuffer conversion\n");
+
+          // Create TensorMeta for multiple tensors
+          TensorMeta tm1{};
+          tm1.device = {kDLCPU, 0};
+          tm1.ndim = 1;
+          tm1.dtype = {kDLInt, 32, 1};
+          tm1.shape = cista::offset::vector<int64_t>{1024};
+          tm1.strides = cista::offset::vector<int64_t>{1};
+          tm1.byte_offset = 0;
+
+          TensorMeta tm2{};
+          tm2.device = {kDLCPU, 0};
+          tm2.ndim = 1;
+          tm2.dtype = {kDLInt, 32, 1};
+          tm2.shape = cista::offset::vector<int64_t>{512};
+          tm2.strides = cista::offset::vector<int64_t>{1};
+          tm2.byte_offset = 0;
+
+          // Calculate payload sizes from TensorMeta
+          size_t data_size1 = rpc::utils::CalculateTensorSize(tm1);
+          size_t data_size2 = rpc::utils::CalculateTensorSize(tm2);
+
+          // Create payload buffer vec
+          ucxx::UcxBufferVec payload(
+            *mr_, ucx_memory_type::HOST, {data_size1, data_size2});
+
+          // Fill with test data
+          int32_t* data1 = static_cast<int32_t*>(payload[0].data);
+          for (size_t i = 0; i < data_size1 / sizeof(int32_t); ++i) {
+            data1[i] = static_cast<int32_t>(i);
+          }
+
+          int32_t* data2 = static_cast<int32_t*>(payload[1].data);
+          for (size_t i = 0; i < data_size2 / sizeof(int32_t); ++i) {
+            data2[i] = static_cast<int32_t>(i + 2000);
+          }
+
+          // Create request header
+          rpc::RpcRequestHeader header{};
+          header.session_id = rpc::session_id_t{1};
+          header.request_id = rpc::request_id_t{3};
+          header.function_id = rpc::function_id_t{5003};
+          header.workflow_id = rpc::utils::workflow_id_t{0};
+          header.hlc.TickLocal();
+
+          int batch_size = 64;
+          float threshold = 0.85f;
+
+          cista::offset::vector<ParamMeta> params;
+          // Use TENSOR_META_VEC instead of two separate TENSOR_META parameters
+          rpc::TensorMetaVecValue tensor_metas;
+          tensor_metas.push_back(tm1);
+          tensor_metas.push_back(tm2);
+          params.push_back(
+            {ParamType::TENSOR_META_VEC, tensor_metas,
+             cista::offset::string{"tensors"}});
+          params.push_back(
+            {ParamType::PRIMITIVE_INT32, rpc::PrimitiveValue{batch_size},
+             cista::offset::string{"batch_size"}});
+          params.push_back(
+            {ParamType::PRIMITIVE_FLOAT32, rpc::PrimitiveValue{threshold},
+             cista::offset::string{"threshold"}});
+          header.params = std::move(params);
+
+          // Invoke RPC: UcxBufferVec -> UcxBuffer
+          auto res = unifex::sync_wait(
+            worker.InvokeRpc<ucxx::UcxBufferVec, ucxx::UcxBuffer>(
+              "server_worker_tm", std::move(header),
+              std::optional<ucxx::UcxBufferVec>(std::move(payload))));
+
+          ASSERT_TRUE(res.has_value())
+            << "UcxBufferVec -> UcxBuffer RPC failed";
+          auto& [resp_header, resp_payload] = res.value();
+          ASSERT_EQ(resp_header->status, std::error_code{});
+          ASSERT_EQ(resp_payload.size(), data_size1 + data_size2);
+
+          // Verify response has TensorMeta and primitive parameters
+          ASSERT_GE(resp_header->results.size(), 3);
+          ASSERT_EQ(resp_header->results[0].type, ParamType::TENSOR_META);
+
+          // Verify int parameter
+          ASSERT_EQ(resp_header->results[1].type, ParamType::PRIMITIVE_INT32);
+          const auto& resp_batch_size =
+            cista::get<rpc::PrimitiveValue>(resp_header->results[1].value);
+          ASSERT_EQ(cista::get<int32_t>(resp_batch_size), batch_size);
+
+          // Verify float parameter
+          ASSERT_EQ(resp_header->results[2].type, ParamType::PRIMITIVE_FLOAT32);
+          const auto& resp_threshold =
+            cista::get<rpc::PrimitiveValue>(resp_header->results[2].value);
+          ASSERT_FLOAT_EQ(cista::get<float>(resp_threshold), threshold);
+
+          // Verify payload data (concatenated)
+          int32_t* resp_data = static_cast<int32_t*>(resp_payload.data());
+          for (size_t i = 0; i < data_size1 / sizeof(int32_t); ++i) {
+            ASSERT_EQ(resp_data[i], static_cast<int32_t>(i));
+          }
+          for (size_t i = 0; i < data_size2 / sizeof(int32_t); ++i) {
+            ASSERT_EQ(
+              resp_data[data_size1 / sizeof(int32_t) + i],
+              static_cast<int32_t>(i + 2000));
+          }
+
+          LOGX("[Client-TM] UcxBufferVec -> UcxBuffer test passed\n");
+        }
+
+        // Test 5: Send UcxBuffer, return UcxBufferVec
+        {
+          LOGX("[Client-TM] Testing UcxBuffer -> UcxBufferVec conversion\n");
+
+          // Create TensorMeta
+          TensorMeta tm{};
+          tm.device = {kDLCPU, 0};
+          tm.ndim = 1;
+          tm.dtype = {kDLFloat, 32, 1};
+          tm.shape = cista::offset::vector<int64_t>{2048};
+          tm.strides = cista::offset::vector<int64_t>{1};
+          tm.byte_offset = 0;
+
+          // Calculate payload size from TensorMeta
+          size_t data_size = rpc::utils::CalculateTensorSize(tm);
+
+          // Create payload buffer
+          ucxx::UcxBuffer payload(*mr_, ucx_memory_type::HOST, data_size);
+          // Fill with test data
+          float* data_ptr = static_cast<float*>(payload.data());
+          for (size_t i = 0; i < data_size / sizeof(float); ++i) {
+            data_ptr[i] = static_cast<float>(i);
+          }
+
+          // Create request header
+          rpc::RpcRequestHeader header{};
+          header.session_id = rpc::session_id_t{1};
+          header.request_id = rpc::request_id_t{4};
+          header.function_id = rpc::function_id_t{5004};
+          header.workflow_id = rpc::utils::workflow_id_t{0};
+          header.hlc.TickLocal();
+
+          constexpr int32_t num_splits = 4;
+          float scale = 2.5f;
+
+          cista::offset::vector<ParamMeta> params;
+          params.push_back(
+            {ParamType::TENSOR_META, tm, cista::offset::string{"tensor"}});
+          params.push_back(
+            {ParamType::PRIMITIVE_FLOAT32, rpc::PrimitiveValue{scale},
+             cista::offset::string{"scale"}});
+          header.params = std::move(params);
+
+          // Invoke RPC: UcxBuffer -> UcxBufferVec
+          auto res = unifex::sync_wait(
+            worker.InvokeRpc<ucxx::UcxBuffer, ucxx::UcxBufferVec>(
+              "server_worker_tm", std::move(header),
+              std::optional<ucxx::UcxBuffer>(std::move(payload))));
+
+          ASSERT_TRUE(res.has_value())
+            << "UcxBuffer -> UcxBufferVec RPC failed: no response";
+          auto& [resp_header, resp_payload] = res.value();
+          if (std::error_code(resp_header->status)) {
+            std::string error_msg = resp_header->status.GetErrorMessage();
+            if (
+              !resp_header->results.empty()
+              && resp_header->results[0].type == rpc::ParamType::STRING) {
+              const auto& error_str =
+                cista::get<data::string>(resp_header->results[0].value);
+              if (!error_str.empty()) {
+                error_msg = std::string(error_str.data(), error_str.size());
+              }
+            }
+            LOGX(
+              "[Client-TM] RPC failed with status: %s, error: %s\n",
+              resp_header->status.GetErrorMessage().c_str(), error_msg.c_str());
+            ASSERT_EQ(resp_header->status, std::error_code{})
+              << "UcxBuffer -> UcxBufferVec RPC failed: " << error_msg;
+          }
+          ASSERT_EQ(resp_payload.size(), static_cast<size_t>(num_splits));
+
+          // Verify total size matches
+          size_t total_resp_size = 0;
+          for (size_t i = 0; i < resp_payload.size(); ++i) {
+            total_resp_size += resp_payload[i].size;
+          }
+          ASSERT_EQ(total_resp_size, data_size);
+
+          // Verify response has TensorMetaVec and primitive parameters
+          // Should have TENSOR_META_VEC + scale = 2
+          ASSERT_GE(resp_header->results.size(), 2);
+          // Verify TensorMetaVec
+          ASSERT_EQ(resp_header->results[0].type, ParamType::TENSOR_META_VEC);
+          const auto& resp_tensor_metas =
+            cista::get<rpc::TensorMetaVecValue>(resp_header->results[0].value);
+          ASSERT_EQ(resp_tensor_metas.size(), static_cast<size_t>(num_splits));
+
+          // Verify float parameter (should be at index 1)
+          ASSERT_EQ(resp_header->results[1].type, ParamType::PRIMITIVE_FLOAT32);
+          const auto& resp_scale =
+            cista::get<rpc::PrimitiveValue>(resp_header->results[1].value);
+          ASSERT_FLOAT_EQ(cista::get<float>(resp_scale), scale);
+
+          // Verify TensorMetaVec contents
+          for (size_t i = 0; i < resp_tensor_metas.size(); ++i) {
+            ASSERT_EQ(resp_tensor_metas[i].ndim, 1);
+            size_t expected_elements = resp_payload[i].size / sizeof(float);
+            ASSERT_EQ(
+              resp_tensor_metas[i].shape[0],
+              static_cast<int64_t>(expected_elements));
+          }
+
+          // Verify payload data (split and concatenated back should match
+          // original)
+          size_t offset = 0;
+          for (size_t split_idx = 0; split_idx < resp_payload.size();
+               ++split_idx) {
+            float* split_data =
+              static_cast<float*>(resp_payload[split_idx].data);
+            size_t split_elements =
+              resp_payload[split_idx].size / sizeof(float);
+            for (size_t i = 0; i < split_elements; ++i) {
+              ASSERT_EQ(split_data[i], static_cast<float>(offset + i));
+            }
+            offset += split_elements;
+          }
+
+          LOGX("[Client-TM] UcxBuffer -> UcxBufferVec test passed\n");
+        }
+
+        worker.Stop();
       }
 
-      worker.Stop();
-    }
-
-    if (::testing::Test::HasFailure()) {
+      if (::testing::Test::HasFailure()) {
+        std::exit(1);
+      }
+      std::exit(0);
+    } catch (const errors::AxonErrorException& e) {
+      LOGX(
+        "[Client-TM] Caught AxonErrorException: %s (status: %s)\n",
+        e.context().what.c_str(), e.context().status.GetErrorMessage().c_str());
+      std::exit(1);
+    } catch (const rpc::RpcException& e) {
+      LOGX(
+        "[Client-TM] Caught RpcException: %s (code: %s)\n", e.what(),
+        e.code().message().c_str());
+      std::exit(1);
+    } catch (const std::exception& e) {
+      LOGX("[Client-TM] Caught std::exception: %s\n", e.what());
+      std::exit(1);
+    } catch (...) {
+      LOGX("[Client-TM] Caught unknown exception\n");
       std::exit(1);
     }
-    std::exit(0);
   }
 
   // Parent process

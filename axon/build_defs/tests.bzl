@@ -21,18 +21,8 @@ def axon_tests():
         srcs = ["tests/axon_worker_test.cpp"],
         includes = ["include"],
         copts = ["-std=c++23"],
-        deps = [
-            ":axon_worker",
-            "@execution-ucx//ucx_context:ucx_memory_resource_lib",
-            "@googletest//:gtest_main",
-        ],
-    )
-
-    cc_test(
-        name = "axon_worker_integration_test",
-        srcs = ["tests/axon_worker_test.cpp"],
-        includes = ["include"],
-        copts = ["-std=c++23"],
+        size = "medium",
+        timeout = "moderate",
         deps = [
             ":axon_worker",
             "@execution-ucx//ucx_context:ucx_memory_resource_lib",
@@ -84,4 +74,3 @@ def axon_tests():
             "@googletest//:gtest_main",
         ],
     )
-

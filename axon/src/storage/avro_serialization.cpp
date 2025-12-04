@@ -18,10 +18,8 @@ limitations under the License.
 #include <cista.h>
 
 #include <memory>
-#include <sstream>
 #include <stdexcept>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -253,16 +251,6 @@ avro::GenericDatum AvroSerialization::Serialize(
   avro::GenericDatum& payload_union = root.field("payload");
   ConvertPayloadToAvro(request.payload, payload_union, mr);
 
-  // Tensor param indices
-  avro::GenericArray& indices_array =
-    root.field("tensor_param_indices").value<avro::GenericArray>();
-  auto& indices_array_raw = indices_array.value();
-  indices_array_raw.reserve(request.GetTensorParamIndices().size());
-  for (const auto& index : request.GetTensorParamIndices()) {
-    indices_array_raw.push_back(
-      avro::GenericDatum(static_cast<int64_t>(index)));
-  }
-
   return datum;
 }
 
@@ -284,19 +272,12 @@ std::shared_ptr<AxonRequest> AvroSerialization::Deserialize(
   const avro::GenericDatum& payload_union = root.field("payload");
   PayloadVariant payload = ConvertAvroToPayloadVariant(payload_union, mr);
 
-  // Tensor param indices
-  const auto& indices_array_datum = root.field("tensor_param_indices");
-  const auto& indices_array =
-    indices_array_datum.value<const avro::GenericArray>().value();
-  std::vector<size_t> tensor_param_indices;
-  tensor_param_indices.reserve(indices_array.size());
-  for (const auto& index_datum : indices_array) {
-    tensor_param_indices.push_back(
-      static_cast<size_t>(index_datum.value<int64_t>()));
-  }
+  // Extract tensor param index from header parameters
+  std::optional<size_t> tensor_param_index =
+    utils::ExtractTensorParamIndex(header.params);
 
   return std::make_shared<AxonRequest>(
-    std::move(header), std::move(payload), std::move(tensor_param_indices));
+    std::move(header), std::move(payload), tensor_param_index);
 }
 
 // Helper function implementations
@@ -440,6 +421,53 @@ void ConvertParamMetaToAvro(
         tensor_rec.field("strides").value<avro::GenericArray>().value();
       strides_array.reserve(arg.strides.size());
       for (auto v : arg.strides) strides_array.push_back(avro::GenericDatum(v));
+    } break;
+    case ParamType::TENSOR_META_VEC: {
+      value_union.selectBranch(13);
+      auto& tensor_vec_rec = value_union.value<avro::GenericRecord>();
+      const auto& arg_vec = cista::get<rpc::TensorMetaVecValue>(param.value);
+      auto& tensor_array =
+        tensor_vec_rec.field("items").value<avro::GenericArray>().value();
+      tensor_array.reserve(arg_vec.size());
+      for (const auto& tensor_meta : arg_vec) {
+        avro::GenericDatum tensor_datum(tensor_vec_rec.field("items")
+                                          .value<avro::GenericArray>()
+                                          .schema()
+                                          ->leafAt(0));
+        auto& tensor_rec = tensor_datum.value<avro::GenericRecord>();
+
+        auto& device_rec =
+          tensor_rec.field("device").value<avro::GenericRecord>();
+        device_rec.field("device_type").value<int>() =
+          tensor_meta.device.device_type;
+        device_rec.field("device_id").value<int>() =
+          tensor_meta.device.device_id;
+
+        tensor_rec.field("ndim").value<int>() = tensor_meta.ndim;
+
+        auto& dtype_rec =
+          tensor_rec.field("dtype").value<avro::GenericRecord>();
+        dtype_rec.field("code").value<int>() = tensor_meta.dtype.code;
+        dtype_rec.field("bits").value<int>() = tensor_meta.dtype.bits;
+        dtype_rec.field("lanes").value<int>() = tensor_meta.dtype.lanes;
+
+        tensor_rec.field("byte_offset").value<int64_t>() =
+          tensor_meta.byte_offset;
+
+        auto& shape_array =
+          tensor_rec.field("shape").value<avro::GenericArray>().value();
+        shape_array.reserve(tensor_meta.shape.size());
+        for (auto v : tensor_meta.shape)
+          shape_array.push_back(avro::GenericDatum(v));
+
+        auto& strides_array =
+          tensor_rec.field("strides").value<avro::GenericArray>().value();
+        strides_array.reserve(tensor_meta.strides.size());
+        for (auto v : tensor_meta.strides)
+          strides_array.push_back(avro::GenericDatum(v));
+
+        tensor_array.push_back(tensor_datum);
+      }
     } break;
     default:
       throw std::runtime_error(
@@ -675,6 +703,54 @@ ParamMeta ConvertAvroToParamMeta(const avro::GenericRecord& param_rec) {
         tm.strides.push_back(item.value<int64_t>());
       }
       param.value = tm;
+      break;
+    }
+    case ParamType::TENSOR_META_VEC: {
+      const auto& tensor_vec_rec =
+        value_union.value<const avro::GenericRecord>();
+      const auto& tensor_array =
+        tensor_vec_rec.field("items").value<const avro::GenericArray>().value();
+      rpc::TensorMetaVecValue tensor_vec;
+      tensor_vec.reserve(tensor_array.size());
+      for (const auto& tensor_datum : tensor_array) {
+        const auto& tensor_rec =
+          tensor_datum.value<const avro::GenericRecord>();
+        TensorMeta tm;
+
+        const auto& device_rec =
+          tensor_rec.field("device").value<const avro::GenericRecord>();
+        tm.device.device_type = static_cast<DLDeviceType>(
+          device_rec.field("device_type").value<int>());
+        tm.device.device_id = device_rec.field("device_id").value<int>();
+
+        tm.ndim = tensor_rec.field("ndim").value<int>();
+
+        const auto& dtype_rec =
+          tensor_rec.field("dtype").value<const avro::GenericRecord>();
+        tm.dtype.code =
+          static_cast<DLDataTypeCode>(dtype_rec.field("code").value<int>());
+        tm.dtype.bits = dtype_rec.field("bits").value<int>();
+        tm.dtype.lanes = dtype_rec.field("lanes").value<int>();
+
+        tm.byte_offset = tensor_rec.field("byte_offset").value<int64_t>();
+
+        const auto& shape_arr =
+          tensor_rec.field("shape").value<const avro::GenericArray>().value();
+        tm.shape.reserve(shape_arr.size());
+        for (const auto& item : shape_arr) {
+          tm.shape.push_back(item.value<int64_t>());
+        }
+
+        const auto& strides_arr =
+          tensor_rec.field("strides").value<const avro::GenericArray>().value();
+        tm.strides.reserve(strides_arr.size());
+        for (const auto& item : strides_arr) {
+          tm.strides.push_back(item.value<int64_t>());
+        }
+
+        tensor_vec.push_back(tm);
+      }
+      param.value = tensor_vec;
       break;
     }
     default:

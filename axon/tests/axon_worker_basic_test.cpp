@@ -45,9 +45,9 @@ TEST_F(AxonWorkerBasicTest, StartStop) {
     *mr_, "test_worker", 2, std::chrono::milliseconds(10),
     std::move(device_ctx));
 
-  EXPECT_EQ(worker.Start(), std::error_code{});
+  EXPECT_TRUE(worker.Start().has_value());
   // Start() is idempotent.
-  EXPECT_EQ(worker.Start(), std::error_code{});
+  EXPECT_TRUE(worker.Start().has_value());
 
   worker.Stop();
   // Stop() is also idempotent and should not crash.
@@ -62,12 +62,12 @@ TEST_F(AxonWorkerBasicTest, StartServerClientIdempotent) {
     std::move(device_ctx));
 
   // Server start is idempotent.
-  EXPECT_EQ(worker.StartServer(), std::error_code{});
-  EXPECT_EQ(worker.StartServer(), std::error_code{});
+  EXPECT_TRUE(worker.StartServer().has_value());
+  EXPECT_TRUE(worker.StartServer().has_value());
 
   // Client start is idempotent.
-  EXPECT_EQ(worker.StartClient(), std::error_code{});
-  EXPECT_EQ(worker.StartClient(), std::error_code{});
+  EXPECT_TRUE(worker.StartClient().has_value());
+  EXPECT_TRUE(worker.StartClient().has_value());
 
   worker.StopServer();
   worker.StopClient();
@@ -111,7 +111,8 @@ TEST_F(AxonWorkerBasicTest, RegisterEndpointSignaturesInvalidBlob) {
 
   ASSERT_FALSE(result.has_value());
   EXPECT_EQ(
-    result.error(), std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT));
+    std::error_code(result.error().status),
+    std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT));
 }
 
 TEST_F(AxonWorkerBasicTest, RegisterEndpointSignaturesWorkerAlreadyRegistered) {
@@ -211,7 +212,7 @@ TEST_F(AxonWorkerBasicTest, ErrorObserversNoCrash) {
   worker.SetClientErrorObserver(std::move(client_observer));
 
   // Start only client side; connect with invalid address to hit error path.
-  EXPECT_EQ(worker.StartClient(), std::error_code{});
+  EXPECT_TRUE(worker.StartClient().has_value());
   std::vector<std::byte> empty_addr;
 
   // The assertion failure in ucx_am_context::connect_sender will trigger

@@ -194,8 +194,6 @@ constexpr ParamType get_param_type() {
     || std::is_same_v<DecayedT, std::string>
     || std::is_same_v<DecayedT, std::string_view>
     || std::is_same_v<DecayedT, const char*>;
-  constexpr bool is_vector_convertable =
-    is_data_vector<DecayedT>::value || is_std_vector<DecayedT>::value;
 
   // Payloads are handled separately and not serialized as parameters.
   if constexpr (is_payload_v<DecayedT>) {
@@ -210,9 +208,22 @@ constexpr ParamType get_param_type() {
     return ParamType::STRING;
   } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
     return ParamType::TENSOR_META;
-  } else if constexpr (is_vector_convertable) {
+  } else if constexpr (is_data_vector<DecayedT>::value) {
     using ElementType = typename DecayedT::value_type;
-    return get_vector_param_info<ElementType>().type;
+    // Special case: data::vector<TensorMeta> is TensorMetaVec
+    if constexpr (std::is_same_v<ElementType, TensorMeta>) {
+      return ParamType::TENSOR_META_VEC;
+    } else {
+      return get_vector_param_info<ElementType>().type;
+    }
+  } else if constexpr (is_std_vector<DecayedT>::value) {
+    using ElementType = typename DecayedT::value_type;
+    // Special case: std::vector<TensorMeta> is TensorMetaVec
+    if constexpr (std::is_same_v<ElementType, TensorMeta>) {
+      return ParamType::TENSOR_META_VEC;
+    } else {
+      return get_vector_param_info<ElementType>().type;
+    }
   } else {
     // Types like RpcRequestHeader, RpcResponseBuilder, and any other
     // unsupported types will fall through to here.

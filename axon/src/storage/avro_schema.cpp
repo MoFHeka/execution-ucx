@@ -124,6 +124,19 @@ const std::string_view AvroSchema::kArrivalRequestSchema = R"({
                           { "name": "shape", "type": { "type": "array", "items": "long" } },
                           { "name": "strides", "type": { "type": "array", "items": "long" } }
                         ]
+                      },
+                      {
+                        "name": "TensorMetaVec",
+                        "type": "record",
+                        "fields": [
+                          {
+                            "name": "items",
+                            "type": {
+                              "type": "array",
+                              "items": "TensorMeta"
+                            }
+                          }
+                        ]
                       }
                     ]
                   },
@@ -158,10 +171,6 @@ const std::string_view AvroSchema::kArrivalRequestSchema = R"({
         },
         { "type": "array", "items": "UcxBuffer" }
       ]
-    },
-    {
-      "name": "tensor_param_indices",
-      "type": { "type": "array", "items": "long" }
     }
   ]
 })";

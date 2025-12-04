@@ -20,7 +20,9 @@ limitations under the License.
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <ranges>
+#include <stdexcept>
 #include <vector>
 
 #include "axon/utils/tensor.hpp"
@@ -46,26 +48,48 @@ constexpr bool IsUcxBufferVec =
 
 using AxonMessageID = uint64_t;
 
-// Helper function to find tensor parameter indices
-inline std::vector<size_t> ExtractTensorParamIndices(const auto& params) {
-  std::vector<size_t> tensor_indices;
+// Helper function to find tensor parameter index
+// Returns the index of the tensor parameter (either TENSOR_META or
+// TENSOR_META_VEC) Throws if there are zero or more than one tensor parameters
+inline std::optional<size_t> ExtractTensorParamIndex(const auto& params) {
+  std::optional<size_t> tensor_index;
   for (auto [i, param] : std::views::enumerate(params)) {
-    if (param.type == rpc::ParamType::TENSOR_META) {
-      tensor_indices.push_back(i);
+    if (
+      param.type == rpc::ParamType::TENSOR_META
+      || param.type == rpc::ParamType::TENSOR_META_VEC) {
+      if (tensor_index.has_value()) {
+        throw std::runtime_error(
+          "Multiple tensor parameters found. Only one TENSOR_META or "
+          "TENSOR_META_VEC parameter is allowed.");
+      }
+      tensor_index = i;
     }
   }
-  return tensor_indices;
+  return tensor_index;
 }
 
 inline std::vector<std::reference_wrapper<const rpc::TensorMeta>>
 ExtractTensorMetas(const auto& params) {
   std::vector<std::reference_wrapper<const rpc::TensorMeta>> tensor_metas;
-  for (auto& param : params) {
+  // Find the first TENSOR_META or TENSOR_META_VEC parameter
+  for (const auto& param : params) {
     if (param.type == rpc::ParamType::TENSOR_META) {
+      // Single TensorMeta: return vector with one element
       tensor_metas.push_back(
         std::ref(cista::get<rpc::TensorMeta>(param.value)));
+      return tensor_metas;
+    } else if (param.type == rpc::ParamType::TENSOR_META_VEC) {
+      // TensorMetaVecValue: return all metas from the vector
+      const auto& tensor_meta_vec =
+        cista::get<rpc::TensorMetaVecValue>(param.value);
+      tensor_metas.reserve(tensor_meta_vec.size());
+      for (const auto& meta : tensor_meta_vec) {
+        tensor_metas.push_back(std::ref(meta));
+      }
+      return tensor_metas;
     }
   }
+  // No tensor meta parameter found
   return tensor_metas;
 }
 
@@ -77,7 +101,7 @@ struct AxonMessage {
   AxonMessage(HeaderType&& msg_header, PayloadVariant&& payload_data);
   AxonMessage(
     HeaderType&& msg_header, PayloadVariant&& payload_data,
-    std::vector<size_t>&& tensor_param_indices);
+    std::optional<size_t> tensor_param_index);
 
   AxonMessage(const AxonMessage&) = delete;
   AxonMessage& operator=(const AxonMessage&) = delete;
@@ -85,7 +109,7 @@ struct AxonMessage {
   AxonMessage& operator=(AxonMessage&&) = default;
 
   size_t GetTensorCount() const;
-  const std::vector<size_t>& GetTensorParamIndices() const;
+  std::optional<size_t> GetTensorParamIndex() const;
   // It's only a dlpack-like tensor view, not a copy.
   utils::Tensor<> GetTensor(size_t tensor_index);
   // It's only a dlpack-like tensor view, not a copy.
@@ -94,7 +118,7 @@ struct AxonMessage {
   PayloadVariant& GetPayload();
 
  private:
-  std::vector<size_t> tensor_param_indices_;
+  std::optional<size_t> tensor_param_index_;
 };
 
 using ArrivalRequest = AxonMessage<RpcRequestHeader>;
