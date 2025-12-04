@@ -54,8 +54,7 @@ struct LifecycleStatusHandlerFacade
         std::shared_ptr<utils::AxonRequest>,
         utils::AxonMessageID /*axon worker precomputed hash id*/)>::build {};
 
-using LifecycleStatusHandlerView =
-  pro::proxy_view<LifecycleStatusHandlerFacade>;
+using LifecycleStatusHandler = pro::proxy<LifecycleStatusHandlerFacade>;
 
 /**
  * @brief A transient message lifecycle policy.
@@ -81,7 +80,7 @@ struct TransientPolicy {};
  * requirements can be used as RetentionPolicy and invoked to determine the
  * lifecycle status.
  */
-using RetentionPolicy = LifecycleStatusHandlerView;
+using RetentionPolicy = LifecycleStatusHandler;
 
 /*
 Another implementation of RetentionPolicy that is a standalone struct

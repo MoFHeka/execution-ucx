@@ -171,53 +171,16 @@ cista::byte_buf AxonWorker::GetLocalSignatures() const {
   return dispatcher_.GetAllSignatures();
 }
 
-auto AxonWorker::ConnectEndpointSender_(
-  const std::vector<std::byte>& ucp_address, const std::string& worker_name) {
-  return ucxx::connect_endpoint(client_ctx_->get_scheduler(), ucp_address)
-         | unifex::then([this, worker_name](uint64_t conn_id) {
-             AssociateConnection(worker_name, conn_id);
-             return std::expected<uint64_t, std::error_code>(conn_id);
-           })
-         | unifex::upon_error(
-           [this](std::variant<std::error_code, std::exception_ptr>&& error)
-             -> std::expected<uint64_t, std::error_code> {
-             std::error_code ec;
-             std::string what;
-             if (std::holds_alternative<std::error_code>(error)) {
-               ec = std::get<std::error_code>(error);
-               what = std::format("ConnectEndpoint failed: {}", ec.message());
-             } else {
-               try {
-                 std::rethrow_exception(std::get<std::exception_ptr>(error));
-               } catch (const std::exception& e) {
-                 ec = std::make_error_code(errors::AxonErrc::CoordinatorError);
-                 what = std::format("ConnectEndpoint failed: {}", e.what());
-               }
-             }
-             ReportClientError_({
-               .conn_id = 0,
-               .session_id = 0,
-               .request_id = 0,
-               .function_id = 0,
-               .status = rpc::RpcStatus(ec),
-               .what = std::move(what),
-               .hlc = hlc_,
-               .workflow_id = 0,
-             });
-             return std::unexpected(ec);
-           });
-}
-
 std::expected<uint64_t, std::error_code> AxonWorker::ConnectEndpoint(
   const std::vector<std::byte>& ucp_address, const std::string& worker_name) {
-  auto res =
-    ConnectEndpointSender_(ucp_address, worker_name) | unifex::sync_wait();
-  return res.value();
-}
-
-auto AxonWorker::ConnectEndpointAsync(
-  const std::vector<std::byte>& ucp_address, const std::string& worker_name) {
-  return ConnectEndpointSender_(ucp_address, worker_name);
+  try {
+    auto res =
+      ConnectEndpointAsync(ucp_address, worker_name) | unifex::sync_wait();
+    return res.value();
+  } catch (const std::exception& e) {
+    return std::unexpected(
+      std::make_error_code(errors::AxonErrc::CoordinatorError));
+  }
 }
 
 void AxonWorker::AssociateConnection(
@@ -342,78 +305,65 @@ AXON_INVOKE_RPC_IMPL(
 
 #undef AXON_INVOKE_RPC_IMPL
 
-auto AxonWorker::RegisterEndpointSignaturesSender_(
-  const std::string& worker_name, const cista::byte_buf& signatures_blob) {
-  return unifex::just_from([this, worker_name, signatures_blob]() {
-    // Try to deserialize the remote worker signatures. Any failure (including
-    // overflow) is treated as INVALID_ARGUMENT.
-    const data::vector<rpc::RpcFunctionSignature>* signatures = nullptr;
-    try {
-      signatures = cista::deserialize<
-        data::vector<rpc::RpcFunctionSignature>, rpc::utils::SerializerMode>(
-        signatures_blob);
-    } catch (const std::exception&) {
-      // TODO(He Jia): maybe report error
-      return std::expected<WorkerKey, std::error_code>(
-        std::unexpected(std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT)));
-    }
-
-    if (signatures == nullptr) {
-      // TODO(He Jia): maybe report error
-      return std::expected<WorkerKey, std::error_code>(
-        std::unexpected(std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT)));
-    }
-
-    auto key_it = remote_workers_slot_.find(worker_name);
-    if (key_it == remote_workers_slot_.end()) {
-      return std::expected<WorkerKey, std::error_code>(std::unexpected(
-        std::make_error_code(errors::AxonErrc::WorkerNotFound)));
-    }
-
-    if (auto* worker_info = remote_workers_.access(key_it->second)) {
-      for (auto& sig : *signatures) {
-        worker_info->signatures[sig.id] = sig;
-      }
-    } else {
-      return std::expected<WorkerKey, std::error_code>(std::unexpected(
-        std::make_error_code(errors::AxonErrc::WorkerNotFound)));
-    }
-
-    return std::expected<WorkerKey, std::error_code>(key_it->second);
-  });
-}
-
 std::expected<AxonWorker::WorkerKey, std::error_code>
 AxonWorker::RegisterEndpointSignatures(
   const std::string& worker_name, const cista::byte_buf& signatures_blob) {
-  auto res = RegisterEndpointSignaturesSender_(worker_name, signatures_blob)
-             | unifex::sync_wait();
-  return res.value();
+  // Try to deserialize the remote worker signatures. Any failure (including
+  // overflow) is treated as INVALID_ARGUMENT.
+  const data::vector<rpc::RpcFunctionSignature>* signatures = nullptr;
+  try {
+    signatures = cista::deserialize<
+      data::vector<rpc::RpcFunctionSignature>, rpc::utils::SerializerMode>(
+      signatures_blob);
+  } catch (const std::exception&) {
+    // TODO(He Jia): maybe report error
+    return std::expected<WorkerKey, std::error_code>(
+      std::unexpected(std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT)));
+  }
+
+  if (signatures == nullptr) {
+    // TODO(He Jia): maybe report error
+    return std::expected<WorkerKey, std::error_code>(
+      std::unexpected(std::make_error_code(rpc::RpcErrc::INVALID_ARGUMENT)));
+  }
+
+  auto key_it = remote_workers_slot_.find(worker_name);
+  if (key_it == remote_workers_slot_.end()) {
+    return std::expected<WorkerKey, std::error_code>(
+      std::unexpected(std::make_error_code(errors::AxonErrc::WorkerNotFound)));
+  }
+
+  if (auto* worker_info = remote_workers_.access(key_it->second)) {
+    for (auto& sig : *signatures) {
+      worker_info->signatures[sig.id] = sig;
+    }
+  } else {
+    return std::expected<WorkerKey, std::error_code>(
+      std::unexpected(std::make_error_code(errors::AxonErrc::WorkerNotFound)));
+  }
+
+  return std::expected<WorkerKey, std::error_code>(key_it->second);
 }
 
-auto AxonWorker::RegisterEndpointSignaturesAsync(
-  const std::string& worker_name, const cista::byte_buf& signatures_blob) {
-  return RegisterEndpointSignaturesSender_(worker_name, signatures_blob);
-}
-
-template <typename ReceivedBufferT, typename MemPolicy, typename MsgLcPolicy>
+template <typename ReceivedBufferT, typename MemPolicyT, typename MsgLcPolicyT>
   requires rpc::is_payload_v<ReceivedBufferT>
-           && is_receiver_memory_policy_v<MemPolicy, ReceivedBufferT>
-           && is_message_lifecycle_policy_v<MsgLcPolicy>
+           && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
+           && is_message_lifecycle_policy_v<MsgLcPolicyT>
 void AxonWorker::RegisterFunction(
   rpc::function_id_t id, const data::string& name,
   const data::vector<rpc::ParamType>& param_types,
   const data::vector<rpc::ParamType>& return_types,
   rpc::PayloadType input_payload_type, rpc::PayloadType return_payload_type,
-  rpc::DynamicAsyncRpcFunction&& func, MemPolicy mem_policy,
-  MsgLcPolicy lc_policy) {
+  rpc::DynamicAsyncRpcFunction&& func, MemPolicyT mem_policy,
+  MsgLcPolicyT lc_policy) {
   dispatcher_.RegisterFunction(
     id, name, param_types, return_types, input_payload_type,
     return_payload_type, std::forward<rpc::DynamicAsyncRpcFunction>(func));
 
   registered_handlers_.emplace(
-    id, ServerMakeFullRequestHandler_<ReceivedBufferT, MemPolicy, MsgLcPolicy>(
-          mem_policy, lc_policy));
+    id,
+    ServerMakeFullRequestHandler_<ReceivedBufferT, MemPolicyT, MsgLcPolicyT>(
+      std::move(mem_policy), std::move(lc_policy)));
 }
 
 #define AXON_REGISTER_FUNCTION_TEMPLATE(PayloadT, MemPolicyT, LcPolicyT)       \
@@ -605,13 +555,13 @@ auto AxonWorker::ServerHandleSendErrorResponse_(
     server_ctx_->get_scheduler(), error_ctx.conn_id, std::move(am_data));
 }
 
-template <typename PayloadT, typename MsgLcPolicy>
+template <typename PayloadT, typename MsgLcPolicyT>
   requires(std::is_same_v<PayloadT, rpc::PayloadVariant>
            || rpc::is_payload_v<PayloadT>)
-          && is_message_lifecycle_policy_v<MsgLcPolicy>
+          && is_message_lifecycle_policy_v<MsgLcPolicyT>
 AxonWorker::AnySender AxonWorker::ServerDispatchAndManageLifecycle_(
   uint64_t conn_id, const rpc::RpcRequestHeader* req_header_ptr,
-  PayloadT&& payload, MsgLcPolicy lc_policy) {
+  PayloadT&& payload, MsgLcPolicyT lc_policy) {
   std::shared_ptr<std::string> func_name_ptr;
   if (server_metrics_observer_) {
     auto func_sig_opt = dispatcher_.GetSignature(req_header_ptr->function_id);
@@ -656,7 +606,7 @@ AxonWorker::AnySender AxonWorker::ServerDispatchAndManageLifecycle_(
     }
   };
 
-  if constexpr (std::is_same_v<MsgLcPolicy, RetentionPolicy>) {
+  if constexpr (std::is_same_v<MsgLcPolicyT, RetentionPolicy>) {
     auto dispatch_sender_fn =
       [this, req_header_ptr](
         std::reference_wrapper<rpc::PayloadVariant> payload) mutable {
@@ -669,7 +619,7 @@ AxonWorker::AnySender AxonWorker::ServerDispatchAndManageLifecycle_(
             *req_header_ptr, payload.get(), response_builder_);
         }
       };
-    auto retention_fn = [this, req_header_ptr, lc_policy,
+    auto retention_fn = [this, req_header_ptr, lc_policy = std::move(lc_policy),
                          payload = std::move(payload)]() mutable {
       // Use HLC as the request ID for now.
       // It must be obtained before the header is moved.
@@ -743,13 +693,13 @@ AXON_DISPATCH_AND_MANAGE_LIFECYCLE_TEMPLATE(ucxx::UcxBufferVec, RetentionPolicy)
 #undef AXON_DISPATCH_AND_MANAGE_LIFECYCLE_TEMPLATE
 
 // Helper function to handle variant buffer bundle
-template <typename MsgLcPolicy>
+template <typename MsgLcPolicyT>
 AxonWorker::AnySender AxonWorker::ServerHandleVariantBufferBundle_(
   uint64_t conn_id, const rpc::RpcRequestHeader* req_header_ptr,
-  BufferBundleVariant&& buffer_bundle, MsgLcPolicy lc_policy) {
+  BufferBundleVariant&& buffer_bundle, MsgLcPolicyT lc_policy) {
   return std::visit(
     [this, conn_id, req_header_ptr,
-     lc_policy](auto&& bundle) mutable -> AnySender {
+     lc_policy = std::move(lc_policy)](auto&& bundle) mutable -> AnySender {
       using BundleType = std::decay_t<decltype(bundle)>;
       constexpr bool IsUcxBufferBundle =
         std::is_same_v<BundleType, ucxx::active_message_buffer_bundle>;
@@ -757,12 +707,14 @@ AxonWorker::AnySender AxonWorker::ServerHandleVariantBufferBundle_(
         std::is_same_v<BundleType, ucxx::active_message_iovec_buffer_bundle>;
 
       if constexpr (IsUcxBufferBundle) {
-        return ServerDispatchAndManageLifecycle_<ucxx::UcxBuffer, MsgLcPolicy>(
-          conn_id, req_header_ptr, std::move(bundle.move_buffer()), lc_policy);
+        return ServerDispatchAndManageLifecycle_<ucxx::UcxBuffer, MsgLcPolicyT>(
+          conn_id, req_header_ptr, std::move(bundle.move_buffer()),
+          std::move(lc_policy));
       } else if constexpr (IsUcxBufferVecBundle) {
         return ServerDispatchAndManageLifecycle_<
-          ucxx::UcxBufferVec, MsgLcPolicy>(
-          conn_id, req_header_ptr, std::move(bundle.move_buffer()), lc_policy);
+          ucxx::UcxBufferVec, MsgLcPolicyT>(
+          conn_id, req_header_ptr, std::move(bundle.move_buffer()),
+          std::move(lc_policy));
       } else {
         static_assert(
           !(IsUcxBufferBundle || IsUcxBufferVecBundle),
@@ -775,23 +727,23 @@ AxonWorker::AnySender AxonWorker::ServerHandleVariantBufferBundle_(
 }
 
 // Helper function to handle concrete buffer bundle
-template <typename BundleType, typename MsgLcPolicy>
+template <typename BundleType, typename MsgLcPolicyT>
 AxonWorker::AnySender AxonWorker::ServerHandleConcreteBufferBundle_(
   uint64_t conn_id, const rpc::RpcRequestHeader* req_header_ptr,
-  BundleType&& buffer_bundle, MsgLcPolicy lc_policy) {
+  BundleType&& buffer_bundle, MsgLcPolicyT lc_policy) {
   constexpr bool IsUcxBufferBundle = std::is_same_v<
     std::decay_t<BundleType>, ucxx::active_message_buffer_bundle>;
   constexpr bool IsUcxBufferVecBundle = std::is_same_v<
     std::decay_t<BundleType>, ucxx::active_message_iovec_buffer_bundle>;
 
   if constexpr (IsUcxBufferBundle) {
-    return ServerDispatchAndManageLifecycle_<ucxx::UcxBuffer, MsgLcPolicy>(
+    return ServerDispatchAndManageLifecycle_<ucxx::UcxBuffer, MsgLcPolicyT>(
       conn_id, req_header_ptr, std::move(buffer_bundle.move_buffer()),
-      lc_policy);
+      std::move(lc_policy));
   } else if constexpr (IsUcxBufferVecBundle) {
-    return ServerDispatchAndManageLifecycle_<ucxx::UcxBufferVec, MsgLcPolicy>(
+    return ServerDispatchAndManageLifecycle_<ucxx::UcxBufferVec, MsgLcPolicyT>(
       conn_id, req_header_ptr, std::move(buffer_bundle.move_buffer()),
-      lc_policy);
+      std::move(lc_policy));
   } else {
     // Always false, but dependent on template parameter
     static_assert(
@@ -802,21 +754,21 @@ AxonWorker::AnySender AxonWorker::ServerHandleConcreteBufferBundle_(
 }
 
 // Unified entry point for processing buffer bundles
-template <typename BundleType, typename MsgLcPolicy>
+template <typename BundleType, typename MsgLcPolicyT>
 AxonWorker::AnySender AxonWorker::ServerProcessBufferBundle_(
   uint64_t conn_id, const rpc::RpcRequestHeader* req_header_ptr,
-  BundleType&& buffer_bundle, MsgLcPolicy lc_policy) {
+  BundleType&& buffer_bundle, MsgLcPolicyT lc_policy) {
   using DecayedType = std::decay_t<BundleType>;
   constexpr bool IsVariant = std::is_same_v<DecayedType, BufferBundleVariant>;
 
   if constexpr (IsVariant) {
     return ServerHandleVariantBufferBundle_(
       conn_id, req_header_ptr, std::forward<BundleType>(buffer_bundle),
-      lc_policy);
+      std::move(lc_policy));
   } else {
     return ServerHandleConcreteBufferBundle_(
       conn_id, req_header_ptr, std::forward<BundleType>(buffer_bundle),
-      lc_policy);
+      std::move(lc_policy));
   }
 }
 
@@ -862,7 +814,8 @@ auto AxonWorker::BufferBundleProcessor_::operator()(auto&& buffer_bundle)
       using BundleT = std::decay_t<decltype(buffer_bundle)>;
       using LcPolicyT = std::decay_t<decltype(lc_policy)>;
       return worker->ServerProcessBufferBundle_<BundleT, LcPolicyT>(
-        conn_id, req_header_ptr, std::move(buffer_bundle), lc_policy);
+        conn_id, req_header_ptr, std::move(buffer_bundle),
+        std::move(lc_policy));
     },
     lc_policy_variant);
 }
@@ -1043,15 +996,16 @@ AxonWorker::ServerProcessHeader_(
     req_header_ptr, AxonWorker::FullRequestHandlerView(handler_it->second));
 }
 
-template <typename ReceivedBufferT, typename MemPolicy>
+template <typename ReceivedBufferT, typename MemPolicyT>
   requires std::is_same_v<ReceivedBufferT, rpc::PayloadVariant>
-           && is_receiver_memory_policy_v<MemPolicy, ReceivedBufferT>
+           && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
 AxonWorker::UcxRecvBufferCombinedSender AxonWorker::ProcessRndvBuffer_(
-  WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicy mem_policy,
+  WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicyT mem_policy,
   const TensorMetaRefVec& tensor_metas) {
-  constexpr const bool IsOnHost = std::is_same_v<MemPolicy, AlwaysOnHostPolicy>;
+  constexpr const bool IsOnHost =
+    std::is_same_v<MemPolicyT, AlwaysOnHostPolicy>;
   constexpr const bool IsCustomMemory =
-    std::is_same_v<MemPolicy, CustomMemoryPolicy<ReceivedBufferT>>;
+    std::is_same_v<MemPolicyT, CustomMemoryPolicy<ReceivedBufferT>>;
   auto recv_sender_fn = [&]() {
     if constexpr (IsOnHost) {
       return ucxx::connection_recv_buffer(
@@ -1070,15 +1024,16 @@ AxonWorker::UcxRecvBufferCombinedSender AxonWorker::ProcessRndvBuffer_(
 }
 
 namespace {
-template <typename SenderT, typename MemPolicy, typename BufferReceiverFn>
+template <typename SenderT, typename MemPolicyT, typename BufferReceiverFn>
 auto ProcessRndvBufferImpl_(
   BufferReceiverFn&& buffer_receiver_fn,
   uint64_t am_desc_key,
-  MemPolicy mem_policy,
+  MemPolicyT mem_policy,
   const TensorMetaRefVec& tensor_metas) {
-  constexpr const bool IsOnHost = std::is_same_v<MemPolicy, AlwaysOnHostPolicy>;
+  constexpr const bool IsOnHost =
+    std::is_same_v<MemPolicyT, AlwaysOnHostPolicy>;
   constexpr const bool IsCustomMemory =
-    std::is_same_v<MemPolicy, CustomMemoryPolicy<SenderT>>;
+    std::is_same_v<MemPolicyT, CustomMemoryPolicy<SenderT>>;
   if constexpr (IsOnHost) {
     return buffer_receiver_fn(ucx_memory_type::HOST);
   } else if constexpr (IsCustomMemory) {
@@ -1088,11 +1043,11 @@ auto ProcessRndvBufferImpl_(
 }
 }  // namespace
 
-template <typename ReceivedBufferT, typename MemPolicy>
+template <typename ReceivedBufferT, typename MemPolicyT>
   requires std::is_same_v<ReceivedBufferT, ucxx::UcxBuffer>
-           && is_receiver_memory_policy_v<MemPolicy, ReceivedBufferT>
+           && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
 auto AxonWorker::ProcessRndvBuffer_(
-  WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicy mem_policy,
+  WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicyT mem_policy,
   const TensorMetaRefVec& tensor_metas)
   -> ucxx::ucx_am_context::recv_buffer_sender {
   return ProcessRndvBufferImpl_<ucxx::UcxBuffer>(
@@ -1100,14 +1055,14 @@ auto AxonWorker::ProcessRndvBuffer_(
       return ucxx::connection_recv_buffer(
         scheduler, am_desc_key, std::forward<decltype(arg)>(arg));
     },
-    am_desc_key, mem_policy, tensor_metas);
+    am_desc_key, std::move(mem_policy), tensor_metas);
 }
 
-template <typename ReceivedBufferT, typename MemPolicy>
+template <typename ReceivedBufferT, typename MemPolicyT>
   requires std::is_same_v<ReceivedBufferT, ucxx::UcxBufferVec>
-           && is_receiver_memory_policy_v<MemPolicy, ReceivedBufferT>
+           && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
 auto AxonWorker::ProcessRndvBuffer_(
-  WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicy mem_policy,
+  WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicyT mem_policy,
   const TensorMetaRefVec& tensor_metas)
   -> ucxx::ucx_am_context::recv_iovec_buffer_sender {
   return ProcessRndvBufferImpl_<ucxx::UcxBufferVec>(
@@ -1124,7 +1079,7 @@ auto AxonWorker::ProcessRndvBuffer_(
           scheduler, am_desc_key, std::forward<decltype(arg)>(arg));
       }
     },
-    am_desc_key, mem_policy, tensor_metas);
+    am_desc_key, std::move(mem_policy), tensor_metas);
 }
 
 auto AxonWorker::ServerProcessMessage_(const RecvVariant& message) noexcept {
