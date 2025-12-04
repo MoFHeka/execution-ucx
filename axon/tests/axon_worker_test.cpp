@@ -620,7 +620,8 @@ TEST_F(AxonWorkerIntegrationTest, RobustnessAndConcurrency) {
         },
         "echo");
 
-      worker.StartServer();
+      ASSERT_EQ(worker.StartServer(), std::error_code{})
+        << "[Server-Rob] Failed to start server";
 
       std::vector<std::byte> addr = worker.GetLocalAddress();
       size_t addr_size = addr.size();
@@ -658,8 +659,11 @@ TEST_F(AxonWorkerIntegrationTest, RobustnessAndConcurrency) {
       AxonWorker worker(
         *mr_, "client_worker_rob", 4, std::chrono::milliseconds(10),
         std::move(device_ctx));
-      worker.StartClient();
-      worker.ConnectEndpoint(addr, "server_worker_rob");
+      ASSERT_EQ(worker.StartClient(), std::error_code{})
+        << "[Client-Rob] Failed to start client";
+      auto conn_result = worker.ConnectEndpoint(addr, "server_worker_rob");
+      ASSERT_TRUE(conn_result.has_value())
+        << "[Client-Rob] Failed to connect to server";
 
       // 1. Concurrency Test
       {
@@ -888,7 +892,8 @@ TEST_F(AxonWorkerIntegrationTest, BackpressureLargeMessage) {
         },
         "echo");
 
-      worker.StartServer();
+      ASSERT_EQ(worker.StartServer(), std::error_code{})
+        << "[Server-BPL] Failed to start server";
 
       std::vector<std::byte> addr = worker.GetLocalAddress();
       size_t addr_size = addr.size();
@@ -926,8 +931,11 @@ TEST_F(AxonWorkerIntegrationTest, BackpressureLargeMessage) {
       AxonWorker worker(
         *mr_, "client_worker_bpl", 4, std::chrono::milliseconds(10),
         std::move(device_ctx));
-      worker.StartClient();
-      worker.ConnectEndpoint(addr, "server_worker_bpl");
+      ASSERT_EQ(worker.StartClient(), std::error_code{})
+        << "[Client-BPL] Failed to start client";
+      auto conn_result = worker.ConnectEndpoint(addr, "server_worker_bpl");
+      ASSERT_TRUE(conn_result.has_value())
+        << "[Client-BPL] Failed to connect to server";
 
       // Backpressure Test with Large Message (10MB)
       {
@@ -1179,7 +1187,8 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
         },
         "buffer_to_vec");
 
-      worker.StartServer();
+      ASSERT_EQ(worker.StartServer(), std::error_code{})
+        << "[Server-TM] Failed to start server";
 
       std::vector<std::byte> addr = worker.GetLocalAddress();
       size_t addr_size = addr.size();
@@ -1217,8 +1226,11 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
       AxonWorker worker(
         *mr_, "client_worker_tm", 4, std::chrono::milliseconds(10),
         std::move(device_ctx));
-      worker.StartClient();
-      worker.ConnectEndpoint(addr, "server_worker_tm");
+      ASSERT_EQ(worker.StartClient(), std::error_code{})
+        << "[Client-TM] Failed to start client";
+      auto conn_result = worker.ConnectEndpoint(addr, "server_worker_tm");
+      ASSERT_TRUE(conn_result.has_value())
+        << "[Client-TM] Failed to connect to server";
 
       // Test 1: UcxBuffer with TensorMeta
       {

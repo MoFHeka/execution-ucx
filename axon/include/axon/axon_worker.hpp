@@ -188,37 +188,84 @@ class AxonWorker {
 
   // --- Service Discovery & Connection APIs ---
   std::vector<std::byte> GetLocalAddress();
+
   cista::byte_buf GetLocalSignatures() const;
+
   std::expected<uint64_t, std::error_code> ConnectEndpoint(
     const std::vector<std::byte>& ucp_address, const std::string& worker_name);
+
   auto ConnectEndpointAsync(
-    const std::vector<std::byte>& ucp_address, const std::string& worker_name);
+    const std::vector<std::byte>& ucp_address, const std::string& worker_name) {
+    auto sender =
+      ucxx::connect_endpoint(client_ctx_->get_scheduler(), ucp_address)
+      | unifex::then([this, worker_name](uint64_t conn_id) {
+          AssociateConnection(worker_name, conn_id);
+          return std::expected<uint64_t, std::error_code>(conn_id);
+        })
+      | unifex::upon_error(
+        [this](std::variant<std::error_code, std::exception_ptr>&& error)
+          -> std::expected<uint64_t, std::error_code> {
+          std::error_code ec;
+          std::string what;
+          if (std::holds_alternative<std::error_code>(error)) {
+            ec = std::get<std::error_code>(error);
+            what = std::format("ConnectEndpoint failed: {}", ec.message());
+          } else {
+            try {
+              std::rethrow_exception(std::get<std::exception_ptr>(error));
+            } catch (const std::exception& e) {
+              ec = std::make_error_code(errors::AxonErrc::CoordinatorError);
+              what = std::format("ConnectEndpoint failed: {}", e.what());
+            }
+          }
+          ReportClientError_({
+            .conn_id = 0,
+            .session_id = 0,
+            .request_id = 0,
+            .function_id = 0,
+            .status = rpc::RpcStatus(ec),
+            .what = std::move(what),
+            .hlc = hlc_,
+            .workflow_id = 0,
+          });
+          return std::unexpected(ec);
+        });
+    return sender;
+  }
+
   void AssociateConnection(const std::string& worker_name, uint64_t conn_id);
   std::expected<WorkerKey, std::error_code> RegisterEndpointSignatures(
     const std::string& worker_name, const cista::byte_buf& signatures_blob);
+
   auto RegisterEndpointSignaturesAsync(
-    const std::string& worker_name, const cista::byte_buf& signatures_blob);
+    const std::string& worker_name, const cista::byte_buf& signatures_blob) {
+    return unifex::just_from(
+      [this, worker_name,
+       signatures_blob]() -> std::expected<WorkerKey, std::error_code> {
+        return RegisterEndpointSignatures(worker_name, signatures_blob);
+      });
+  }
 
   // --- RPC Client API ---
 
   // High-level API using RpcRequestBuilder
-  template <typename RespBufferT, typename MemPolicy, typename... Args>
+  template <typename RespBufferT, typename MemPolicyT, typename... Args>
     requires rpc::is_payload_v<RespBufferT>
-             && is_receiver_memory_policy_v<MemPolicy, RespBufferT>
+             && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
              && (!detail::first_arg_is_memory_policy<
                  RespBufferT, Args...>::value)
              && detail::is_high_level_api<Args...>::value
   auto InvokeRpc(
     const std::string& worker_name, rpc::session_id_t session_id,
     rpc::function_id_t function_id, rpc::utils::workflow_id_t workflow_id = {},
-    MemPolicy mem_policy = AlwaysOnHostPolicy{}, Args&&... args) {
+    MemPolicyT mem_policy = AlwaysOnHostPolicy{}, Args&&... args) {
     auto it = remote_workers_slot_.find(worker_name);
     WorkerKey worker_key{std::numeric_limits<uint32_t>::max(), 0};
     if (it != remote_workers_slot_.end()) {
       worker_key = it->second;
     }
     return InvokeRpc<RespBufferT>(
-      worker_key, session_id, function_id, workflow_id, mem_policy,
+      worker_key, session_id, function_id, workflow_id, std::move(mem_policy),
       std::forward<Args>(args)...);
   }
 
@@ -235,16 +282,16 @@ class AxonWorker {
       std::forward<Args>(args)...);
   }
 
-  template <typename RespBufferT, typename MemPolicy, typename... Args>
+  template <typename RespBufferT, typename MemPolicyT, typename... Args>
     requires rpc::is_payload_v<RespBufferT>
-             && is_receiver_memory_policy_v<MemPolicy, RespBufferT>
+             && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
              && (!detail::first_arg_is_memory_policy<
                  RespBufferT, Args...>::value)
              && detail::is_high_level_api<Args...>::value
   auto InvokeRpc(
     WorkerKey worker_key, rpc::session_id_t session_id,
     rpc::function_id_t function_id, rpc::utils::workflow_id_t workflow_id = {},
-    MemPolicy mem_policy = AlwaysOnHostPolicy{}, Args&&... args) {
+    MemPolicyT mem_policy = AlwaysOnHostPolicy{}, Args&&... args) {
     auto result = request_builder_.PrepareRequest(
       rpc::RpcRequestBuilderOptions{
         .session_id = session_id,
@@ -264,12 +311,13 @@ class AxonWorker {
 
     using ResultType = std::decay_t<decltype(result)>;
     if constexpr (std::is_same_v<ResultType, rpc::RpcRequestHeader>) {
-      return InvokeRpcImpl<std::monostate, RespBufferT, MemPolicy>(
-        conn_id, std::move(result), std::monostate{}, mem_policy);
+      return InvokeRpcImpl<std::monostate, RespBufferT, MemPolicyT>(
+        conn_id, std::move(result), std::monostate{}, std::move(mem_policy));
     } else {
       return InvokeRpcImpl<
-        std::decay_t<decltype(result.second)>, RespBufferT, MemPolicy>(
-        conn_id, std::move(result.first), std::move(result.second), mem_policy);
+        std::decay_t<decltype(result.second)>, RespBufferT, MemPolicyT>(
+        conn_id, std::move(result.first), std::move(result.second),
+        std::move(mem_policy));
     }
   }
 
@@ -289,25 +337,25 @@ class AxonWorker {
   // Dynamic API
   template <
     typename PayloadT = std::monostate, typename RespBufferT = std::monostate,
-    typename MemPolicy = AlwaysOnHostPolicy>
+    typename MemPolicyT = AlwaysOnHostPolicy>
     requires(rpc::is_payload_v<PayloadT>
              || std::is_same_v<PayloadT, std::monostate>)
             && rpc::is_payload_v<RespBufferT>
-            && is_receiver_memory_policy_v<MemPolicy, RespBufferT>
+            && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
             && detail::is_dynamic_api<PayloadT>::value
   auto InvokeRpc(
     const std::string& worker_name,
     rpc::RpcRequestHeader&& request_header,
     std::optional<PayloadT>&& payload = std::nullopt,
-    MemPolicy mem_policy = AlwaysOnHostPolicy{});
+    MemPolicyT mem_policy = AlwaysOnHostPolicy{});
 
   template <
     typename PayloadT = std::monostate, typename RespBufferT = std::monostate,
-    typename MemPolicy = AlwaysOnHostPolicy>
+    typename MemPolicyT = AlwaysOnHostPolicy>
     requires(rpc::is_payload_v<PayloadT>
              || std::is_same_v<PayloadT, std::monostate>)
             && rpc::is_payload_v<RespBufferT>
-            && is_receiver_memory_policy_v<MemPolicy, RespBufferT>
+            && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
             && detail::is_dynamic_api<PayloadT>::value
             && (!std::is_same_v<
                 std::decay_t<PayloadT>, std::optional<std::decay_t<PayloadT>>>)
@@ -315,29 +363,29 @@ class AxonWorker {
     const std::string& worker_name,
     rpc::RpcRequestHeader&& request_header,
     PayloadT&& payload,
-    MemPolicy mem_policy = AlwaysOnHostPolicy{});
+    MemPolicyT mem_policy = AlwaysOnHostPolicy{});
 
   template <
     typename PayloadT = std::monostate, typename RespBufferT = std::monostate,
-    typename MemPolicy = AlwaysOnHostPolicy>
+    typename MemPolicyT = AlwaysOnHostPolicy>
     requires(rpc::is_payload_v<PayloadT>
              || std::is_same_v<PayloadT, std::monostate>)
             && rpc::is_payload_v<RespBufferT>
-            && is_receiver_memory_policy_v<MemPolicy, RespBufferT>
+            && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
             && detail::is_dynamic_api<PayloadT>::value
   auto InvokeRpc(
     WorkerKey worker_key,
     rpc::RpcRequestHeader&& request_header,
     std::optional<PayloadT>&& payload = std::nullopt,
-    MemPolicy mem_policy = AlwaysOnHostPolicy{});
+    MemPolicyT mem_policy = AlwaysOnHostPolicy{});
 
   template <
     typename PayloadT = std::monostate, typename RespBufferT = std::monostate,
-    typename MemPolicy = AlwaysOnHostPolicy>
+    typename MemPolicyT = AlwaysOnHostPolicy>
     requires(rpc::is_payload_v<PayloadT>
              || std::is_same_v<PayloadT, std::monostate>)
             && rpc::is_payload_v<RespBufferT>
-            && is_receiver_memory_policy_v<MemPolicy, RespBufferT>
+            && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
             && detail::is_dynamic_api<PayloadT>::value
             && (!std::is_same_v<
                 std::decay_t<PayloadT>, std::optional<std::decay_t<PayloadT>>>)
@@ -345,35 +393,35 @@ class AxonWorker {
     WorkerKey worker_key,
     rpc::RpcRequestHeader&& request_header,
     PayloadT&& payload,
-    MemPolicy mem_policy = AlwaysOnHostPolicy{});
+    MemPolicyT mem_policy = AlwaysOnHostPolicy{});
 
   // --- RPC Server API ---
   template <
     typename ReceivedBufferT, typename Fn,
-    typename MemPolicy = AlwaysOnHostPolicy,
-    typename MsgLcPolicy = TransientPolicy>
+    typename MemPolicyT = AlwaysOnHostPolicy,
+    typename MsgLcPolicyT = TransientPolicy>
     requires rpc::is_payload_v<ReceivedBufferT>
-             && is_receiver_memory_policy_v<MemPolicy, ReceivedBufferT>
-             && is_message_lifecycle_policy_v<MsgLcPolicy>
+             && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
+             && is_message_lifecycle_policy_v<MsgLcPolicyT>
   void RegisterFunction(
     rpc::function_id_t id, Fn&& fn,
     data::string&& function_name = data::string(),
-    MemPolicy mem_policy = AlwaysOnHostPolicy{},
-    MsgLcPolicy lc_policy = TransientPolicy{});
+    MemPolicyT mem_policy = AlwaysOnHostPolicy{},
+    MsgLcPolicyT lc_policy = TransientPolicy{});
 
   template <
-    typename ReceivedBufferT, typename MemPolicy = AlwaysOnHostPolicy,
-    typename MsgLcPolicy = TransientPolicy>
+    typename ReceivedBufferT, typename MemPolicyT = AlwaysOnHostPolicy,
+    typename MsgLcPolicyT = TransientPolicy>
     requires rpc::is_payload_v<ReceivedBufferT>
-             && is_receiver_memory_policy_v<MemPolicy, ReceivedBufferT>
-             && is_message_lifecycle_policy_v<MsgLcPolicy>
+             && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
+             && is_message_lifecycle_policy_v<MsgLcPolicyT>
   void RegisterFunction(
     rpc::function_id_t id, const data::string& name,
     const data::vector<rpc::ParamType>& param_types,
     const data::vector<rpc::ParamType>& return_types,
     rpc::PayloadType input_payload_type, rpc::PayloadType return_payload_type,
-    rpc::DynamicAsyncRpcFunction&& func, MemPolicy mem_policy,
-    MsgLcPolicy lc_policy);
+    rpc::DynamicAsyncRpcFunction&& func, MemPolicyT mem_policy,
+    MsgLcPolicyT lc_policy);
 
   template <typename ReceivedBufferT>
     requires rpc::is_payload_v<ReceivedBufferT>
@@ -389,32 +437,34 @@ class AxonWorker {
       TransientPolicy{});
   }
 
-  template <typename ReceivedBufferT, typename MemPolicy = AlwaysOnHostPolicy>
+  template <typename ReceivedBufferT, typename MemPolicyT = AlwaysOnHostPolicy>
     requires rpc::is_payload_v<ReceivedBufferT>
-             && is_receiver_memory_policy_v<MemPolicy, ReceivedBufferT>
+             && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
   void RegisterFunction(
     rpc::function_id_t id, const data::string& name,
     const data::vector<rpc::ParamType>& param_types,
     const data::vector<rpc::ParamType>& return_types,
     rpc::PayloadType input_payload_type, rpc::PayloadType return_payload_type,
-    rpc::DynamicAsyncRpcFunction&& func, MemPolicy mem_policy) {
+    rpc::DynamicAsyncRpcFunction&& func, MemPolicyT mem_policy) {
     RegisterFunction<ReceivedBufferT>(
       id, name, param_types, return_types, input_payload_type,
-      return_payload_type, std::move(func), mem_policy, TransientPolicy{});
+      return_payload_type, std::move(func), std::move(mem_policy),
+      TransientPolicy{});
   }
 
-  template <typename ReceivedBufferT, typename MsgLcPolicy = TransientPolicy>
+  template <typename ReceivedBufferT, typename MsgLcPolicyT = TransientPolicy>
     requires rpc::is_payload_v<ReceivedBufferT>
-             && is_message_lifecycle_policy_v<MsgLcPolicy>
+             && is_message_lifecycle_policy_v<MsgLcPolicyT>
   void RegisterFunction(
     rpc::function_id_t id, const data::string& name,
     const data::vector<rpc::ParamType>& param_types,
     const data::vector<rpc::ParamType>& return_types,
     rpc::PayloadType input_payload_type, rpc::PayloadType return_payload_type,
-    rpc::DynamicAsyncRpcFunction&& func, MsgLcPolicy lc_policy) {
+    rpc::DynamicAsyncRpcFunction&& func, MsgLcPolicyT lc_policy) {
     RegisterFunction<ReceivedBufferT>(
       id, name, param_types, return_types, input_payload_type,
-      return_payload_type, std::move(func), AlwaysOnHostPolicy{}, lc_policy);
+      return_payload_type, std::move(func), AlwaysOnHostPolicy{},
+      std::move(lc_policy));
   }
 
   // --- Configuration ---
@@ -549,17 +599,18 @@ class AxonWorker {
   TODO(He Jia): Not sure variant_sender could be more efficient than
   any_sender_of<> version, comparing performance.
   */
-  // template <typename MsgLcPolicy>
+  // template <typename MsgLcPolicyT>
   // struct BufferBundleProcessor_ {
   //   AxonWorker* worker;
   //   uint64_t conn_id;
   //   const rpc::RpcRequestHeader* req_header_ptr;
-  //   MsgLcPolicy lc_policy;
+  //   MsgLcPolicyT lc_policy;
 
   //   template <typename BufferBundle>
   //   auto operator()(BufferBundle&& buffer_bundle) const {
   //     return worker->ServerProcessBufferBundle_(
-  //       conn_id, req_header_ptr, std::move(buffer_bundle), lc_policy);
+  //       conn_id, req_header_ptr, std::move(buffer_bundle),
+  //       std::move(lc_policy));
   //   }
   // };
   //
@@ -609,14 +660,13 @@ class AxonWorker {
   // ----------------------------------
 
   struct BypassRejectionCheckerFacade
-    : pro::facade_builder                //
-      ::add_skill<pro::skills::as_view>  //
+    : pro::facade_builder  //
       ::add_convention<
         pro::operator_dispatch<"()">,
         bool(rpc::function_id_t)>  // NOLINT(readability/casting)
       ::build {};
 
-  using BypassRejectionChecker = pro::proxy_view<BypassRejectionCheckerFacade>;
+  using BypassRejectionChecker = pro::proxy<BypassRejectionCheckerFacade>;
 
   // ----------------------------------
   // --- Facades for Client Context ---
@@ -747,29 +797,29 @@ class AxonWorker {
   auto ServerHandleSendErrorResponse_(
     const errors::AxonErrorContext& error_ctx);
 
-  template <typename PayloadT, typename MsgLcPolicy>
+  template <typename PayloadT, typename MsgLcPolicyT>
     requires(std::is_same_v<PayloadT, rpc::PayloadVariant>
              || rpc::is_payload_v<PayloadT>)
-            && is_message_lifecycle_policy_v<MsgLcPolicy>
+            && is_message_lifecycle_policy_v<MsgLcPolicyT>
   AnySender ServerDispatchAndManageLifecycle_(
     uint64_t conn_id, const rpc::RpcRequestHeader* req_header_ptr,
-    PayloadT&& payload, MsgLcPolicy lc_policy);
+    PayloadT&& payload, MsgLcPolicyT lc_policy);
 
   // Helper functions for processing buffer bundles
-  template <typename MsgLcPolicy>
+  template <typename MsgLcPolicyT>
   AnySender ServerHandleVariantBufferBundle_(
     uint64_t conn_id, const rpc::RpcRequestHeader* req_header_ptr,
-    BufferBundleVariant&& buffer_bundle, MsgLcPolicy lc_policy);
+    BufferBundleVariant&& buffer_bundle, MsgLcPolicyT lc_policy);
 
-  template <typename BundleType, typename MsgLcPolicy>
+  template <typename BundleType, typename MsgLcPolicyT>
   AnySender ServerHandleConcreteBufferBundle_(
     uint64_t conn_id, const rpc::RpcRequestHeader* req_header_ptr,
-    BundleType&& buffer_bundle, MsgLcPolicy lc_policy);
+    BundleType&& buffer_bundle, MsgLcPolicyT lc_policy);
 
-  template <typename BundleType, typename MsgLcPolicy>
+  template <typename BundleType, typename MsgLcPolicyT>
   AnySender ServerProcessBufferBundle_(
     uint64_t conn_id, const rpc::RpcRequestHeader* req_header_ptr,
-    BundleType&& buffer_bundle, MsgLcPolicy lc_policy);
+    BundleType&& buffer_bundle, MsgLcPolicyT lc_policy);
 
   template <typename RequestHandlerInputT>
   auto ServerProcessValidMessage_(
@@ -781,35 +831,37 @@ class AxonWorker {
     ServerProcessValidMessageSenderType,
     decltype(unifex::just_error(std::declval<errors::AxonErrorContext>()))>;
 
-  template <typename ReceivedBufferT, typename MemPolicy>
+  template <typename ReceivedBufferT, typename MemPolicyT>
     requires std::is_same_v<ReceivedBufferT, rpc::PayloadVariant>
-             && is_receiver_memory_policy_v<MemPolicy, ReceivedBufferT>
+             && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
   UcxRecvBufferCombinedSender ProcessRndvBuffer_(
-    WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicy mem_policy,
+    WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicyT mem_policy,
     const TensorMetaRefVec& tensor_metas = {});
 
-  template <typename ReceivedBufferT, typename MemPolicy>
+  template <typename ReceivedBufferT, typename MemPolicyT>
     requires std::is_same_v<ReceivedBufferT, ucxx::UcxBuffer>
-             && is_receiver_memory_policy_v<MemPolicy, ReceivedBufferT>
+             && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
   auto ProcessRndvBuffer_(
-    WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicy mem_policy,
+    WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicyT mem_policy,
     const TensorMetaRefVec& tensor_metas = {})
     -> ucxx::ucx_am_context::recv_buffer_sender;
 
-  template <typename ReceivedBufferT, typename MemPolicy>
+  template <typename ReceivedBufferT, typename MemPolicyT>
     requires std::is_same_v<ReceivedBufferT, ucxx::UcxBufferVec>
-             && is_receiver_memory_policy_v<MemPolicy, ReceivedBufferT>
+             && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
   auto ProcessRndvBuffer_(
-    WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicy mem_policy,
+    WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicyT mem_policy,
     const TensorMetaRefVec& tensor_metas = {})
     -> ucxx::ucx_am_context::recv_iovec_buffer_sender;
 
-  template <typename ReceivedBufferT, typename MemPolicy, typename MsgLcPolicy>
+  template <
+    typename ReceivedBufferT, typename MemPolicyT, typename MsgLcPolicyT>
   struct ServerRequestHandlerVisitor_;
 
-  template <typename ReceivedBufferT, typename MemPolicy, typename MsgLcPolicy>
+  template <
+    typename ReceivedBufferT, typename MemPolicyT, typename MsgLcPolicyT>
   pro::proxy<FullRequestHandlerFacade> ServerMakeFullRequestHandler_(
-    MemPolicy mem_policy, MsgLcPolicy lc_policy);
+    MemPolicyT mem_policy, MsgLcPolicyT lc_policy);
 
   std::expected<
     std::pair<const rpc::RpcRequestHeader*, AxonWorker::FullRequestHandlerView>,
@@ -835,10 +887,10 @@ class AxonWorker {
     std::expected<uint64_t, std::error_code> conn_id,
     const cista::byte_buf& header_buf, const PayloadT& payload);
 
-  template <typename RespBufferT, typename MemPolicy>
+  template <typename RespBufferT, typename MemPolicyT>
   struct ClientResponseHandlerVisitor_;
 
-  template <typename RespBufferT, typename MemPolicy>
+  template <typename RespBufferT, typename MemPolicyT>
   struct ResponseHandlerRndvReturnType {
     mutable rpc::ResponseHeaderUniquePtr resp_header_ptr;
     auto operator()(RespBufferT&& payload) const
@@ -856,7 +908,7 @@ class AxonWorker {
     }
   };
 
-  template <typename RespBufferT, typename MemPolicy>
+  template <typename RespBufferT, typename MemPolicyT>
   using ResponseHandlerRndvProcessReturnType = decltype(             //
     unifex::on(                                                      //
       std::declval<ucxx::ucx_am_context::scheduler>(),               //
@@ -864,11 +916,11 @@ class AxonWorker {
         ucxx::ucx_am_context::recv_buffer_sender_t<RespBufferT>>())  //
     | unifex::then(std::declval<MoveBundleBuffer<RespBufferT>>())    //
     | unifex::then(
-      std::declval<ResponseHandlerRndvReturnType<RespBufferT, MemPolicy>>()));
+      std::declval<ResponseHandlerRndvReturnType<RespBufferT, MemPolicyT>>()));
 
-  template <typename RespBufferT, typename MemPolicy>
+  template <typename RespBufferT, typename MemPolicyT>
   using ResponseHandlerReturnType = unifex::variant_sender<
-    ResponseHandlerRndvProcessReturnType<RespBufferT, MemPolicy>,
+    ResponseHandlerRndvProcessReturnType<RespBufferT, MemPolicyT>,
     decltype(unifex::just(
       std::declval<std::pair<rpc::ResponseHeaderUniquePtr, RespBufferT>>())),
     decltype(unifex::just_error(std::declval<errors::AxonErrorContext>()))>;
@@ -904,17 +956,17 @@ class AxonWorker {
   };
 
   // --- Sender Implementation ---
-  template <typename PayloadT, typename RespBufferT, typename MemPolicy>
+  template <typename PayloadT, typename RespBufferT, typename MemPolicyT>
     requires(rpc::is_payload_v<PayloadT>
              || std::is_same_v<PayloadT, std::monostate>)
             && (rpc::is_payload_v<RespBufferT>  //
              || std::is_same_v<RespBufferT, std::monostate>)
-            && is_receiver_memory_policy_v<MemPolicy, RespBufferT>
+            && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
   inline auto InvokeRpcImpl(
     std::expected<uint64_t, std::error_code> conn_id,
     rpc::RpcRequestHeader&& request_header,
     PayloadT&& payload,
-    MemPolicy mem_policy) {
+    MemPolicyT mem_policy) {
     // Setup receiver
     auto recv_callback_sender =
       unifex::create<rpc::ResponseHeaderUniquePtr, PayloadOrKey>(
@@ -974,11 +1026,11 @@ class AxonWorker {
           }
         })  //
       | unifex::let_value(
-        [this, mem_policy](
+        [this, mem_policy = std::move(mem_policy)](
           auto&& resp_header_ptr, auto&& payload_or_key) mutable {
           return std::visit(
-            ClientResponseHandlerVisitor_<RespBufferT, MemPolicy>{
-              this, mem_policy, std::move(resp_header_ptr)},
+            ClientResponseHandlerVisitor_<RespBufferT, MemPolicyT>{
+              this, std::move(mem_policy), std::move(resp_header_ptr)},
             std::move(payload_or_key));
         });
 
@@ -1016,14 +1068,6 @@ class AxonWorker {
   }
 
  private:
-  // Helper function to create ConnectEndpoint sender
-  auto ConnectEndpointSender_(
-    const std::vector<std::byte>& ucp_address, const std::string& worker_name);
-
-  // Helper function to create RegisterEndpointSignatures sender
-  auto RegisterEndpointSignaturesSender_(
-    const std::string& worker_name, const cista::byte_buf& signatures_blob);
-
   // A map to store response receivers for pending RPC calls
   // Lock-free: uses request_id as direct index, different request_ids
   // map to different slots, so no locking needed
@@ -1082,31 +1126,33 @@ class AxonWorker {
   cista::raw::hash_map<data::string, WorkerKey> remote_workers_slot_;
 };
 
-template <typename PayloadT, typename RespBufferT, typename MemPolicy>
+template <typename PayloadT, typename RespBufferT, typename MemPolicyT>
   requires(rpc::is_payload_v<PayloadT>
            || std::is_same_v<PayloadT, std::monostate>)
           && rpc::is_payload_v<RespBufferT>
-          && is_receiver_memory_policy_v<MemPolicy, RespBufferT>
+          && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
           && detail::is_dynamic_api<PayloadT>::value
 auto AxonWorker::InvokeRpc(
   const std::string& worker_name,
   rpc::RpcRequestHeader&& request_header,
   std::optional<PayloadT>&& payload,
-  MemPolicy mem_policy) {
+  MemPolicyT mem_policy) {
   auto it = remote_workers_slot_.find(worker_name);
   if (it == remote_workers_slot_.end()) {
-    return InvokeRpc<PayloadT, RespBufferT, MemPolicy>(
-      WorkerKey{}, std::move(request_header), std::move(payload), mem_policy);
+    return InvokeRpc<PayloadT, RespBufferT, MemPolicyT>(
+      WorkerKey{}, std::move(request_header), std::move(payload),
+      std::move(mem_policy));
   }
-  return InvokeRpc<PayloadT, RespBufferT, MemPolicy>(
-    it->second, std::move(request_header), std::move(payload), mem_policy);
+  return InvokeRpc<PayloadT, RespBufferT, MemPolicyT>(
+    it->second, std::move(request_header), std::move(payload),
+    std::move(mem_policy));
 }
 
-template <typename PayloadT, typename RespBufferT, typename MemPolicy>
+template <typename PayloadT, typename RespBufferT, typename MemPolicyT>
   requires(rpc::is_payload_v<PayloadT>
            || std::is_same_v<PayloadT, std::monostate>)
           && rpc::is_payload_v<RespBufferT>
-          && is_receiver_memory_policy_v<MemPolicy, RespBufferT>
+          && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
           && detail::is_dynamic_api<PayloadT>::value
           && (!std::is_same_v<
               std::decay_t<PayloadT>, std::optional<std::decay_t<PayloadT>>>)
@@ -1114,27 +1160,29 @@ auto AxonWorker::InvokeRpc(
   const std::string& worker_name,
   rpc::RpcRequestHeader&& request_header,
   PayloadT&& payload,
-  MemPolicy mem_policy) {
+  MemPolicyT mem_policy) {
   auto it = remote_workers_slot_.find(worker_name);
   if (it == remote_workers_slot_.end()) {
-    return InvokeRpc<PayloadT, RespBufferT, MemPolicy>(
-      WorkerKey{}, std::move(request_header), std::move(payload), mem_policy);
+    return InvokeRpc<PayloadT, RespBufferT, MemPolicyT>(
+      WorkerKey{}, std::move(request_header), std::move(payload),
+      std::move(mem_policy));
   }
-  return InvokeRpc<PayloadT, RespBufferT, MemPolicy>(
-    it->second, std::move(request_header), std::move(payload), mem_policy);
+  return InvokeRpc<PayloadT, RespBufferT, MemPolicyT>(
+    it->second, std::move(request_header), std::move(payload),
+    std::move(mem_policy));
 }
 
-template <typename PayloadT, typename RespBufferT, typename MemPolicy>
+template <typename PayloadT, typename RespBufferT, typename MemPolicyT>
   requires(rpc::is_payload_v<PayloadT>
            || std::is_same_v<PayloadT, std::monostate>)
           && rpc::is_payload_v<RespBufferT>
-          && is_receiver_memory_policy_v<MemPolicy, RespBufferT>
+          && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
           && detail::is_dynamic_api<PayloadT>::value
 auto AxonWorker::InvokeRpc(
   WorkerKey worker_key,
   rpc::RpcRequestHeader&& request_header,
   std::optional<PayloadT>&& payload,
-  MemPolicy mem_policy) {
+  MemPolicyT mem_policy) {
   std::expected<uint64_t, std::error_code> conn_id =
     std::unexpected(std::make_error_code(errors::AxonErrc::WorkerNotFound));
   if (const auto* worker_info = remote_workers_.access_lockless(worker_key)) {
@@ -1144,27 +1192,28 @@ auto AxonWorker::InvokeRpc(
   request_header.request_id = rpc::request_id_t{next_request_id_.fetch_add(1)};
 
   if constexpr (std::is_same_v<PayloadT, ucxx::UcxBuffer>) {
-    return InvokeRpcImpl<PayloadT, RespBufferT, MemPolicy>(
+    return InvokeRpcImpl<PayloadT, RespBufferT, MemPolicyT>(
       conn_id, std::move(request_header),
       std::move(payload).value_or(PayloadT{mr_, ucx_memory_type::HOST, 0}),
-      mem_policy);
+      std::move(mem_policy));
   } else if constexpr (std::is_same_v<PayloadT, ucxx::UcxBufferVec>) {
-    return InvokeRpcImpl<PayloadT, RespBufferT, MemPolicy>(
+    return InvokeRpcImpl<PayloadT, RespBufferT, MemPolicyT>(
       conn_id, std::move(request_header),
       std::move(payload).value_or(
         PayloadT{mr_, ucx_memory_type::HOST, std::vector<size_t>{0}}),
-      mem_policy);
+      std::move(mem_policy));
   } else {
-    return InvokeRpcImpl<std::monostate, RespBufferT, MemPolicy>(
-      conn_id, std::move(request_header), std::monostate{}, mem_policy);
+    return InvokeRpcImpl<std::monostate, RespBufferT, MemPolicyT>(
+      conn_id, std::move(request_header), std::monostate{},
+      std::move(mem_policy));
   }
 }
 
-template <typename PayloadT, typename RespBufferT, typename MemPolicy>
+template <typename PayloadT, typename RespBufferT, typename MemPolicyT>
   requires(rpc::is_payload_v<PayloadT>
            || std::is_same_v<PayloadT, std::monostate>)
           && rpc::is_payload_v<RespBufferT>
-          && is_receiver_memory_policy_v<MemPolicy, RespBufferT>
+          && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
           && detail::is_dynamic_api<PayloadT>::value
           && (!std::is_same_v<
               std::decay_t<PayloadT>, std::optional<std::decay_t<PayloadT>>>)
@@ -1172,7 +1221,7 @@ auto AxonWorker::InvokeRpc(
   WorkerKey worker_key,
   rpc::RpcRequestHeader&& request_header,
   PayloadT&& payload,
-  MemPolicy mem_policy) {
+  MemPolicyT mem_policy) {
   std::expected<uint64_t, std::error_code> conn_id =
     std::unexpected(std::make_error_code(errors::AxonErrc::WorkerNotFound));
   if (const auto* worker_info = remote_workers_.access_lockless(worker_key)) {
@@ -1181,24 +1230,25 @@ auto AxonWorker::InvokeRpc(
 
   request_header.request_id = rpc::request_id_t{next_request_id_.fetch_add(1)};
 
-  return InvokeRpcImpl<PayloadT, RespBufferT, MemPolicy>(
-    conn_id, std::move(request_header), std::move(payload), mem_policy);
+  return InvokeRpcImpl<PayloadT, RespBufferT, MemPolicyT>(
+    conn_id, std::move(request_header), std::move(payload),
+    std::move(mem_policy));
 }
 
-template <typename ReceivedBufferT, typename MemPolicy, typename MsgLcPolicy>
+template <typename ReceivedBufferT, typename MemPolicyT, typename MsgLcPolicyT>
 pro::proxy<AxonWorker::FullRequestHandlerFacade>
 AxonWorker::ServerMakeFullRequestHandler_(
-  MemPolicy mem_policy, MsgLcPolicy lc_policy) {
+  MemPolicyT mem_policy, MsgLcPolicyT lc_policy) {
   return pro::make_proxy<FullRequestHandlerFacade>(
-    ServerRequestHandlerVisitor_<ReceivedBufferT, MemPolicy, MsgLcPolicy>{
-      this, mem_policy, lc_policy});
+    ServerRequestHandlerVisitor_<ReceivedBufferT, MemPolicyT, MsgLcPolicyT>{
+      this, std::move(mem_policy), std::move(lc_policy)});
 }
 
-template <typename ReceivedBufferT, typename MemPolicy, typename MsgLcPolicy>
+template <typename ReceivedBufferT, typename MemPolicyT, typename MsgLcPolicyT>
 struct AxonWorker::ServerRequestHandlerVisitor_ {
   AxonWorker* worker;
-  MemPolicy mem_policy;
-  MsgLcPolicy lc_policy;
+  mutable MemPolicyT mem_policy;
+  mutable MsgLcPolicyT lc_policy;
 
   auto operator()(
     uint64_t conn_id, const rpc::RpcRequestHeader* req_header_ptr,
@@ -1236,13 +1286,14 @@ struct AxonWorker::ServerRequestHandlerVisitor_ {
       });
     }
 
-    auto rndv_sender = unifex::on(
-                         worker->server_ctx_->get_scheduler(),
-                         worker->ProcessRndvBuffer_<ReceivedBufferT, MemPolicy>(
-                           worker->server_ctx_->get_scheduler(), am_desc_key,
-                           mem_policy, tensor_metas))
-                       | unifex::let_value(BufferBundleProcessor_{
-                         worker, conn_id, req_header_ptr, lc_policy});
+    auto rndv_sender =
+      unifex::on(
+        worker->server_ctx_->get_scheduler(),
+        worker->ProcessRndvBuffer_<ReceivedBufferT, MemPolicyT>(
+          worker->server_ctx_->get_scheduler(), am_desc_key,
+          std::move(mem_policy), tensor_metas))
+      | unifex::let_value(BufferBundleProcessor_{
+        worker, conn_id, req_header_ptr, std::move(lc_policy)});
     return rndv_sender;
   }
 
@@ -1258,8 +1309,9 @@ struct AxonWorker::ServerRequestHandlerVisitor_ {
         auto ucx_buffer_vec =
           std::move(payload).to_buffer_vec({payload.size()});
         return worker
-          ->ServerDispatchAndManageLifecycle_<ReceivedBufferT, MsgLcPolicy>(
-            conn_id, req_header_ptr, std::move(ucx_buffer_vec), lc_policy);
+          ->ServerDispatchAndManageLifecycle_<ReceivedBufferT, MsgLcPolicyT>(
+            conn_id, req_header_ptr, std::move(ucx_buffer_vec),
+            std::move(lc_policy));
       } else {
         std::vector<size_t> sizes;
         sizes.reserve(tensor_metas.size());
@@ -1269,40 +1321,40 @@ struct AxonWorker::ServerRequestHandlerVisitor_ {
           });
         auto ucx_buffer = std::move(payload).to_buffer_vec(sizes);
         return worker
-          ->ServerDispatchAndManageLifecycle_<ReceivedBufferT, MsgLcPolicy>(
-            conn_id, req_header_ptr, std::move(ucx_buffer), lc_policy);
+          ->ServerDispatchAndManageLifecycle_<ReceivedBufferT, MsgLcPolicyT>(
+            conn_id, req_header_ptr, std::move(ucx_buffer),
+            std::move(lc_policy));
       }
     } else {
       return worker
-        ->ServerDispatchAndManageLifecycle_<ucxx::UcxBuffer, MsgLcPolicy>(
-          conn_id, req_header_ptr, std::move(payload), lc_policy);
+        ->ServerDispatchAndManageLifecycle_<ucxx::UcxBuffer, MsgLcPolicyT>(
+          conn_id, req_header_ptr, std::move(payload), std::move(lc_policy));
     }
   }
 };
 
 template <
-  typename ReceivedBufferT, typename Fn, typename MemPolicy,
-  typename MsgLcPolicy>
+  typename ReceivedBufferT, typename Fn, typename MemPolicyT,
+  typename MsgLcPolicyT>
   requires rpc::is_payload_v<ReceivedBufferT>
-           && is_receiver_memory_policy_v<MemPolicy, ReceivedBufferT>
-           && is_message_lifecycle_policy_v<MsgLcPolicy>
+           && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
+           && is_message_lifecycle_policy_v<MsgLcPolicyT>
 void AxonWorker::RegisterFunction(
   rpc::function_id_t id, Fn&& fn, data::string&& function_name,
-  MemPolicy mem_policy, MsgLcPolicy lc_policy) {
+  MemPolicyT mem_policy, MsgLcPolicyT lc_policy) {
   dispatcher_.RegisterFunction(
     id, std::forward<Fn>(fn), std::move(function_name));
 
   registered_handlers_.emplace(
     id,
-    ServerMakeFullRequestHandler_<ReceivedBufferT, MemPolicy, MsgLcPolicy>(
-      mem_policy, lc_policy));
+    ServerMakeFullRequestHandler_<ReceivedBufferT, MemPolicyT, MsgLcPolicyT>(
+      std::move(mem_policy), std::move(lc_policy)));
 }
 
 template <typename Checker>
 void AxonWorker::SetBypassRejectionFunction(Checker&& checker) {
   bypass_backpressure_checker_ =
-    pro::make_proxy_view<BypassRejectionCheckerFacade>(
-      std::forward<Checker>(checker));
+    pro::make_proxy<BypassRejectionCheckerFacade>(std::move(checker));
 }
 
 template <typename Func>
@@ -1374,14 +1426,14 @@ inline std::expected<void, std::error_code> AxonWorker::ProcessLifecycleStatus_(
   return std::expected<void, std::error_code>(std::in_place);
 }
 
-template <typename RespBufferT, typename MemPolicy>
+template <typename RespBufferT, typename MemPolicyT>
 struct AxonWorker::ClientResponseHandlerVisitor_ {
   AxonWorker* worker;
-  MemPolicy mem_policy;
+  mutable MemPolicyT mem_policy;
   mutable rpc::ResponseHeaderUniquePtr resp_header_ptr;
 
   auto operator()(size_t am_desc_key)
-    -> ResponseHandlerReturnType<RespBufferT, MemPolicy> {
+    -> ResponseHandlerReturnType<RespBufferT, MemPolicyT> {
     // RNDV Path
     auto tensor_metas = utils::ExtractTensorMetas(resp_header_ptr->results);
     if (tensor_metas.empty()) [[unlikely]] {
@@ -1417,18 +1469,18 @@ struct AxonWorker::ClientResponseHandlerVisitor_ {
     auto rndv_sender =
       unifex::on(
         worker->client_ctx_->get_scheduler(),
-        worker->ProcessRndvBuffer_<RespBufferT, MemPolicy>(
-          worker->client_ctx_->get_scheduler(), am_desc_key, mem_policy,
-          tensor_metas))
+        worker->ProcessRndvBuffer_<RespBufferT, MemPolicyT>(
+          worker->client_ctx_->get_scheduler(), am_desc_key,
+          std::move(mem_policy), tensor_metas))
       | unifex::then(MoveBundleBuffer<RespBufferT>{})
       | unifex::then(
-        AxonWorker::ResponseHandlerRndvReturnType<RespBufferT, MemPolicy>{
+        AxonWorker::ResponseHandlerRndvReturnType<RespBufferT, MemPolicyT>{
           std::move(resp_header_ptr)});
     return rndv_sender;
   }
 
   auto operator()(ucxx::UcxBuffer&& payload)
-    -> ResponseHandlerReturnType<RespBufferT, MemPolicy> {
+    -> ResponseHandlerReturnType<RespBufferT, MemPolicyT> {
     // Eager Path
     if constexpr (std::is_same_v<RespBufferT, ucxx::UcxBufferVec>) {
       auto tensor_metas = utils::ExtractTensorMetas(resp_header_ptr->results);

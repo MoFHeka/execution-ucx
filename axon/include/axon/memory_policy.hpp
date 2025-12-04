@@ -38,8 +38,7 @@ struct BufferProviderFacade
       ReceivedBufferT(const TensorMetaRefVec&)>::build {};
 
 template <typename ReceivedBufferT>
-using BufferProviderView =
-  pro::proxy_view<BufferProviderFacade<ReceivedBufferT>>;
+using BufferProvider = pro::proxy<BufferProviderFacade<ReceivedBufferT>>;
 
 /**
  * @brief Memory policy type representing that allocation is always on host
@@ -76,7 +75,7 @@ struct AlwaysOnHostPolicy {};
  * only a tag.
  */
 template <typename ReceivedBufferT>
-using CustomMemoryPolicy = BufferProviderView<ReceivedBufferT>;
+using CustomMemoryPolicy = BufferProvider<ReceivedBufferT>;
 
 template <typename ReceivedBufferT>
 using ReceiverMemoryPolicy =
