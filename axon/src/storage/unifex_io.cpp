@@ -32,10 +32,8 @@ namespace storage {
 
 // UnifexOutputStream implementation
 UnifexOutputStream::UnifexOutputStream(
-  _::async_scope& async_scope,
-  io_context& context,
-  std::filesystem::path file_path,
-  size_t buffer_size)
+  _::async_scope& async_scope, io_context& context,
+  std::filesystem::path file_path, size_t buffer_size)
   : async_scope_(async_scope), context_(context), file_path_(file_path) {
   buffers_[0].data_.resize(buffer_size);
   buffers_[1].data_.resize(buffer_size);
@@ -114,15 +112,13 @@ void UnifexOutputStream::submit_buffer(int buffer_idx, size_t size) {
       [&ifile = *file_, size](auto& state) {
         auto& [buffer, offset] = state;
         return unifex::async_write_some_at(
-          ifile,
-          offset,
+          ifile, offset,
           unifex::as_bytes(unifex::span{buffer.data_.data(), size}));
       })
     | unifex::let_error([](auto ec) {
         std::exception_ptr p;
         if constexpr (std::is_same_v<
-                        std::decay_t<decltype(ec)>,
-                        std::error_code>) {
+                        std::decay_t<decltype(ec)>, std::error_code>) {
           p = std::make_exception_ptr(std::system_error{ec});
         } else {
           p = ec;
@@ -144,10 +140,8 @@ void UnifexOutputStream::wait_for_buffer(int buffer_idx) {
 
 // UnifexInputStream implementation
 UnifexInputStream::UnifexInputStream(
-  _::async_scope& async_scope,
-  io_context& context,
-  std::filesystem::path file_path,
-  size_t buffer_size)
+  _::async_scope& async_scope, io_context& context,
+  std::filesystem::path file_path, size_t buffer_size)
   : async_scope_(async_scope), context_(context), file_path_(file_path) {
   buffers_[0].data_.resize(buffer_size);
   buffers_[1].data_.resize(buffer_size);
@@ -213,29 +207,28 @@ uint64_t UnifexInputStream::ByteCount() const { return byte_count_; }
 
 void UnifexInputStream::prefetch_buffer(int buffer_idx) {
   auto& buffer = buffers_[buffer_idx];
-  auto read_task = unifex::let_value_with(
-                     [&buffer, file_offset_ = file_offset_]() {
-                       return std::tie(buffer, file_offset_);
-                     },
-                     [&ifile = *file_](auto& state) {
-                       auto& [buffer, offset] = state;
-                       return unifex::async_read_some_at(
-                         ifile,
-                         offset,
-                         unifex::as_writable_bytes(unifex::span{
-                           buffer.data_.data(), buffer.data_.size()}));
-                     })
-                   | unifex::let_error([](auto ec) {
-                       std::exception_ptr p;
-                       if constexpr (std::is_same_v<
-                                       std::decay_t<decltype(ec)>,
-                                       std::error_code>) {
-                         p = std::make_exception_ptr(std::system_error{ec});
-                       } else {
-                         p = ec;
-                       }
-                       return unifex::just_error(std::move(p));
-                     });
+  auto read_task =
+    unifex::let_value_with(
+      [&buffer, file_offset_ = file_offset_]() {
+        return std::tie(buffer, file_offset_);
+      },
+      [&ifile = *file_](auto& state) {
+        auto& [buffer, offset] = state;
+        return unifex::async_read_some_at(
+          ifile, offset,
+          unifex::as_writable_bytes(
+            unifex::span{buffer.data_.data(), buffer.data_.size()}));
+      })
+    | unifex::let_error([](auto ec) {
+        std::exception_ptr p;
+        if constexpr (std::is_same_v<
+                        std::decay_t<decltype(ec)>, std::error_code>) {
+          p = std::make_exception_ptr(std::system_error{ec});
+        } else {
+          p = ec;
+        }
+        return unifex::just_error(std::move(p));
+      });
   buffer.read_future_.emplace(
     unifex::spawn_future(std::move(read_task), async_scope_));
   file_offset_ += buffer.data_.size();

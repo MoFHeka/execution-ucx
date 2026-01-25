@@ -383,14 +383,12 @@ class AsyncRpcDispatcher : public RpcDispatcher {
   RpcInvokeAsyncResult<ReturnedPayload> Dispatch(
     RpcRequestHeader&& request_header,
     const RpcResponseBuilder& builder = RpcResponseBuilder{}) {
-    return unifex::let_value_with(
-      [request_header = std::move(request_header)]() mutable {
-        return request_header;
-      },
-      [this, &builder](RpcRequestHeader& request_header) {
-        return DispatchImpl(
-          request_header, RpcContextPtr(nullptr, [](void*) {}), builder);
-      });
+    return unifex::just(std::move(request_header))
+           | unifex::let_value(
+             [this, &builder](const RpcRequestHeader& request_header) {
+               return DispatchImpl(
+                 request_header, RpcContextPtr(nullptr, [](void*) {}), builder);
+             });
   }
 
   template <typename InputData>

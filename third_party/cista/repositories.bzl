@@ -19,11 +19,22 @@ def _cista_repo_impl(repository_ctx):
         "BUILD.bazel",
         """
 load("@rules_cc//cc:defs.bzl", "cc_library")
+
+SUPPORTED_CPP_STANDARDS = ["17", "20", "23", "2b", "26"]
+
+[config_setting(
+    name = "is_cpp" + v,
+    values = {"cxxopt": "-std=c++" + v},
+) for v in SUPPORTED_CPP_STANDARDS]
+
 cc_library(
     name = "cista",
     hdrs = ["cista.h"],
     includes = ["."],
-    copts = ["-std=c++17"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} | 
+        {"//conditions:default": ["@platforms//:incompatible"]}
+    ),
     visibility = ["//visibility:public"],
 )
 """,

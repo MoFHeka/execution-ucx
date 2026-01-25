@@ -42,3 +42,7 @@ bazel-execution-ucx
 
 # VSCode
 .vscode
+.cursor
+
+# Python cache
+__pycache__

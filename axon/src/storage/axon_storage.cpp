@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "axon/storage/axon_storage.hpp"
 
-#include <fstream>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -59,8 +57,7 @@ auto AxonStorage::load(
 }
 
 auto AxonStorage::save_request(
-  ucxx::UcxMemoryResourceManager& mr,
-  request_iterator it,
+  ucxx::UcxMemoryResourceManager& mr, request_iterator it,
   const std::filesystem::path& base_path) const -> std::error_code {
   AsyncUnifexAvroIO io_service(io_context_);
   std::vector<std::shared_ptr<AxonRequest>> single_request_vec;

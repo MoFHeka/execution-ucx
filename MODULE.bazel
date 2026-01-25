@@ -18,12 +18,13 @@ limitations under the License.
 module(
     name = "execution-ucx",
     version = "0.0.1",
-    compatibility_level = 0,
     bazel_compatibility = [">=7.0.0"],
+    compatibility_level = 0,
 )
 
 # setting cuda toolchain
 bazel_dep(name = "rules_cuda", version = "0.2.5")
+
 cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
 cuda.local_toolchain(
     name = "local_cuda",
@@ -38,6 +39,7 @@ use_repo(cuda, "local_cuda")
 
 # setting Meta libunifex as default CPP stdexec implement
 bazel_dep(name = "liburing", version = "2.10")
+
 unifex_deps = use_extension("//third_party/libunifex:extensions.bzl", "libunifex_dep")
 use_repo(unifex_deps, "unifex")
 
@@ -45,7 +47,10 @@ use_repo(unifex_deps, "unifex")
 ucx_deps = use_extension("//third_party/openucx:extensions.bzl", "openucx_dependencie")
 
 # ucx_deps.ucx_library(name = "ucx", ucx_path = "/opt/nvidia/hpc_sdk/Linux_x86_64/2024/comm_libs/12.5/hpcx/latest/ucx/")  # A local UCX path
-ucx_deps.ucx_git(name = "ucx", tag = "v1.18.1")
+ucx_deps.ucx_git(
+    name = "ucx",
+    tag = "v1.18.1",
+)
 use_repo(ucx_deps, "ucx")
 
 # setting cista for RPC serialization/deserialization
@@ -67,28 +72,66 @@ bazel_dep(name = "avro-cpp", version = "1.12.0")
 proxy_deps = use_extension("//third_party/proxy:extensions.bzl", "proxy_dep")
 use_repo(proxy_deps, "proxy")
 
+# setting nanobind for Python bindings
+bazel_dep(name = "nanobind", version = "2.9.2")
+
+# Override bzip2 for pybind11 project to fix the POSIX compatibility issue
+bzip2_deps = use_extension("//third_party/bzip2:extensions.bzl", "bzip2_dep")
+use_repo(bzip2_deps, "bzip2")
+
+# setting rules_python for Python test dependencies
+# Note: python_version is not specified to allow users to use their preferred Python version
+# The package supports Python 3.8+ (compatible with nanobind 2.9.2)
+#
+# To build wheels for multiple Python versions:
+#   1. Use different Python toolchain configurations via --config flags
+#   2. Build with: bazel build //axon/python:wheel --config=python38
+#   3. Or set HERMETIC_PYTHON_VERSION environment variable:
+#      HERMETIC_PYTHON_VERSION=3.10 bazel build //axon/python:wheel
+#
+# For C++ extension modules, each Python version requires a separate build
+# because the extension is compiled against a specific Python ABI.
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+
+# Set default Python version to 3.10
+# Users can override this by:
+#   - Setting HERMETIC_PYTHON_VERSION environment variable
+#   - Using --config=python38, --config=python39, etc. in .bazelrc
+#   - Overriding in their own MODULE.bazel
+python.toolchain(
+    python_version = "3.10",
+)
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+
+# Use the same Python version as the toolchain
+# This ensures pip dependencies are resolved for the correct Python version
+pip.parse(
+    hub_name = "python_deps",
+    python_version = "3.10",  # Must match python.toolchain python_version
+    requirements_lock = "//axon/python:requirements_lock.txt",
+)
+use_repo(pip, "python_deps")
+
 # basic bazel dependencies
 bazel_dep(name = "rules_shell", version = "0.6.1")
-
 bazel_dep(name = "rules_cc", version = "0.2.12-rc2")
-
 bazel_dep(name = "rules_foreign_cc", version = "0.12.0")
+bazel_dep(name = "rules_python", version = "0.36.0")
 
 # Hedron's Compile Commands Extractor for Bazel
 # https://github.com/hedronvision/bazel-compile-commands-extractor
 bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
 git_override(
     module_name = "hedron_compile_commands",
-    remote = "https://github.com/hedronvision/bazel-compile-commands-extractor.git",
     commit = "abb61a688167623088f8768cc9264798df6a9d10",
+    remote = "https://github.com/hedronvision/bazel-compile-commands-extractor.git",
     # Replace the commit hash (above) with the latest (https://github.com/hedronvision/bazel-compile-commands-extractor/commits/main).
     # Even better, set up Renovate and let it do the work for you (see "Suggestion: Updates" in the README).
 )
 
 bazel_dep(name = "platforms", version = "0.0.11")
-
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
-
 bazel_dep(name = "googletest", version = "1.16.0.bcr.1")
 
 register_toolchains(

@@ -75,12 +75,9 @@ using ucx_memory_resource = UcxMemoryResourceManager;
 
 ucx_am_context::ucx_am_context(
   std::reference_wrapper<ucx_memory_resource> memoryResource,
-  const std::string_view ucxContextName,
-  const time_duration connectionTimeout,
-  const bool connectionHandleError,
-  const uint64_t clientId,
-  const std::unique_ptr<UcxAutoDeviceContext>
-    deviceContext)
+  const std::string_view ucxContextName, const time_duration connectionTimeout,
+  const bool connectionHandleError, const uint64_t clientId,
+  const std::unique_ptr<UcxAutoDeviceContext> deviceContext)
   : mr_(memoryResource),
     ucxAmContextName_(ucxContextName),
     connTimeout_(connectionTimeout),
@@ -113,13 +110,10 @@ static std::string context_name_from_ucp_context_(ucp_context_h ucpContext) {
 
 ucx_am_context::ucx_am_context(
   std::reference_wrapper<ucx_memory_resource> memoryResource,
-  const ucp_context_h ucpContext,
-  const std::string_view ucxAmContextName,
-  const time_duration connectionTimeout,
-  const bool connectionHandleError,
+  const ucp_context_h ucpContext, const std::string_view ucxAmContextName,
+  const time_duration connectionTimeout, const bool connectionHandleError,
   const uint64_t clientId,
-  const std::unique_ptr<UcxAutoDeviceContext>
-    deviceContext)
+  const std::unique_ptr<UcxAutoDeviceContext> deviceContext)
   : mr_(memoryResource),
     ucxAmContextName_(
       ucxAmContextName.empty() ? context_name_from_ucp_context_(ucpContext)
@@ -958,7 +952,7 @@ ucx_am_cqe& ucx_am_context::get_and_update_cq_entry() noexcept {
   const auto index = tail & cqMask_;
   auto& cqe = cqEntries_.at(index);
   // TODO(He Jia): cqTail_ should be updated in the caller after changing
-  // entry(FUCK)
+  // entry
   cqTail_.store(tail + 1, std::memory_order_release);
   return cqe;
 }
@@ -1208,9 +1202,25 @@ void ucx_am_context::progress_disconnected_connections() {
 
 void ucx_am_context::wait_disconnected_connections() {
   auto& disconnecting_conns = conn_manager_.get_disconnecting_connections();
+  auto start = std::chrono::steady_clock::now();
+  auto timeout = std::chrono::seconds(5);
+
   while (!disconnecting_conns.empty()) {
     ucp_worker_progress(ucpWorker_);
     progress_disconnected_connections();
+
+    if (std::chrono::steady_clock::now() - start > timeout) {
+      UCX_CTX_ERROR
+        << "wait_disconnected_connections timed out, forcing clear. "
+        << "Remaining connections: " << disconnecting_conns.size() << std::endl;
+      // Force clear to break the loop. The connections will be cleaned up
+      // when conn_manager_ is destroyed or when worker is destroyed.
+      // We manually clear the list to allow destructor to proceed.
+      // Note: This relies on conn_manager_ exposing a way to clear or we just
+      // break. Since we can't easily force clear the private list in
+      // conn_manager, we break.
+      break;
+    }
   }
 }
 
@@ -1334,12 +1344,8 @@ void ucx_am_context::ucx_handle_err_callback::handle_connection_error(
  * (`std::uint64_t`).
  */
 ucx_am_context::connect_sender tag_invoke(
-  tag_t<connect_endpoint>,
-  ucx_am_context::scheduler scheduler,
-  std::unique_ptr<sockaddr>
-    src_saddr,
-  std::unique_ptr<sockaddr>
-    dst_saddr,
+  tag_t<connect_endpoint>, ucx_am_context::scheduler scheduler,
+  std::unique_ptr<sockaddr> src_saddr, std::unique_ptr<sockaddr> dst_saddr,
   socklen_t addrlen) {
   return ucx_am_context::connect_sender{
     *scheduler.context_, std::move(src_saddr), std::move(dst_saddr), addrlen};
@@ -1355,11 +1361,8 @@ ucx_am_context::connect_sender tag_invoke(
  * (`std::uint64_t`).
  */
 ucx_am_context::connect_sender tag_invoke(
-  tag_t<connect_endpoint>,
-  ucx_am_context::scheduler scheduler,
-  std::nullptr_t src_saddr,
-  std::unique_ptr<sockaddr>
-    dst_saddr,
+  tag_t<connect_endpoint>, ucx_am_context::scheduler scheduler,
+  std::nullptr_t src_saddr, std::unique_ptr<sockaddr> dst_saddr,
   socklen_t addrlen) {
   return ucx_am_context::connect_sender{
     *scheduler.context_, nullptr, std::move(dst_saddr), addrlen};
@@ -1375,12 +1378,8 @@ ucx_am_context::connect_sender tag_invoke(
  * (`std::uint64_t`).
  */
 ucx_am_context::connect_sender tag_invoke(
-  tag_t<connect_endpoint>,
-  ucx_am_context::scheduler scheduler,
-  std::unique_ptr<sockaddr>
-    src_saddr,
-  std::unique_ptr<sockaddr>
-    dst_saddr,
+  tag_t<connect_endpoint>, ucx_am_context::scheduler scheduler,
+  std::unique_ptr<sockaddr> src_saddr, std::unique_ptr<sockaddr> dst_saddr,
   size_t addrlen) {
   return ucx_am_context::connect_sender{
     *scheduler.context_, std::move(src_saddr), std::move(dst_saddr),
@@ -1397,11 +1396,8 @@ ucx_am_context::connect_sender tag_invoke(
  * (`std::uint64_t`).
  */
 ucx_am_context::connect_sender tag_invoke(
-  tag_t<connect_endpoint>,
-  ucx_am_context::scheduler scheduler,
-  std::nullptr_t src_saddr,
-  std::unique_ptr<sockaddr>
-    dst_saddr,
+  tag_t<connect_endpoint>, ucx_am_context::scheduler scheduler,
+  std::nullptr_t src_saddr, std::unique_ptr<sockaddr> dst_saddr,
   size_t addrlen) {
   return ucx_am_context::connect_sender{
     *scheduler.context_, nullptr, std::move(dst_saddr),
@@ -1416,8 +1412,7 @@ ucx_am_context::connect_sender tag_invoke(
  * (`std::uint64_t`).
  */
 ucx_am_context::connect_sender tag_invoke(
-  tag_t<connect_endpoint>,
-  ucx_am_context::scheduler scheduler,
+  tag_t<connect_endpoint>, ucx_am_context::scheduler scheduler,
   const std::vector<std::byte>& address_buffer) {
   std::vector<std::byte> ucp_address_buffer = address_buffer;
   return ucx_am_context::connect_sender{
@@ -1432,8 +1427,7 @@ ucx_am_context::connect_sender tag_invoke(
  * (`std::uint64_t`).
  */
 ucx_am_context::connect_sender tag_invoke(
-  tag_t<connect_endpoint>,
-  ucx_am_context::scheduler scheduler,
+  tag_t<connect_endpoint>, ucx_am_context::scheduler scheduler,
   std::vector<std::byte>&& address_buffer) {
   return ucx_am_context::connect_sender{
     *scheduler.context_, std::move(address_buffer)};
@@ -1519,10 +1513,8 @@ ucx_am_context::send_sender tag_invoke(
  * @return A sender that completes with no value on success.
  */
 ucx_am_context::send_sender tag_invoke(
-  tag_t<connection_send>,
-  ucx_am_context::scheduler scheduler,
-  std::uint64_t conn_id,
-  ucx_am_data& data) {
+  tag_t<connection_send>, ucx_am_context::scheduler scheduler,
+  std::uint64_t conn_id, ucx_am_data& data) {
   return ucx_am_context::send_sender{*scheduler.context_, conn_id, data};
 }
 
@@ -1534,10 +1526,8 @@ ucx_am_context::send_sender tag_invoke(
  * @return A sender that completes with no value on success.
  */
 ucx_am_context::send_sender tag_invoke(
-  tag_t<connection_send>,
-  ucx_am_context::scheduler scheduler,
-  UcxConnection& conn,
-  ucx_am_data& data) {
+  tag_t<connection_send>, ucx_am_context::scheduler scheduler,
+  UcxConnection& conn, ucx_am_data& data) {
   return ucx_am_context::send_sender{*scheduler.context_, conn, data};
 }
 
@@ -1565,10 +1555,8 @@ ucx_am_context::send_sender_move tag_invoke(
  * @return A sender that completes with no value on success.
  */
 ucx_am_context::send_sender_move tag_invoke(
-  tag_t<connection_send>,
-  ucx_am_context::scheduler scheduler,
-  std::uint64_t conn_id,
-  UcxAmData&& data) {
+  tag_t<connection_send>, ucx_am_context::scheduler scheduler,
+  std::uint64_t conn_id, UcxAmData&& data) {
   return ucx_am_context::send_sender_move{
     *scheduler.context_, conn_id, std::move(data)};
 }
@@ -1582,10 +1570,8 @@ ucx_am_context::send_sender_move tag_invoke(
  * @return A sender that completes with no value on success.
  */
 ucx_am_context::send_sender_move tag_invoke(
-  tag_t<connection_send>,
-  ucx_am_context::scheduler scheduler,
-  UcxConnection& conn,
-  UcxAmData&& data) {
+  tag_t<connection_send>, ucx_am_context::scheduler scheduler,
+  UcxConnection& conn, UcxAmData&& data) {
   return ucx_am_context::send_sender_move{
     *scheduler.context_, conn, std::move(data)};
 }
@@ -1613,10 +1599,8 @@ ucx_am_context::send_iovec_sender tag_invoke(
  * @return A sender that completes with no value on success.
  */
 ucx_am_context::send_iovec_sender tag_invoke(
-  tag_t<connection_send>,
-  ucx_am_context::scheduler scheduler,
-  std::uint64_t conn_id,
-  ucx_am_iovec& iovec) {
+  tag_t<connection_send>, ucx_am_context::scheduler scheduler,
+  std::uint64_t conn_id, ucx_am_iovec& iovec) {
   return ucx_am_context::send_iovec_sender{*scheduler.context_, conn_id, iovec};
 }
 
@@ -1629,10 +1613,8 @@ ucx_am_context::send_iovec_sender tag_invoke(
  * @return A sender that completes with no value on success.
  */
 ucx_am_context::send_iovec_sender tag_invoke(
-  tag_t<connection_send>,
-  ucx_am_context::scheduler scheduler,
-  UcxConnection& conn,
-  ucx_am_iovec& iovec) {
+  tag_t<connection_send>, ucx_am_context::scheduler scheduler,
+  UcxConnection& conn, ucx_am_iovec& iovec) {
   return ucx_am_context::send_iovec_sender{*scheduler.context_, conn, iovec};
 }
 
@@ -1645,10 +1627,8 @@ ucx_am_context::send_iovec_sender tag_invoke(
  * @return A sender that completes with no value on success.
  */
 ucx_am_context::send_iovec_sender_move tag_invoke(
-  tag_t<connection_send>,
-  ucx_am_context::scheduler scheduler,
-  conn_pair_t& conn,
-  UcxAmIovec&& iovec) {
+  tag_t<connection_send>, ucx_am_context::scheduler scheduler,
+  conn_pair_t& conn, UcxAmIovec&& iovec) {
   return ucx_am_context::send_iovec_sender_move{
     *scheduler.context_, conn, std::move(iovec)};
 }
@@ -1662,10 +1642,8 @@ ucx_am_context::send_iovec_sender_move tag_invoke(
  * @return A sender that completes with no value on success.
  */
 ucx_am_context::send_iovec_sender_move tag_invoke(
-  tag_t<connection_send>,
-  ucx_am_context::scheduler scheduler,
-  std::uint64_t conn_id,
-  UcxAmIovec&& iovec) {
+  tag_t<connection_send>, ucx_am_context::scheduler scheduler,
+  std::uint64_t conn_id, UcxAmIovec&& iovec) {
   return ucx_am_context::send_iovec_sender_move{
     *scheduler.context_, conn_id, std::move(iovec)};
 }
@@ -1679,10 +1657,8 @@ ucx_am_context::send_iovec_sender_move tag_invoke(
  * @return A sender that completes with no value on success.
  */
 ucx_am_context::send_iovec_sender_move tag_invoke(
-  tag_t<connection_send>,
-  ucx_am_context::scheduler scheduler,
-  UcxConnection& conn,
-  UcxAmIovec&& iovec) {
+  tag_t<connection_send>, ucx_am_context::scheduler scheduler,
+  UcxConnection& conn, UcxAmIovec&& iovec) {
   return ucx_am_context::send_iovec_sender_move{
     *scheduler.context_, conn, std::move(iovec)};
 }
@@ -1694,8 +1670,7 @@ ucx_am_context::send_iovec_sender_move tag_invoke(
  * @return A sender that, on success, returns an `active_message_bundle`.
  */
 ucx_am_context::recv_sender tag_invoke(
-  tag_t<connection_recv>,
-  ucx_am_context::scheduler scheduler,
+  tag_t<connection_recv>, ucx_am_context::scheduler scheduler,
   ucx_am_data& data) {
   return ucx_am_context::recv_sender{*scheduler.context_, data};
 }
@@ -1707,8 +1682,7 @@ ucx_am_context::recv_sender tag_invoke(
  * @return A sender that, on success, returns an `active_message_bundle`.
  */
 ucx_am_context::recv_sender tag_invoke(
-  tag_t<connection_recv>,
-  ucx_am_context::scheduler scheduler,
+  tag_t<connection_recv>, ucx_am_context::scheduler scheduler,
   ucx_memory_type data_type) {
   return ucx_am_context::recv_sender{*scheduler.context_, data_type};
 }

@@ -131,10 +131,9 @@ class RpcResponseBuilder {
               std::in_place_type<PayloadType>, std::move(non_const_payload)));
         } else {
           return std::make_pair(
-            std::move(header),
-            PayloadVariant(
-              std::in_place_type<PayloadType>,
-              std::forward<decltype(payload)>(payload)));
+            std::move(header), PayloadVariant(
+                                 std::in_place_type<PayloadType>,
+                                 std::forward<decltype(payload)>(payload)));
         }
       } else {
         auto&& payload =
@@ -153,10 +152,9 @@ class RpcResponseBuilder {
               std::in_place_type<PayloadType>, std::move(non_const_payload)));
         } else {
           return std::make_pair(
-            std::move(header),
-            PayloadVariant(
-              std::in_place_type<PayloadType>,
-              std::forward<decltype(payload)>(payload)));
+            std::move(header), PayloadVariant(
+                                 std::in_place_type<PayloadType>,
+                                 std::forward<decltype(payload)>(payload)));
         }
       }
     } else {

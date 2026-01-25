@@ -2,6 +2,18 @@ load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
+SUPPORTED_CPP_STANDARDS = [
+    "20",
+    "23",
+    "2b",
+    "26",
+]
+
+[config_setting(
+    name = "is_cpp" + v,
+    values = {"cxxopt": "-std=c++" + v},
+) for v in SUPPORTED_CPP_STANDARDS]
+
 filegroup(
     name = "rpc_utils",
     srcs = [
@@ -64,9 +76,27 @@ cc_library(
     hdrs = [
         "rpc_status.hpp",
     ],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         "@cista",
+    ],
+)
+
+cc_library(
+    name = "rpc_payload_types_lib",
+    hdrs = [
+        "rpc_payload_types.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":tensor_meta_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
     ],
 )
 
@@ -75,9 +105,13 @@ cc_library(
     hdrs = [
         "rpc_types.hpp",
     ],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":hybrid_logical_clock_lib",
+        ":rpc_payload_types_lib",
         ":rpc_status_lib",
     ],
 )
@@ -87,7 +121,10 @@ cc_library(
     hdrs = [
         "utils/cista_serialize_helper.hpp",
     ],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         "@cista",
     ],
@@ -98,7 +135,10 @@ cc_library(
     hdrs = [
         "utils/hybrid_logical_clock.hpp",
     ],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         "@cista",
     ],
@@ -109,7 +149,10 @@ cc_library(
     hdrs = [
         "utils/tensor_meta.hpp",
     ],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         "@cista",
         "@dlpack",
@@ -121,7 +164,10 @@ cc_library(
     hdrs = [
         ":rpc_basic_headers",
     ],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         "@cista",
     ],
@@ -133,7 +179,10 @@ cc_library(
         "rpc_facade_helpers.hpp",
         ":rpc_dispatcher_header",
     ],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":cista_serialize_helper_lib",
         ":rpc_basic_header_lib",
@@ -146,7 +195,10 @@ cc_library(
     hdrs = [
         ":async_rpc_dispatcher_header",
     ],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":rpc_dispatcher_lib",
         "@proxy",
@@ -159,15 +211,17 @@ cc_library(
     hdrs = [
         ":rpc_headers",
     ],
-    copts = ["-std=c++20"],
     defines = select({
         ":rpc_enable_natural_call": ["EUX_RPC_ENABLE_NATURAL_CALL"],
         "//conditions:default": [],
     }),
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":hybrid_logical_clock_lib",
         ":rpc_dispatcher_lib",
-        ":tensor_meta_lib",
         "@cista",
         "@execution-ucx//ucx_context:ucx_context_data_lib",
         "@proxy",
@@ -179,11 +233,13 @@ cc_library(
     hdrs = [
         ":async_rpc_headers",
     ],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":async_rpc_dispatcher_lib",
         ":hybrid_logical_clock_lib",
-        ":tensor_meta_lib",
         "@cista",
         "@execution-ucx//ucx_context:ucx_context_data_lib",
         "@proxy",
@@ -195,7 +251,10 @@ cc_test(
     name = "hybrid_logical_clock_test",
     size = "small",
     srcs = ["utils/hybrid_logical_clock_test.cpp"],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":hybrid_logical_clock_lib",
         "@cista",
@@ -207,11 +266,14 @@ cc_test(
     name = "rpc_dispatcher_test",
     size = "small",
     srcs = ["rpc_dispatcher_test.cpp"],
-    copts = ["-std=c++20"],
     defines = select({
         ":rpc_enable_natural_call": ["EUX_RPC_ENABLE_NATURAL_CALL"],
         "//conditions:default": ["EUX_RPC_ENABLE_NATURAL_CALL"],
     }),
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":rpc_headers_lib",
         "@googletest//:gtest_main",
@@ -222,7 +284,10 @@ cc_test(
     name = "async_rpc_dispatcher_test",
     size = "small",
     srcs = ["async_rpc_dispatcher_test.cpp"],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":async_rpc_headers_lib",
         "@googletest//:gtest_main",
@@ -233,7 +298,10 @@ cc_test(
     name = "rpc_request_builder_test",
     size = "small",
     srcs = ["rpc_request_builder_test.cpp"],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":rpc_headers_lib",
         "@googletest//:gtest_main",
@@ -244,7 +312,10 @@ cc_test(
     name = "rpc_response_builder_test",
     size = "small",
     srcs = ["rpc_response_builder_test.cpp"],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":rpc_headers_lib",
         "@googletest//:gtest_main",
@@ -255,7 +326,10 @@ cc_test(
     name = "rpc_causality_test",
     size = "small",
     srcs = ["rpc_causality_test.cpp"],
-    copts = ["-std=c++20"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":hybrid_logical_clock_lib",
         ":rpc_headers_lib",

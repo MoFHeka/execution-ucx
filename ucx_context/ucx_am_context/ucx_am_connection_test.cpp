@@ -269,8 +269,7 @@ static ucp_listener_h create_listener(
 }
 
 static void accept_connection(
-  std::shared_ptr<UcxConnection>& conn,
-  ucp_worker_h ucp_worker,
+  std::shared_ptr<UcxConnection>& conn, ucp_worker_h ucp_worker,
   ucp_conn_request_h& conn_request) {
   while (conn_request == nullptr) {
     ucp_worker_progress(ucp_worker);

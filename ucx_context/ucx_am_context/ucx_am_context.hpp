@@ -625,8 +625,7 @@ class ucx_am_context {
 
   struct schedule_at_operation : operation_base {
     explicit schedule_at_operation(
-      ucx_am_context& context,
-      const time_point& dueTime,
+      ucx_am_context& context, const time_point& dueTime,
       bool canBeCancelled) noexcept
       : context_(context), dueTime_(dueTime), canBeCancelled_(canBeCancelled) {}
 
@@ -679,8 +678,7 @@ class ucx_am_context {
 
   // Create a new connection
   std::uint64_t create_new_connection(
-    const struct sockaddr* src_saddr,
-    const struct sockaddr* dst_saddr,
+    const struct sockaddr* src_saddr, const struct sockaddr* dst_saddr,
     socklen_t addrlen);
 
   std::uint64_t create_new_connection(const ucp_address_t* ucp_address);
@@ -1425,7 +1423,10 @@ class ucx_am_context::recv_sender {
       // intrusive list breaks if the same operation is submitted twice
       // break the cycle: `on_stop_complete` delegates to the parent operation
       static void on_stop_complete(operation_base* op) noexcept {
-        operation::on_read_complete(&(static_cast<cancel_operation*>(op)->op_));
+        auto& self =
+          *static_cast<operation*>(&(static_cast<cancel_operation*>(op)->op_));
+        self.stopCallback_.destruct();
+        unifex::set_done(std::move(self.receiver_));
       }
 
       static void on_schedule_stop_complete(operation_base* op) noexcept {
@@ -1485,7 +1486,8 @@ class ucx_am_context::recv_sender {
     ucx_am_context& context, ucx_memory_type data_type) noexcept
     : context_(context),
       data_own_(
-        std::in_place, context.mr_, 0, 0, data_type, /*own_header=*/true,
+        std::in_place, context.mr_, 0, 0, data_type,
+        /*own_header=*/true,
         /*own_buffer=*/true),
       data_(*data_own_.value().get()),
       mr_(context.mr_) {}
@@ -1750,7 +1752,10 @@ class ucx_am_context::recv_buffer_sender_t {
       // intrusive list breaks if the same operation is submitted twice
       // break the cycle: `on_stop_complete` delegates to the parent operation
       static void on_stop_complete(operation_base* op) noexcept {
-        operation::on_read_complete(&(static_cast<cancel_operation*>(op)->op_));
+        auto& self =
+          *static_cast<operation*>(&(static_cast<cancel_operation*>(op)->op_));
+        self.stopCallback_.destruct();
+        unifex::set_done(std::move(self.receiver_));
       }
 
       static void on_schedule_stop_complete(operation_base* op) noexcept {
@@ -2162,7 +2167,10 @@ class ucx_am_context::recv_header_sender {
       // intrusive list breaks if the same operation is submitted twice
       // break the cycle: `on_stop_complete` delegates to the parent operation
       static void on_stop_complete(operation_base* op) noexcept {
-        operation::on_read_complete(&(static_cast<cancel_operation*>(op)->op_));
+        auto& self =
+          *static_cast<operation*>(&(static_cast<cancel_operation*>(op)->op_));
+        self.stopCallback_.destruct();
+        unifex::set_done(std::move(self.receiver_));
       }
 
       static void on_schedule_stop_complete(operation_base* op) noexcept {
@@ -2465,8 +2473,10 @@ class ucx_am_context::send_sender_t {
       // intrusive list breaks if the same operation is submitted twice
       // break the cycle: `on_stop_complete` delegates to the parent operation
       static void on_stop_complete(operation_base* op) noexcept {
-        operation::on_write_complete(
-          &(static_cast<cancel_operation*>(op)->op_));
+        auto& self =
+          *static_cast<operation*>(&(static_cast<cancel_operation*>(op)->op_));
+        self.stopCallback_.destruct();
+        unifex::set_done(std::move(self.receiver_));
       }
 
       static void on_schedule_stop_complete(operation_base* op) noexcept {
@@ -2864,11 +2874,8 @@ class ucx_am_context::scheduler {
   friend accept_connection tag_invoke(
     tag_t<accept_endpoint>, scheduler scheduler, port_t port);
   friend accept_connection tag_invoke(
-    tag_t<accept_endpoint>,
-    scheduler scheduler,
-    std::unique_ptr<sockaddr>
-      socket,
-    size_t addrlen);
+    tag_t<accept_endpoint>, scheduler scheduler,
+    std::unique_ptr<sockaddr> socket, size_t addrlen);
   friend connect_sender tag_invoke(
     tag_t<connect_endpoint>, scheduler scheduler,
     std::unique_ptr<sockaddr> src_saddr, std::unique_ptr<sockaddr> dst_saddr,
@@ -3206,7 +3213,10 @@ class ucx_am_context::dispatch_connection_error_sender {
       explicit cancel_operation(operation& op) noexcept : op_(op) {}
 
       static void on_stop_complete(operation_base* op) noexcept {
-        operation::on_dispatch(&(static_cast<cancel_operation*>(op)->op_));
+        auto& self =
+          *static_cast<operation*>(&(static_cast<cancel_operation*>(op)->op_));
+        self.stopCallback_.destruct();
+        unifex::set_done(std::move(self.receiver_));
       }
 
       static void on_schedule_stop_complete(operation_base* op) noexcept {
@@ -3516,7 +3526,10 @@ class ucx_am_context::connect_sender {
       // intrusive list breaks if the same operation is submitted twice
       // break the cycle: `on_stop_complete` delegates to the parent operation
       static void on_stop_complete(operation_base* op) noexcept {
-        operation::on_connect(&(static_cast<cancel_operation*>(op)->op_));
+        auto& self =
+          *static_cast<operation*>(&(static_cast<cancel_operation*>(op)->op_));
+        self.stopCallback_.destruct();
+        unifex::set_done(std::move(self.receiver_));
       }
 
       static void on_schedule_stop_complete(operation_base* op) noexcept {
@@ -3569,12 +3582,8 @@ class ucx_am_context::connect_sender {
    * @param addrlen The length of the socket address structure.
    */
   connect_sender(
-    ucx_am_context& context,
-    std::unique_ptr<sockaddr>
-      src_saddr,
-    std::unique_ptr<sockaddr>
-      dst_saddr,
-    socklen_t addrlen) noexcept
+    ucx_am_context& context, std::unique_ptr<sockaddr> src_saddr,
+    std::unique_ptr<sockaddr> dst_saddr, socklen_t addrlen) noexcept
     : context_(context),
       address_(
         sockaddr_info{std::move(src_saddr), std::move(dst_saddr), addrlen}) {}
@@ -3792,7 +3801,10 @@ class ucx_am_context::accept_sender {
       // intrusive list breaks if the same operation is submitted twice
       // break the cycle: `on_stop_complete` delegates to the parent operation
       static void on_stop_complete(operation_base* op) noexcept {
-        operation::on_accept(&(static_cast<cancel_operation*>(op)->op_));
+        auto& self =
+          *static_cast<operation*>(&(static_cast<cancel_operation*>(op)->op_));
+        self.stopCallback_.destruct();
+        unifex::set_done(std::move(self.receiver_));
       }
 
       static void on_schedule_stop_complete(operation_base* op) noexcept {
@@ -3872,9 +3884,7 @@ class ucx_am_context::accept_connection {
    * @param addrlen The length of the socket address structure.
    */
   accept_connection(
-    ucx_am_context& context,
-    std::unique_ptr<sockaddr>
-      socket,
+    ucx_am_context& context, std::unique_ptr<sockaddr> socket,
     size_t addrlen) noexcept
     : context_(context), socket_(std::move(socket)), addrlen_(addrlen) {}
 

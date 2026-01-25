@@ -5,9 +5,12 @@ load("//axon:build_defs/errors_libs.bzl", "axon_errors_libs")
 load("//axon:build_defs/metrics_libs.bzl", "axon_metrics_libs")
 load("//axon:build_defs/storage_libs.bzl", "axon_storage_libs")
 load("//axon:build_defs/tests.bzl", "axon_tests")
-load("//axon:build_defs/utils_libs.bzl", "axon_utils_libs")
+load("//axon:build_defs/utils_libs.bzl", "axon_utils_config_settings", "axon_utils_libs")
 
 package(default_visibility = ["//visibility:public"])
+
+# Define config settings for C++ standards
+axon_utils_config_settings()
 
 # Load all library definitions
 axon_utils_libs()

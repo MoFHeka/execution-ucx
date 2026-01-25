@@ -423,13 +423,9 @@ struct RpcResponseHeader : public RpcMessageAccessor<RpcResponseHeader> {
   RpcResponseHeader& operator=(RpcResponseHeader&&) = default;
 
   RpcResponseHeader(
-    session_id_t session_id,
-    request_id_t request_id,
-    utils::HybridLogicalClock hlc,
-    utils::workflow_id_t workflow_id,
-    RpcStatus status,
-    data::vector<ParamMeta>
-      results)
+    session_id_t session_id, request_id_t request_id,
+    utils::HybridLogicalClock hlc, utils::workflow_id_t workflow_id,
+    RpcStatus status, data::vector<ParamMeta> results)
     : session_id(session_id),
       request_id(request_id),
       hlc(hlc),

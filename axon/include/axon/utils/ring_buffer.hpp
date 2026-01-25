@@ -110,7 +110,9 @@ class RingBuffer {
   /**
    * @brief Insert or update an entry
    *
-   * @param request_id The request ID (used as index)
+   * @param request_id The request ID (used as index). Because the cista strong
+   * type does not support the "&=" operation on general C++ types, normal
+   * unit32_t are used for request_id here.
    * @param session_id The session ID (used for validation)
    * @param value The value to store
    * @return true if inserted/updated successfully, false if slot is occupied

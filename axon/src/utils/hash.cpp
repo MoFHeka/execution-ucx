@@ -33,7 +33,7 @@ hash_t LoadHash(const uint8_t** data, const uint8_t* top) {
     *data += sizeof(hash_t);
     return v;
   }
-  using uval_t = union {
+  union uval_t {
     hash_t h;
     std::array<uint8_t, sizeof(hash_t)> b{};
   };
