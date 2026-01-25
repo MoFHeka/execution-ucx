@@ -51,7 +51,7 @@ AxonMessage<HeaderType>::AxonMessage(
         expected_tensor_count = 1;
       } else if (param.type == rpc::ParamType::TENSOR_META_VEC) {
         const auto& tensor_meta_vec =
-          cista::get<rpc::TensorMetaVecValue>(param.value);
+          cista::get<rpc::TensorMetaVec>(param.value);
         expected_tensor_count = tensor_meta_vec.size();
       }
     }
@@ -71,10 +71,8 @@ AxonMessage<HeaderType>::AxonMessage(
 
 template <typename HeaderType>
 AxonMessage<HeaderType>::AxonMessage(
-  HeaderType&& msg_header,
-  PayloadVariant&& payload_data,
-  std::optional<size_t>
-    tensor_param_index)
+  HeaderType&& msg_header, PayloadVariant&& payload_data,
+  std::optional<size_t> tensor_param_index)
   : header(std::move(msg_header)),
     payload(std::move(payload_data)),
     tensor_param_index_(tensor_param_index) {
@@ -113,7 +111,7 @@ AxonMessage<HeaderType>::AxonMessage(
         expected_tensor_count = 1;
       } else if (param.type == rpc::ParamType::TENSOR_META_VEC) {
         const auto& tensor_meta_vec =
-          cista::get<rpc::TensorMetaVecValue>(param.value);
+          cista::get<rpc::TensorMetaVec>(param.value);
         expected_tensor_count = tensor_meta_vec.size();
       }
     }
@@ -145,8 +143,7 @@ size_t AxonMessage<HeaderType>::GetTensorCount() const {
   if (param.type == rpc::ParamType::TENSOR_META) {
     return 1;
   } else if (param.type == rpc::ParamType::TENSOR_META_VEC) {
-    const auto& tensor_meta_vec =
-      cista::get<rpc::TensorMetaVecValue>(param.value);
+    const auto& tensor_meta_vec = cista::get<rpc::TensorMetaVec>(param.value);
     return tensor_meta_vec.size();
   }
   return 0;
@@ -159,10 +156,8 @@ std::optional<size_t> AxonMessage<HeaderType>::GetTensorParamIndex() const {
 
 template <typename ParamT, typename PayloadT>
 static utils::Tensor<> GetTensorImpl(
-  size_t tensor_index,
-  const std::optional<size_t>& tensor_param_index,
-  ParamT& header_params,
-  PayloadT& payload) {
+  size_t tensor_index, const std::optional<size_t>& tensor_param_index,
+  ParamT& header_params, PayloadT& payload) {
   if (!tensor_param_index.has_value())
     throw std::out_of_range("No tensor parameter found.");
   const size_t param_index = tensor_param_index.value();
@@ -175,8 +170,7 @@ static utils::Tensor<> GetTensorImpl(
         "Tensor index out of range for single TensorMeta.");
     meta_ptr = &cista::get<utils::TensorMeta>(param.value);
   } else if (param.type == rpc::ParamType::TENSOR_META_VEC) {
-    const auto& tensor_meta_vec =
-      cista::get<rpc::TensorMetaVecValue>(param.value);
+    const auto& tensor_meta_vec = cista::get<rpc::TensorMetaVec>(param.value);
     if (tensor_index >= tensor_meta_vec.size())
       throw std::out_of_range("Tensor index out of range for TensorMetaVec.");
     meta_ptr = &tensor_meta_vec[tensor_index];
@@ -227,8 +221,7 @@ utils::Tensor<> AxonMessage<HeaderType>::GetTensor(size_t tensor_index) {
 
 template <typename ParamT, typename PayloadT>
 static std::vector<utils::Tensor<>> GetTensorVecImpl(
-  const std::optional<size_t>& tensor_param_index,
-  ParamT& header_params,
+  const std::optional<size_t>& tensor_param_index, ParamT& header_params,
   PayloadT& payload) {
   std::vector<utils::Tensor<>> tensors;
   if (!tensor_param_index.has_value()) {
@@ -243,8 +236,7 @@ static std::vector<utils::Tensor<>> GetTensorVecImpl(
   if (param.type == rpc::ParamType::TENSOR_META) {
     tensor_count = 1;
   } else if (param.type == rpc::ParamType::TENSOR_META_VEC) {
-    const auto& tensor_meta_vec =
-      cista::get<rpc::TensorMetaVecValue>(param.value);
+    const auto& tensor_meta_vec = cista::get<rpc::TensorMetaVec>(param.value);
     tensor_count = tensor_meta_vec.size();
   }
   tensors.reserve(tensor_count);

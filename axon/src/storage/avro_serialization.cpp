@@ -64,8 +64,7 @@ static void ConvertParamsToAvro(
 static void ConvertParamMetaToAvro(
   const ParamMeta& param, avro::GenericRecord& param_rec);
 static void ConvertPayloadToAvro(
-  const PayloadVariant& payload,
-  avro::GenericDatum& payload_union,
+  const PayloadVariant& payload, avro::GenericDatum& payload_union,
   UcxMemoryResourceManager& mr);
 
 // Helper functions for vector serialization/deserialization
@@ -425,7 +424,7 @@ void ConvertParamMetaToAvro(
     case ParamType::TENSOR_META_VEC: {
       value_union.selectBranch(13);
       auto& tensor_vec_rec = value_union.value<avro::GenericRecord>();
-      const auto& arg_vec = cista::get<rpc::TensorMetaVecValue>(param.value);
+      const auto& arg_vec = cista::get<rpc::TensorMetaVec>(param.value);
       auto& tensor_array =
         tensor_vec_rec.field("items").value<avro::GenericArray>().value();
       tensor_array.reserve(arg_vec.size());
@@ -477,15 +476,13 @@ void ConvertParamMetaToAvro(
 }
 
 void ConvertPayloadToAvro(
-  const PayloadVariant& payload,
-  avro::GenericDatum& payload_union,
+  const PayloadVariant& payload, avro::GenericDatum& payload_union,
   UcxMemoryResourceManager& mr) {
   std::visit(
     [&](const auto& p) {
       using T = std::decay_t<decltype(p)>;
       if constexpr (std::is_same_v<
-                      T,
-                      std::variant_alternative_t<0, PayloadVariant>>) {
+                      T, std::variant_alternative_t<0, PayloadVariant>>) {
         payload_union.selectBranch(0);  // null
       } else if constexpr (std::is_same_v<
                              T,
@@ -710,7 +707,7 @@ ParamMeta ConvertAvroToParamMeta(const avro::GenericRecord& param_rec) {
         value_union.value<const avro::GenericRecord>();
       const auto& tensor_array =
         tensor_vec_rec.field("items").value<const avro::GenericArray>().value();
-      rpc::TensorMetaVecValue tensor_vec;
+      rpc::TensorMetaVec tensor_vec;
       tensor_vec.reserve(tensor_array.size());
       for (const auto& tensor_datum : tensor_array) {
         const auto& tensor_rec =

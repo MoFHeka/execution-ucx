@@ -14,7 +14,7 @@ BreakBeforeBinaryOperators: NonAssignment
 ConstructorInitializerIndentWidth: 2
 ContinuationIndentWidth: 2
 DerivePointerAlignment: true
-ExperimentalAutoDetectBinPacking: true
+ExperimentalAutoDetectBinPacking: false
 IncludeBlocks: Preserve
 Standard: c++20
 TabWidth: 0

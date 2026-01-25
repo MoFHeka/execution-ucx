@@ -73,7 +73,7 @@ void PackArg(RpcRequestHeader& header, T&& value) {
     using ElementType = typename DecayedT::value_type;
     // Special case: data::vector<TensorMeta> is TensorMetaVec
     if constexpr (std::is_same_v<ElementType, TensorMeta>) {
-      meta.value.template emplace<TensorMetaVecValue>(std::forward<T>(value));
+      meta.value.template emplace<TensorMetaVec>(std::forward<T>(value));
     } else {
       meta.value.template emplace<VectorValue>(std::forward<T>(value));
     }
@@ -81,9 +81,9 @@ void PackArg(RpcRequestHeader& header, T&& value) {
     using ElementType = typename DecayedT::value_type;
     // Special case: std::vector<TensorMeta> is TensorMetaVec
     if constexpr (std::is_same_v<ElementType, TensorMeta>) {
-      TensorMetaVecValue cista_vec;
+      TensorMetaVec cista_vec;
       cista_vec.set(value.begin(), value.end());
-      meta.value.template emplace<TensorMetaVecValue>(std::move(cista_vec));
+      meta.value.template emplace<TensorMetaVec>(std::move(cista_vec));
     } else {
       data::vector<ElementType> cista_vec;
       cista_vec.set(value.begin(), value.end());
@@ -173,11 +173,13 @@ class RpcRequestBuilder {
     requires(!detail::first_arg_is_param_meta_vector<Args...>::value)
   auto PrepareRequest(
     const RpcRequestBuilderOptions& options,
-    const RpcFunctionSignature& signature, Args&&... args) const {
+    const RpcFunctionSignature& signature,
+    Args&&... args) const {
     auto result = PrepareRequest(options, std::forward<Args>(args)...);
 
     if constexpr (std::is_same_v<
-                    std::decay_t<decltype(result)>, RpcRequestHeader>) {
+                    std::decay_t<decltype(result)>,
+                    RpcRequestHeader>) {
       Validate(result.params, signature);
     } else {
       Validate(result.first.params, signature);
@@ -188,7 +190,8 @@ class RpcRequestBuilder {
   // Dynamic construction
   template <typename PayloadT = std::monostate>
   auto PrepareRequest(
-    const RpcRequestBuilderOptions& options, data::vector<ParamMeta>&& params,
+    const RpcRequestBuilderOptions& options,
+    data::vector<ParamMeta>&& params,
     PayloadT&& payload = PayloadT{}) const {
     RpcRequestHeader header;
     header.session_id = options.session_id;
@@ -208,7 +211,8 @@ class RpcRequestBuilder {
   template <typename PayloadT = std::monostate>
   auto PrepareRequest(
     const RpcRequestBuilderOptions& options,
-    const RpcFunctionSignature& signature, data::vector<ParamMeta>&& params,
+    const RpcFunctionSignature& signature,
+    data::vector<ParamMeta>&& params,
     PayloadT&& payload = PayloadT{}) const {
     Validate(params, signature);
     return PrepareRequest(

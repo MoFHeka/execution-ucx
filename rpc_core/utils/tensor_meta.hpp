@@ -22,6 +22,7 @@
 #include <dlpack/dlpack.h>  // from @dlpack
 
 #include <cstdint>
+#include <span>
 
 namespace eux {
 namespace rpc {
@@ -80,6 +81,11 @@ struct TensorMeta {
   cista::offset::vector<int64_t> shape;
   cista::offset::vector<int64_t> strides;
 };
+
+using TensorMetaRef = std::reference_wrapper<const TensorMeta>;
+using TensorMetaRefVec = std::vector<TensorMetaRef>;
+/// @brief Span alias for zero-copy view over tensor metas.
+using TensorMetaSpan = std::span<const TensorMeta>;
 
 // Helper function to calculate tensor size in bytes
 inline size_t CalculateTensorSize(const TensorMeta& meta) {

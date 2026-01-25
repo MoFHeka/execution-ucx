@@ -98,12 +98,12 @@ using VectorValue = data::variant<
   data::vector<uint16_t>, data::vector<uint32_t>, data::vector<uint64_t>,
   data::vector<float>, data::vector<double>>;
 
-using TensorMetaVecValue = data::vector<TensorMeta>;
+using TensorMetaVec = data::vector<TensorMeta>;
 
 // Top-level variant for parameter values
 using ParamValue = data::variant<
   PrimitiveValue, VectorValue, data::string, std::nullptr_t, TensorMeta,
-  TensorMetaVecValue>;
+  TensorMetaVec>;
 
 // Optimized parameter metadata for RPC header
 struct ParamMeta {
@@ -261,7 +261,7 @@ struct RpcMessageAccessor {
     return cista::get<TensorMeta>(container[index].value);
   }
 
-  const TensorMetaVecValue& GetTensorVec(size_t index) const {
+  const TensorMetaVec& GetTensorVec(size_t index) const {
     const auto& container = derived().GetParamsContainer();
     if (
       index >= container.size()
@@ -269,7 +269,7 @@ struct RpcMessageAccessor {
       throw std::runtime_error(
         "Invalid item access for tensor metadata vector");
     }
-    return cista::get<TensorMetaVecValue>(container[index].value);
+    return cista::get<TensorMetaVec>(container[index].value);
   }
 
   // --- Move-based accessors for taking ownership ---
@@ -300,7 +300,7 @@ struct RpcMessageAccessor {
     return std::move(cista::get<TensorMeta>(container[index].value));
   }
 
-  TensorMetaVecValue&& MoveTensorVec(size_t index) {
+  TensorMetaVec&& MoveTensorVec(size_t index) {
     auto& container = derived().GetParamsContainer();
     if (
       index >= container.size()
@@ -308,7 +308,7 @@ struct RpcMessageAccessor {
       throw std::runtime_error(
         "Invalid item access for tensor metadata vector");
     }
-    return std::move(cista::get<TensorMetaVecValue>(container[index].value));
+    return std::move(cista::get<TensorMetaVec>(container[index].value));
   }
 
   // --- Temporal metadata helpers
@@ -344,6 +344,29 @@ struct RpcRequestHeader : public RpcMessageAccessor<RpcRequestHeader> {
 
   RpcRequestHeader() = default;
 
+  RpcRequestHeader(const RpcRequestHeader& other)
+    : session_id(other.session_id),
+      request_id(other.request_id),
+      function_id(other.function_id),
+      hlc(other.hlc),
+      workflow_id(other.workflow_id),
+      params(other.params) {}
+
+  RpcRequestHeader& operator=(const RpcRequestHeader& other) {
+    if (this != &other) {
+      session_id = other.session_id;
+      request_id = other.request_id;
+      function_id = other.function_id;
+      hlc = other.hlc;
+      workflow_id = other.workflow_id;
+      params = other.params;
+    }
+    return *this;
+  }
+
+  RpcRequestHeader(RpcRequestHeader&&) = default;
+  RpcRequestHeader& operator=(RpcRequestHeader&&) = default;
+
   auto cista_members() const {
     return std::tie(
       session_id, request_id, function_id, hlc, workflow_id, params);
@@ -376,10 +399,37 @@ struct RpcResponseHeader : public RpcMessageAccessor<RpcResponseHeader> {
 
   RpcResponseHeader() = default;
 
+  RpcResponseHeader(const RpcResponseHeader& other)
+    : session_id(other.session_id),
+      request_id(other.request_id),
+      hlc(other.hlc),
+      workflow_id(other.workflow_id),
+      status(other.status),
+      results(other.results) {}
+
+  RpcResponseHeader& operator=(const RpcResponseHeader& other) {
+    if (this != &other) {
+      session_id = other.session_id;
+      request_id = other.request_id;
+      hlc = other.hlc;
+      workflow_id = other.workflow_id;
+      status = other.status;
+      results = other.results;
+    }
+    return *this;
+  }
+
+  RpcResponseHeader(RpcResponseHeader&&) = default;
+  RpcResponseHeader& operator=(RpcResponseHeader&&) = default;
+
   RpcResponseHeader(
-    session_id_t session_id, request_id_t request_id,
-    utils::HybridLogicalClock hlc, utils::workflow_id_t workflow_id,
-    RpcStatus status, data::vector<ParamMeta> results)
+    session_id_t session_id,
+    request_id_t request_id,
+    utils::HybridLogicalClock hlc,
+    utils::workflow_id_t workflow_id,
+    RpcStatus status,
+    data::vector<ParamMeta>
+      results)
     : session_id(session_id),
       request_id(request_id),
       hlc(hlc),

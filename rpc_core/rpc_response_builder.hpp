@@ -63,9 +63,9 @@ void PackResult(RpcResponseHeader& header, T&& value) {
     meta.value.template emplace<data::string>(data::string{value});
   } else if constexpr (std::is_same_v<DecayedT, TensorMeta>) {
     meta.value.template emplace<TensorMeta>(std::forward<T>(value));
-  } else if constexpr (std::is_same_v<DecayedT, TensorMetaVecValue>) {
-    // TensorMetaVecValue is a top-level variant type, not in VectorValue
-    meta.value.template emplace<TensorMetaVecValue>(std::forward<T>(value));
+  } else if constexpr (std::is_same_v<DecayedT, TensorMetaVec>) {
+    // TensorMetaVec is a top-level variant type, not in VectorValue
+    meta.value.template emplace<TensorMetaVec>(std::forward<T>(value));
   } else if constexpr (is_data_vector<DecayedT>::value) {
     meta.value.template emplace<VectorValue>(std::forward<T>(value));
   } else if constexpr (is_std_vector<DecayedT>::value) {
