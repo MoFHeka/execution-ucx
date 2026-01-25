@@ -63,11 +63,9 @@ TEST_F(UcxBufferTest, ZeroCopyConversion) {
       buffer_vec[i].data, static_cast<uint8_t*>(original_buffer_ptr) + offset);
     // Verify the content of the sliced buffer
     EXPECT_EQ(
-      0,
-      std::memcmp(
-        buffer_vec[i].data,
-        static_cast<uint8_t*>(original_buffer_ptr) + offset,
-        sizes[i]));
+      0, std::memcmp(
+           buffer_vec[i].data,
+           static_cast<uint8_t*>(original_buffer_ptr) + offset, sizes[i]));
     offset += sizes[i];
   }
 

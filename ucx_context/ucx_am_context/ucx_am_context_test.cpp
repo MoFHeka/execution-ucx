@@ -333,11 +333,9 @@ class UcxAmTest : public ::testing::Test {
   }
 
   task<void> serverRecvTask(
-    ucx_am_context::scheduler& scheduler,
-    ucx_am_data& recvData,
+    ucx_am_context::scheduler& scheduler, ucx_am_data& recvData,
     std::optional<std::reference_wrapper<const UcxConnection>>& conn,
-    std::atomic<bool>& messageReceived,
-    inplace_stop_source& stopSource) {
+    std::atomic<bool>& messageReceived, inplace_stop_source& stopSource) {
     auto active_message_bundle = co_await connection_recv(scheduler, recvData);
     if (active_message_bundle.connection().is_established()) {
       conn = std::ref(active_message_bundle.connection());
@@ -378,10 +376,8 @@ class UcxAmTest : public ::testing::Test {
   }
 
   task<void> clientSendTask(
-    ucx_am_context::scheduler& scheduler,
-    std::uint64_t conn_id,
-    ucx_am_data& sendData,
-    std::atomic<bool>& sendSuccess) {
+    ucx_am_context::scheduler& scheduler, std::uint64_t conn_id,
+    ucx_am_data& sendData, std::atomic<bool>& sendSuccess) {
     co_await connection_send(scheduler, conn_id, sendData);
     sendSuccess.store(true);
   }
@@ -488,11 +484,9 @@ class UcxAmTest : public ::testing::Test {
         spawn_detached(
           with_query_value(
             on(
-              workerThread,
-              biDiServerRecvSendTask(
-                scheduler, processScheduler, recvDataType)),
-            get_stop_token,
-            stopSource.get_token()),
+              workerThread, biDiServerRecvSendTask(
+                              scheduler, processScheduler, recvDataType)),
+            get_stop_token, stopSource.get_token()),
           scope);
       });
     co_await scope.join();
@@ -509,8 +503,7 @@ class UcxAmTest : public ::testing::Test {
           return biDiServerRecvSendTask(
             ucxScheduler, processScheduler, recvDataType);
         }),
-        get_stop_token,
-        stopSource.get_token()),
+        get_stop_token, stopSource.get_token()),
       [&]() { return stopSource.stop_requested(); });
     co_return;
   }
@@ -561,8 +554,7 @@ class UcxAmTest : public ::testing::Test {
           return biDiServerHeaderBufferRecvSendTask(
             ucxScheduler, processScheduler, recvDataType);
         }),
-        get_stop_token,
-        stopSource.get_token()),
+        get_stop_token, stopSource.get_token()),
       [&]() { return stopSource.stop_requested(); });
     co_return;
   }
@@ -593,8 +585,7 @@ class UcxAmTest : public ::testing::Test {
               workerThread,
               biDiServerHeaderBufferRepeatRecvSendTask(
                 scheduler, processScheduler, recvDataType, stopSource)),
-            get_stop_token,
-            stopSource.get_token()),
+            get_stop_token, stopSource.get_token()),
           scope);
       });
     co_await scope.join();
@@ -612,9 +603,8 @@ class UcxAmTest : public ::testing::Test {
       co_await connect_endpoint(scheduler, client_ucp_address);
     spawn_detached(
       on(
-        workerThread,
-        biDiServerHeaderBufferRepeatRecvSendTask(
-          scheduler, processScheduler, recvDataType, stopSource)),
+        workerThread, biDiServerHeaderBufferRepeatRecvSendTask(
+                        scheduler, processScheduler, recvDataType, stopSource)),
       scope);
     co_await scope.join();
     co_return;
@@ -751,8 +741,7 @@ class UcxAmTest : public ::testing::Test {
       std::move(combined_tasks)
       | then([&](
                [[maybe_unused]] std::variant<std::tuple<>> server_result,
-               std::variant<std::tuple<UcxAmData>>
-                 client_result_variant) {
+               std::variant<std::tuple<UcxAmData>> client_result_variant) {
           if (std::holds_alternative<std::tuple<UcxAmData>>(
                 client_result_variant)) {
             recvDataWrapper = std::move(std::get<0>(
@@ -814,9 +803,8 @@ class UcxAmTest : public ::testing::Test {
       co_await connect_endpoint(scheduler, client_ucp_address);
     spawn_detached(
       on(
-        workerThread,
-        biDiServerRepeatRecvSendTask(
-          scheduler, processScheduler, recvDataType, stopSource)),
+        workerThread, biDiServerRepeatRecvSendTask(
+                        scheduler, processScheduler, recvDataType, stopSource)),
       scope);
     co_await scope.join();
     co_return;
@@ -824,8 +812,7 @@ class UcxAmTest : public ::testing::Test {
 
   task<UcxAmData> biDiClientSendRecvTask(
     ucx_am_context::scheduler& ucxScheduler,
-    static_thread_pool::scheduler& processScheduler,
-    std::uint64_t conn_id,
+    static_thread_pool::scheduler& processScheduler, std::uint64_t conn_id,
     ucx_am_data& sendData) {
     co_await connection_send(ucxScheduler, conn_id, sendData);
     auto recvBundle =
@@ -835,17 +822,14 @@ class UcxAmTest : public ::testing::Test {
 
   task<UcxAmData> biDiClientSpawnTask(
     ucx_am_context::scheduler& ucxScheduler,
-    static_thread_pool::scheduler& workerThread,
-    async_scope& scope,
-    inplace_stop_source& stopSource,
-    std::uint64_t conn_id,
+    static_thread_pool::scheduler& workerThread, async_scope& scope,
+    inplace_stop_source& stopSource, std::uint64_t conn_id,
     ucx_am_data& sendData) {
     auto recvData = co_await let_error(
       spawn_future(
         on(
-          workerThread,
-          biDiClientSendRecvTask(
-            ucxScheduler, workerThread, conn_id, sendData)),
+          workerThread, biDiClientSendRecvTask(
+                          ucxScheduler, workerThread, conn_id, sendData)),
         scope),
       [&](std::exception_ptr ep) -> task<UcxAmData> {
         try {
@@ -1042,8 +1026,7 @@ class UcxAmTest : public ::testing::Test {
       std::move(combined_tasks)
       | then([&](
                [[maybe_unused]] std::variant<std::tuple<>> server_result,
-               std::variant<std::tuple<UcxAmData>>
-                 client_result_variant) {
+               std::variant<std::tuple<UcxAmData>> client_result_variant) {
           if (std::holds_alternative<std::tuple<UcxAmData>>(
                 client_result_variant)) {
             recvDataWrapper = std::move(std::get<0>(
@@ -1112,10 +1095,8 @@ class UcxAmTest : public ::testing::Test {
   }
 
   void runUcpAddressHeaderBufferTestLogic(
-    size_t floatDataSize,
-    ucx_memory_type test_memory_type,
-    bool use_iovec = false,
-    bool iovec_recv_as_contiguous = false);
+    size_t floatDataSize, ucx_memory_type test_memory_type,
+    bool use_iovec = false, bool iovec_recv_as_contiguous = false);
 };
 
 template <typename T>
@@ -1211,8 +1192,7 @@ TEST_F(UcxAmTest, SmallMessageTransfer) {
     with_query_value(
       serverListenTask(
         serverScheduler, port, recvData, conn, messageReceived, stopSource),
-      get_stop_token,
-      stopSource.get_token()),
+      get_stop_token, stopSource.get_token()),
     clientConnectTask(clientScheduler, port, sendData, sendSuccess)));
 
   EXPECT_TRUE(messageReceived.load() && sendSuccess.load());
@@ -1256,8 +1236,7 @@ TEST_F(UcxAmTest, LargeMessageTransfer) {
     with_query_value(
       serverListenTask(
         serverScheduler, port, recvData, conn, messageReceived, stopSource),
-      get_stop_token,
-      stopSource.get_token()),
+      get_stop_token, stopSource.get_token()),
     clientConnectTask(clientScheduler, port, sendData, sendSuccess)));
 
   EXPECT_TRUE(messageReceived.load() && sendSuccess.load());
@@ -1537,9 +1516,7 @@ struct iovec_info {
 
 // Unified test function for UCP address header+buffer transfer
 void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
-  size_t floatDataSize,
-  ucx_memory_type test_memory_type,
-  bool use_iovec,
+  size_t floatDataSize, ucx_memory_type test_memory_type, bool use_iovec,
   bool iovec_recv_as_contiguous) {
 #if !CUDA_ENABLED
   if (test_memory_type == ucx_memory_type::CUDA) {
@@ -1623,10 +1600,8 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
     std::shared_ptr<std::vector<ucx_buffer_t>> buffer;
     Holder(
       std::shared_ptr<std::vector<std::byte>> h,
-      std::shared_ptr<std::vector<float>>
-        p,
-      std::shared_ptr<std::vector<ucx_buffer_t>>
-        m)
+      std::shared_ptr<std::vector<float>> p,
+      std::shared_ptr<std::vector<ucx_buffer_t>> m)
       : header(std::move(h)), payload(std::move(p)), buffer(std::move(m)) {}
   };
 
@@ -1770,8 +1745,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
                      server_mr_ptr->memcpy(
                        test_memory_type,
                        static_cast<char*>(combined_buffer) + offset,
-                       test_memory_type,
-                       buffer_vec[i].data,
+                       test_memory_type, buffer_vec[i].data,
                        buffer_vec[i].size);
                      offset += buffer_vec[i].size;
                    }
@@ -1885,8 +1859,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
     std::move(combined_tasks)
     | then([&](
              [[maybe_unused]] std::variant<std::tuple<>> server_result,
-             std::variant<std::tuple<UcxAmData>>
-               client_result_variant) {
+             std::variant<std::tuple<UcxAmData>> client_result_variant) {
         if (std::holds_alternative<std::tuple<UcxAmData>>(
               client_result_variant)) {
           recvDataWrapper = std::move(std::get<0>(

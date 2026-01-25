@@ -1,6 +1,7 @@
 """Test definitions for Axon core."""
 
 load("@rules_cc//cc:defs.bzl", "cc_test")
+load("//axon:build_defs/utils_libs.bzl", "SUPPORTED_CPP_STANDARDS")
 
 def axon_tests():
     """Defines all test targets."""
@@ -8,7 +9,10 @@ def axon_tests():
         name = "axon_worker_basic_test",
         srcs = ["tests/axon_worker_basic_test.cpp"],
         includes = ["include"],
-        copts = ["-std=c++23"],
+        target_compatible_with = select(
+            {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+            {"//conditions:default": ["@platforms//:incompatible"]},
+        ),
         deps = [
             ":axon_worker",
             "@execution-ucx//ucx_context:ucx_memory_resource_lib",
@@ -20,7 +24,10 @@ def axon_tests():
         name = "axon_worker_test",
         srcs = ["tests/axon_worker_test.cpp"],
         includes = ["include"],
-        copts = ["-std=c++23"],
+        target_compatible_with = select(
+            {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+            {"//conditions:default": ["@platforms//:incompatible"]},
+        ),
         size = "medium",
         timeout = "moderate",
         deps = [
@@ -34,7 +41,10 @@ def axon_tests():
         name = "avro_serialization_test",
         srcs = ["tests/avro_serialization_test.cpp"],
         includes = ["include"],
-        copts = ["-std=c++23"],
+        target_compatible_with = select(
+            {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+            {"//conditions:default": ["@platforms//:incompatible"]},
+        ),
         deps = [
             ":avro_serialization",
             "@execution-ucx//ucx_context:ucx_memory_resource_lib",
@@ -46,7 +56,10 @@ def axon_tests():
         name = "unifex_io_test",
         srcs = ["tests/unifex_io_test.cpp"],
         includes = ["include"],
-        copts = ["-std=c++23"],
+        target_compatible_with = select(
+            {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+            {"//conditions:default": ["@platforms//:incompatible"]},
+        ),
         deps = [
             ":unifex_io",
             "@googletest//:gtest_main",
@@ -57,7 +70,10 @@ def axon_tests():
         name = "async_io_test",
         srcs = ["tests/async_io_test.cpp"],
         includes = ["include"],
-        copts = ["-std=c++23"],
+        target_compatible_with = select(
+            {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+            {"//conditions:default": ["@platforms//:incompatible"]},
+        ),
         deps = [
             ":async_io",
             "@googletest//:gtest_main",
@@ -68,7 +84,10 @@ def axon_tests():
         name = "axon_storage_test",
         srcs = ["tests/axon_storage_test.cpp"],
         includes = ["include"],
-        copts = ["-std=c++23"],
+        target_compatible_with = select(
+            {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+            {"//conditions:default": ["@platforms//:incompatible"]},
+        ),
         deps = [
             ":axon_storage",
             "@googletest//:gtest_main",

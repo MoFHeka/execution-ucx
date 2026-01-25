@@ -99,8 +99,7 @@ bool is_rdma_transport_available(ucp_ep_h ep) {
   const char* rdma_transports[] = {"rc", "ud", "dc", "ib", "mlx", "roce"};
   for (unsigned j = 0; j < attr.transports.num_entries; ++j) {
     for (unsigned i = 0;
-         i < sizeof(rdma_transports) / sizeof(rdma_transports[0]);
-         ++i) {
+         i < sizeof(rdma_transports) / sizeof(rdma_transports[0]); ++i) {
       if (strstr(
             attr.transports.entries[j].transport_name, rdma_transports[i])) {
         return true;
@@ -275,6 +274,24 @@ void UcxConnection::disconnect(std::unique_ptr<UcxCallback> callback) {
 
 void UcxConnection::disconnect_direct() {
   cancel_all();
+
+  // Try to progress cancellations briefly
+  for (int i = 0; i < 100 && !ucs_list_is_empty(&all_requests_); ++i) {
+    ucp_worker_progress(worker_);
+  }
+
+  // Force clean up remaining requests to avoid assertion failure
+  if (!ucs_list_is_empty(&all_requests_)) {
+    UCX_CONN_WARN << "Cleaning up " << ucs_list_length(&all_requests_)
+                  << " stuck requests in disconnect_direct" << std::endl;
+
+    UcxRequest *request, *tmp;
+    ucs_list_for_each_safe(request, tmp, &all_requests_, pos) {
+      ucs_list_del(&request->pos);
+      ucp_request_free(request);
+    }
+  }
+
   if (ep_) {
     ep_close(UCP_EP_CLOSE_MODE_FORCE);
     UCX_CONN_WARN << "Forced closed ep " << ep_ << std::endl;
@@ -306,9 +323,7 @@ bool UcxConnection::disconnect_progress(std::unique_ptr<UcxCallback> callback) {
 
 namespace {
 static inline void init_am_send_params(
-  ucp_request_param_t& param,
-  ucs_memory_type_t memory_type,
-  ucp_mem_h memh,
+  ucp_request_param_t& param, ucs_memory_type_t memory_type, ucp_mem_h memh,
   ucp_send_nbx_callback_t cb) {
   param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS
                        | UCP_OP_ATTR_FIELD_MEMORY_TYPE;
@@ -322,9 +337,7 @@ static inline void init_am_send_params(
 }
 
 static inline void init_am_recv_params(
-  ucp_request_param_t& param,
-  ucs_memory_type_t memory_type,
-  ucp_mem_h memh,
+  ucp_request_param_t& param, ucs_memory_type_t memory_type, ucp_mem_h memh,
   ucp_am_recv_data_nbx_callback_t cb) {
   param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FLAG_NO_IMM_CMPL
                        | UCP_OP_ATTR_FIELD_MEMORY_TYPE;
@@ -372,9 +385,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_data(
 
   ucp_request_param_t param;
   init_am_recv_params(
-    param,
-    memory_type,
-    memh,
+    param, memory_type, memh,
     (ucp_am_recv_data_nbx_callback_t)am_data_recv_callback);
 
   param.op_attr_mask |= UCP_OP_ATTR_FIELD_DATATYPE;
@@ -427,9 +438,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_iov_data(
 
   ucp_request_param_t param;
   init_am_recv_params(
-    param,
-    memory_type,
-    memh,
+    param, memory_type, memh,
     (ucp_am_recv_data_nbx_callback_t)am_data_recv_callback);
 
   param.op_attr_mask |= UCP_OP_ATTR_FIELD_DATATYPE;

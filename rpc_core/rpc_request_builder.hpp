@@ -173,13 +173,11 @@ class RpcRequestBuilder {
     requires(!detail::first_arg_is_param_meta_vector<Args...>::value)
   auto PrepareRequest(
     const RpcRequestBuilderOptions& options,
-    const RpcFunctionSignature& signature,
-    Args&&... args) const {
+    const RpcFunctionSignature& signature, Args&&... args) const {
     auto result = PrepareRequest(options, std::forward<Args>(args)...);
 
     if constexpr (std::is_same_v<
-                    std::decay_t<decltype(result)>,
-                    RpcRequestHeader>) {
+                    std::decay_t<decltype(result)>, RpcRequestHeader>) {
       Validate(result.params, signature);
     } else {
       Validate(result.first.params, signature);
@@ -190,8 +188,7 @@ class RpcRequestBuilder {
   // Dynamic construction
   template <typename PayloadT = std::monostate>
   auto PrepareRequest(
-    const RpcRequestBuilderOptions& options,
-    data::vector<ParamMeta>&& params,
+    const RpcRequestBuilderOptions& options, data::vector<ParamMeta>&& params,
     PayloadT&& payload = PayloadT{}) const {
     RpcRequestHeader header;
     header.session_id = options.session_id;
@@ -211,8 +208,7 @@ class RpcRequestBuilder {
   template <typename PayloadT = std::monostate>
   auto PrepareRequest(
     const RpcRequestBuilderOptions& options,
-    const RpcFunctionSignature& signature,
-    data::vector<ParamMeta>&& params,
+    const RpcFunctionSignature& signature, data::vector<ParamMeta>&& params,
     PayloadT&& payload = PayloadT{}) const {
     Validate(params, signature);
     return PrepareRequest(

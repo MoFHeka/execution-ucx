@@ -2,6 +2,7 @@
 Unified Communication X (UCX) is an award winning, optimized production proven-communication framework for modern, high-bandwidth and low-latency networks.
 """
 
+load("@//third_party/openucx:utils.bzl", "file_filter")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
 
@@ -55,6 +56,7 @@ configure_make(
     }),
     copts = [
         "-Wno-error",
+        "-fPIC",  # Add position-independent code flag for shared library linking
     ],
     lib_source = "@ucx//:all_srcs",
     out_bin_dir = "bin",
@@ -147,17 +149,21 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-filegroup(
+file_filter(
     name = "ucx_shared_libs",
     srcs = [":ucx"],
-    output_group = "shared_libs",
+    extensions = [
+        ".so",
+        ".so.0",
+        ".so.0.0.0",
+    ],
     visibility = ["//visibility:public"],
 )
 
-filegroup(
+file_filter(
     name = "ucx_static_libs",
     srcs = [":ucx"],
-    output_group = "static_libs",
+    extensions = [".a"],
     visibility = ["//visibility:public"],
 )
 
@@ -176,14 +182,37 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+# Shared libs only
 cc_library(
-    name = "ucx_prebuilt",
+    name = "ucx_prebuilt_shared",
     srcs = [
-        ":ucx_libs_all",
+        ":ucx_shared_libs",
     ],
     linkopts = [
         "-Wl,--as-needed",
     ],
+    visibility = ["//visibility:public"],
+)
+
+# Static libs only
+cc_library(
+    name = "ucx_prebuilt_static",
+    srcs = [
+        ":ucx_static_libs",
+    ],
+    linkopts = [
+        "-Wl,--as-needed",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Backward compatibility alias (points to shared by default to avoid accidental static linking issues in dynamic builds)
+# But strictly speaking, "prebuilt" implied everything before.
+# To be safe for mixed usage, we alias to shared, as static users should use static targets.
+# However, existing targets like `ucs` use `linkstatic = False`, so they want shared.
+alias(
+    name = "ucx_prebuilt",
+    actual = ":ucx_prebuilt_shared",
     visibility = ["//visibility:public"],
 )
 
@@ -242,7 +271,7 @@ cc_library(
         ":ucm",
         ":ucs_signal",
         ":ucx_headers",
-        ":ucx_prebuilt",
+        ":ucx_prebuilt_shared",
     ],
 )
 
@@ -261,7 +290,7 @@ cc_library(
         ":ucm_static",
         ":ucs_signal_static",
         ":ucx_headers",
-        ":ucx_prebuilt",
+        ":ucx_prebuilt_static",
     ],
 )
 
@@ -274,7 +303,7 @@ cc_library(
     deps = [
         ":ucs",
         ":ucx_headers",
-        ":ucx_prebuilt",
+        ":ucx_prebuilt_shared",
     ],
 )
 
@@ -287,7 +316,7 @@ cc_library(
     deps = [
         ":ucs_static",
         ":ucx_headers",
-        ":ucx_prebuilt",
+        ":ucx_prebuilt_static",
     ],
 )
 
@@ -299,7 +328,7 @@ cc_library(
     linkstatic = False,
     deps = [
         ":ucx_headers",
-        ":ucx_prebuilt",
+        ":ucx_prebuilt_shared",
     ],
 )
 
@@ -311,7 +340,7 @@ cc_library(
     linkstatic = True,
     deps = [
         ":ucx_headers",
-        ":ucx_prebuilt",
+        ":ucx_prebuilt_static",
     ],
 )
 

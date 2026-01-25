@@ -234,7 +234,7 @@ template size_t utils::GetSerializedSize(const RpcRequestHeader& value);
  * @brief Manages registration and dispatching of RPC functions.
  *
  * The RpcDispatcher provides a type-safe mechanism to register C++ functions
- * and invoke them remotely. It handles serialization/deserialization of
+ * and invoke_raw them remotely. It handles serialization/deserialization of
  * arguments and return values, supports optional context passing, and provides
  * service discovery through function signatures.
  */
@@ -288,8 +288,7 @@ class RpcDispatcher {
     static_assert(
       std::is_same_v<
         decltype(std::declval<T&>().write(
-          static_cast<void const*>(nullptr),
-          std::declval<std::size_t>(),
+          static_cast<void const*>(nullptr), std::declval<std::size_t>(),
           std::declval<std::size_t>())),
         cista::offset_t>,
       "Writer must implement: offset_t write(void const* ptr, std::size_t "
@@ -335,9 +334,8 @@ class RpcDispatcher {
 #ifdef EUX_RPC_ENABLE_NATURAL_CALL
     using Signature = typename signature_from_traits<std::decay_t<Func>>::type;
     native_functions_.emplace(
-      id,
-      pro::make_proxy<detail::NaturalCallerFacade<Signature>>(
-        std::forward<Func>(func)));
+      id, pro::make_proxy<detail::NaturalCallerFacade<Signature>>(
+            std::forward<Func>(func)));
 #endif
 
     signatures_[id] = MakeRpcSignature<Func>(id, name, instance_name_);
@@ -645,10 +643,11 @@ class RpcDispatcher {
   }
 
 /**
- * @brief Gets a callable that can be used to invoke a registered function.
+ * @brief Gets a callable that can be used to invoke_raw a registered
+ * function.
  *
  * This is a type-safe way to call a function that was previously registered
- * with `register_function`.
+ * with `register_function_raw`.
  *
  * // Call it like a normal function
  * auto add_func = dispatcher.get_caller<int(int, int)>(function_id_t{1});
@@ -918,14 +917,6 @@ class RpcDispatcher {
         "UcxBufferVec is allowed.");
     }
 
-    // Check constraint: only one TensorMeta allowed
-    if (tensor_meta_count > 1) {
-      throw std::invalid_argument(
-        "RPC signature can have at most one TensorMeta parameter. "
-        "Found "
-        + std::to_string(tensor_meta_count) + " TensorMeta parameters.");
-    }
-
     // Check constraint: only one TensorMetaVec allowed
     if (tensor_meta_vec_count > 1) {
       throw std::invalid_argument(
@@ -976,15 +967,6 @@ class RpcDispatcher {
       throw std::invalid_argument(
         "RPC signature cannot have both TensorMeta and TensorMetaVec in return "
         "types. Only one TensorMeta OR one TensorMetaVec is allowed.");
-    }
-
-    // Check constraint: only one TensorMeta allowed in returns
-    if (return_tensor_meta_count > 1) {
-      throw std::invalid_argument(
-        "RPC signature can have at most one TensorMeta return value. "
-        "Found "
-        + std::to_string(return_tensor_meta_count)
-        + " TensorMeta return values. Use TENSOR_META_VEC for multiple TensorMeta.");
     }
 
     // Check constraint: only one TensorMetaVec allowed in returns

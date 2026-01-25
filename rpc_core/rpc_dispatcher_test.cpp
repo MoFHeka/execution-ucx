@@ -510,12 +510,10 @@ TEST_F(RpcDispatcherTest, GetFunctionSignature) {
 
   ucxx::DefaultUcxMemoryResourceManager mr;
   dispatcher.RegisterFunction(
-    function_id_t{12},
-    [&mr]() { return return_ucx_buffer(mr); },
+    function_id_t{12}, [&mr]() { return return_ucx_buffer(mr); },
     data::string("return_ucx_buffer"));
   dispatcher.RegisterFunction(
-    function_id_t{13},
-    [&mr]() { return return_ucx_buffer_vec(mr); },
+    function_id_t{13}, [&mr]() { return return_ucx_buffer_vec(mr); },
     data::string("return_ucx_buffer_vec"));
 
   // Test signature for 'add'
@@ -1025,14 +1023,12 @@ TEST_F(RpcDispatcherTest, GetCallerNaturalSyntax) {
   dispatcher.RegisterFunction(
     function_id_t{3}, &return_multiple_values, "return_multiple_values");
   dispatcher.RegisterFunction(
-    function_id_t{4},
-    [&mr]() { return return_ucx_buffer_vec(mr); },
+    function_id_t{4}, [&mr]() { return return_ucx_buffer_vec(mr); },
     "return_ucx_buffer_vec");
   dispatcher.RegisterFunction(
     function_id_t{5}, &process_buffer_vec_ref, "process_buffer_vec_ref");
   dispatcher.RegisterFunction(
-    function_id_t{6},
-    [&mr]() { return return_multiple_with_payload(mr); },
+    function_id_t{6}, [&mr]() { return return_multiple_with_payload(mr); },
     "return_multiple_with_payload");
 
   // 2. Test simple function: int add(int, int)

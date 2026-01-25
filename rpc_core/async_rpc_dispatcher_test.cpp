@@ -220,12 +220,10 @@ class AsyncRpcDispatcherTest : public ::testing::Test {
     dispatcher_.RegisterFunction(
       function_id_t{7}, &sum_vec_async, "sum_vec_async");
     dispatcher_.RegisterFunction(
-      function_id_t{8},
-      [this]() { return return_ucx_buffer_async(mr_); },
+      function_id_t{8}, [this]() { return return_ucx_buffer_async(mr_); },
       "return_ucx_buffer_async");
     dispatcher_.RegisterFunction(
-      function_id_t{9},
-      [this]() { return return_ucx_buffer_vec_async(mr_); },
+      function_id_t{9}, [this]() { return return_ucx_buffer_vec_async(mr_); },
       "return_ucx_buffer_vec_async");
     dispatcher_.RegisterFunction(
       function_id_t{10}, &process_buffer_vec_async, "process_buffer_vec_async");

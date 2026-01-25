@@ -4,6 +4,19 @@ load("@rules_cuda//cuda:defs.bzl", "cuda_library", "requires_cuda")
 
 package(default_visibility = ["//visibility:public"])
 
+SUPPORTED_CPP_STANDARDS = [
+    "17",
+    "20",
+    "23",
+    "2b",
+    "26",
+]
+
+[config_setting(
+    name = "is_cpp" + v,
+    values = {"cxxopt": "-std=c++" + v},
+) for v in SUPPORTED_CPP_STANDARDS]
+
 cc_library(
     name = "ucx_context_def_lib",
     hdrs = [
@@ -20,7 +33,10 @@ cc_library(
         "ucx_connection.hpp",
         "ucx_context_logger.hpp",
     ],
-    copts = ["-std=c++17"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":ucx_context_def_lib",
         "@ucx//:ucx_runtime",
@@ -36,7 +52,10 @@ cc_library(
         "lock_free_queue.hpp",
         "ucx_connection_manager.hpp",
     ],
-    copts = ["-std=c++17"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":ucx_connection",
     ],
@@ -50,7 +69,10 @@ cc_library(
     hdrs = [
         "ucx_memory_resource.hpp",
     ],
-    copts = ["-std=c++17"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":ucx_context_def_lib",
     ],
@@ -79,8 +101,11 @@ cc_library(
         "ucx_device_context.hpp",
         "ucx_status.hpp",
     ],
-    copts = ["-std=c++17"],
     linkopts = ["-lrt"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":ucx_connection",
         ":ucx_connection_manager",
@@ -134,7 +159,10 @@ cc_library(
 cc_test(
     name = "ucx_context_data_test",
     srcs = ["ucx_context_data_test.cpp"],
-    copts = ["-std=c++17"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":ucx_context_data_lib",
         "@googletest//:gtest_main",
@@ -144,7 +172,10 @@ cc_test(
 cc_test(
     name = "ucx_am_connection_test",
     srcs = ["ucx_am_context/ucx_am_connection_test.cpp"],
-    copts = ["-std=c++17"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":ucx_connection",
         "@googletest//:gtest_main",
@@ -157,13 +188,16 @@ cc_test(
         "ucx_am_context/ucx_am_context_test.cpp",
     ],
     copts = [
-        "-std=c++17",
         "-fcoroutines",
     ],
     defines = select({
         "@rules_cuda//cuda:is_enabled": ["CUDA_ENABLED=1"],
         "//conditions:default": ["CUDA_ENABLED=0"],
     }),
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = select({
         "@rules_cuda//cuda:is_enabled": [
             ":ucx_am_context",
@@ -188,10 +222,13 @@ cc_binary(
     name = "ucx_am_context_perf",
     srcs = ["ucx_am_context/ucx_am_context_perf.cpp"],
     copts = [
-        "-std=c++17",
         "-fcoroutines",
     ],
     linkstatic = False,  # Important for OpenUCX specific linking
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     deps = [
         ":ucx_am_context",
         "@unifex",

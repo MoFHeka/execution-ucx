@@ -87,10 +87,8 @@ inline constexpr struct accept_endpoint_cpo final {
       -> tag_invoke_result_t<
         accept_endpoint_cpo, Scheduler, SocketDescriptor, size_t> {
     return tag_invoke(
-      *this,
-      static_cast<Scheduler&&>(sched),
-      static_cast<SocketDescriptor&&>(desc),
-      addrlen);
+      *this, static_cast<Scheduler&&>(sched),
+      static_cast<SocketDescriptor&&>(desc), addrlen);
   }
 } accept_endpoint{};
 
@@ -165,10 +163,7 @@ inline constexpr struct connect_endpoint_cpo final {
       is_source_socket_address_v<SrcSaddr> && is_length_type_v<SocklenT>, int> =
       0>
   auto operator()(
-    Scheduler&& sched,
-    SrcSaddr src_saddr,
-    std::unique_ptr<sockaddr>
-      dst_saddr,
+    Scheduler&& sched, SrcSaddr src_saddr, std::unique_ptr<sockaddr> dst_saddr,
     SocklenT addrlen) const
     noexcept(is_nothrow_tag_invocable_v<
              connect_endpoint_cpo, Scheduler, SrcSaddr,
@@ -177,11 +172,8 @@ inline constexpr struct connect_endpoint_cpo final {
         connect_endpoint_cpo, Scheduler, SrcSaddr, std::unique_ptr<sockaddr>,
         SocklenT> {
     return tag_invoke(
-      *this,
-      static_cast<Scheduler&&>(sched),
-      std::move(src_saddr),
-      std::move(dst_saddr),
-      addrlen);
+      *this, static_cast<Scheduler&&>(sched), std::move(src_saddr),
+      std::move(dst_saddr), addrlen);
   }
 
   /**
@@ -286,9 +278,7 @@ inline constexpr struct send_cpo final {
            remove_cvref_t<Conn>, std::uint64_t>)&&(is_data_type_v<Data>),
         tag_invoke_result_t<send_cpo, Scheduler, Conn, Data&&>> {
     return tag_invoke(
-      *this,
-      static_cast<Scheduler&&>(sched),
-      static_cast<Conn&&>(conn),
+      *this, static_cast<Scheduler&&>(sched), static_cast<Conn&&>(conn),
       static_cast<Data&&>(data));
   }
 } connection_send{};

@@ -44,8 +44,7 @@ DefaultUcxMemoryResourceManager::DefaultUcxMemoryResourceManager() {
 // Register memory resource by reference (more efficient)
 void UcxMemoryResourceManager::register_memory_resource(
   ucx_memory_type_t type,
-  std::reference_wrapper<std::pmr::memory_resource>
-    resource) {
+  std::reference_wrapper<std::pmr::memory_resource> resource) {
   if (__builtin_expect(type >= UCX_MEMORY_TYPE_COUNT, 0)) {
     throw std::invalid_argument("Invalid memory type");
   }

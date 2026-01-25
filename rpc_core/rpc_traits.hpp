@@ -118,8 +118,7 @@ template <typename T>
 struct signature_from_traits {
   using traits = function_traits<std::decay_t<T>>;
   using type = typename detail::function_signature_builder<
-    typename traits::return_type,
-    typename traits::args_tuple>::type;
+    typename traits::return_type, typename traits::args_tuple>::type;
 };
 
 template <typename T>
@@ -312,25 +311,16 @@ template <typename Tuple, template <typename> class Trait, typename ResultTuple>
 struct filter_tuple_by_trait;
 
 template <
-  typename Head,
-  typename... Tail,
-  template <typename>
-  class Trait,
+  typename Head, typename... Tail, template <typename> class Trait,
   typename... ResultArgs>
 struct filter_tuple_by_trait<
-  std::tuple<Head, Tail...>,
-  Trait,
-  std::tuple<ResultArgs...>> {
+  std::tuple<Head, Tail...>, Trait, std::tuple<ResultArgs...>> {
   using type = std::conditional_t<
     Trait<Head>::value,
     typename filter_tuple_by_trait<
-      std::tuple<Tail...>,
-      Trait,
-      std::tuple<ResultArgs..., Head>>::type,
+      std::tuple<Tail...>, Trait, std::tuple<ResultArgs..., Head>>::type,
     typename filter_tuple_by_trait<
-      std::tuple<Tail...>,
-      Trait,
-      std::tuple<ResultArgs...>>::type>;
+      std::tuple<Tail...>, Trait, std::tuple<ResultArgs...>>::type>;
 };
 
 template <template <typename> class Trait, typename... ResultArgs>

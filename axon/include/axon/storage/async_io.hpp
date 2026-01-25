@@ -83,8 +83,7 @@ class AsyncIO {
   //   ucxx::UcxMemoryResourceManager& mr);
   virtual std::error_code Save(
     const std::vector<std::shared_ptr<AxonRequest>>& requests,
-    ucxx::UcxMemoryResourceManager& mr,
-    const std::filesystem::path& base_path,
+    ucxx::UcxMemoryResourceManager& mr, const std::filesystem::path& base_path,
     const std::string& prefix) {
     throw std::runtime_error("Save not implemented");
   }
@@ -109,8 +108,7 @@ class AsyncIO {
   //   const std::string& prefix);
   virtual std::error_code SaveAsync(
     const std::vector<std::shared_ptr<AxonRequest>>& requests,
-    ucxx::UcxMemoryResourceManager& mr,
-    const std::filesystem::path& base_path,
+    ucxx::UcxMemoryResourceManager& mr, const std::filesystem::path& base_path,
     const std::string& prefix = "") {
     throw std::runtime_error("SaveAsync not implemented");
   }
@@ -214,10 +212,8 @@ class AsyncUnifexAvroIO : public AsyncIO {
                std::remove_cv_t<std::ranges::range_value_t<R>>,
                std::shared_ptr<AxonRequest>>
   std::error_code Save(
-    const R& requests,
-    ucxx::UcxMemoryResourceManager& mr,
-    const std::filesystem::path& base_path,
-    const std::string& prefix) {
+    const R& requests, ucxx::UcxMemoryResourceManager& mr,
+    const std::filesystem::path& base_path, const std::string& prefix) {
     if (requests.empty()) {
       return std::error_code();
     }

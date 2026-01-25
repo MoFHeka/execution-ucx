@@ -4,6 +4,18 @@ The 'libunifex' project is a prototype implementation of the C++ sender/receiver
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
+SUPPORTED_CPP_STANDARDS = [
+    "20",
+    "23",
+    "2b",
+    "26",
+]
+
+[config_setting(
+    name = "is_cpp" + v,
+    values = {"cxxopt": "-std=c++" + v},
+) for v in SUPPORTED_CPP_STANDARDS]
+
 cc_library(
     name = "unifex",
     srcs = glob(
@@ -31,8 +43,6 @@ cc_library(
         ),
     ),
     copts = [
-        "-std=c++2b",
-        "-fcoroutines",
         "-fexceptions",
     ],
     defines = [
@@ -47,6 +57,10 @@ cc_library(
         "-pthread",
     ],
     linkstatic = True,
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
     visibility = ["//visibility:public"],
     deps = [
         "@liburing",

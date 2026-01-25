@@ -54,8 +54,7 @@ class UcxMemoryResourceManager {
    */
   void register_memory_resource(
     ucx_memory_type_t type,
-    std::reference_wrapper<std::pmr::memory_resource>
-      resource);
+    std::reference_wrapper<std::pmr::memory_resource> resource);
 
   /**
    * @brief Register a memory copy function for specific source and destination
