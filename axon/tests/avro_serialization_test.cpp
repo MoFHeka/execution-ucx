@@ -38,7 +38,7 @@ using eux::rpc::ParamType;
 using eux::rpc::PrimitiveValue;
 using eux::rpc::request_id_t;
 using eux::rpc::RpcRequestHeader;
-using eux::rpc::TensorMetaVecValue;
+using eux::rpc::TensorMetaVec;
 using eux::rpc::VectorValue;
 using eux::rpc::utils::HybridLogicalClock;
 using eux::rpc::utils::TensorMeta;
@@ -325,8 +325,8 @@ TEST_F(AvroSerializationTest, SerializeDeserializeAllTypes) {
         break;
       }
       case ParamType::TENSOR_META_VEC: {
-        const auto& vec1 = cista::get<rpc::TensorMetaVecValue>(p1.value);
-        const auto& vec2 = cista::get<rpc::TensorMetaVecValue>(p2.value);
+        const auto& vec1 = cista::get<rpc::TensorMetaVec>(p1.value);
+        const auto& vec2 = cista::get<rpc::TensorMetaVec>(p2.value);
         ASSERT_EQ(vec1.size(), vec2.size());
         for (size_t i = 0; i < vec1.size(); ++i) {
           const auto& tm1 = vec1[i];
@@ -364,10 +364,9 @@ TEST_F(AvroSerializationTest, SerializeDeserializeAllTypes) {
   for (size_t i = 0; i < original_payload.size(); ++i) {
     EXPECT_EQ(original_payload[i].size, deserialized_payload[i].size);
     EXPECT_EQ(
-      0,
-      memcmp(
-        original_payload[i].data, deserialized_payload[i].data,
-        original_payload[i].size));
+      0, memcmp(
+           original_payload[i].data, deserialized_payload[i].data,
+           original_payload[i].size));
   }
 }
 
@@ -437,10 +436,9 @@ TEST_F(AvroSerializationTest, SerializeDeserialize_SingleBuffer) {
     std::get<UcxBuffer>(deserialized_request->payload);
   EXPECT_EQ(original_payload.size(), deserialized_payload.size());
   EXPECT_EQ(
-    0,
-    memcmp(
-      original_payload.data(), deserialized_payload.data(),
-      original_payload.size()));
+    0, memcmp(
+         original_payload.data(), deserialized_payload.data(),
+         original_payload.size()));
 
   mr_->deallocate(
     ucx_memory_type::HOST, payload_buffer.data, payload_buffer.size);

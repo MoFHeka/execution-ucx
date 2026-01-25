@@ -319,8 +319,7 @@ TEST_F(AxonWorkerIntegrationTest, DynamicApiAndErrorHandling) {
           std::move(dyn_echo_impl));
 
       worker.RegisterFunction<ucxx::UcxBuffer>(
-        rpc::function_id_t{2001},
-        data_string{"dyn_echo"},
+        rpc::function_id_t{2001}, data_string{"dyn_echo"},
         data_vector_param{},           // no params
         data_vector_param{},           // no returns
         rpc::PayloadType::UCX_BUFFER,  // input payload
@@ -1082,7 +1081,7 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
       worker.RegisterFunction<ucxx::UcxBufferVec>(
         rpc::function_id_t{5002},
         [](
-          const rpc::TensorMetaVecValue& tensor_metas, int batch_size,
+          const rpc::TensorMetaVec& tensor_metas, int batch_size,
           float threshold, ucxx::UcxBufferVec&& payload) {
           // Verify TensorMeta and primitive parameters
           // tensor_metas should have 2 elements for this test
@@ -1106,7 +1105,7 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
       worker.RegisterFunction<ucxx::UcxBufferVec>(
         rpc::function_id_t{5003},
         [&worker](
-          const rpc::TensorMetaVecValue& tensor_metas, int batch_size,
+          const rpc::TensorMetaVec& tensor_metas, int batch_size,
           float threshold, ucxx::UcxBufferVec&& payload) {
           LOGX(
             "[Server-TM] Received UcxBufferVec to convert to UcxBuffer: "
@@ -1176,7 +1175,7 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
 
           // Create TensorMeta for each split (fixed to 4 splits)
           // Use TENSOR_META_VEC instead of multiple separate TensorMeta
-          rpc::TensorMetaVecValue split_tensor_metas;
+          rpc::TensorMetaVec split_tensor_metas;
           for (size_t i = 0; i < static_cast<size_t>(num_splits); ++i) {
             TensorMeta split_tm = tm;
             split_tm.shape = cista::offset::vector<int64_t>{
@@ -1375,7 +1374,7 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
 
           cista::offset::vector<ParamMeta> params;
           // Use TENSOR_META_VEC instead of two separate TENSOR_META parameters
-          rpc::TensorMetaVecValue tensor_metas;
+          rpc::TensorMetaVec tensor_metas;
           tensor_metas.push_back(tm1);
           tensor_metas.push_back(tm2);
           params.push_back(
@@ -1408,7 +1407,7 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
           ASSERT_EQ(resp_header->results[0].type, ParamType::TENSOR_META_VEC);
 
           const auto& resp_tensor_metas =
-            cista::get<rpc::TensorMetaVecValue>(resp_header->results[0].value);
+            cista::get<rpc::TensorMetaVec>(resp_header->results[0].value);
           ASSERT_EQ(resp_tensor_metas.size(), 2);
           ASSERT_EQ(resp_tensor_metas[0].ndim, 1);
           ASSERT_EQ(resp_tensor_metas[0].shape[0], 512);
@@ -1500,7 +1499,7 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
 
           cista::offset::vector<ParamMeta> params;
           // Use TENSOR_META_VEC instead of two separate TENSOR_META parameters
-          rpc::TensorMetaVecValue tensor_metas;
+          rpc::TensorMetaVec tensor_metas;
           tensor_metas.push_back(tm1);
           tensor_metas.push_back(tm2);
           params.push_back(
@@ -1598,7 +1597,7 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
 
           cista::offset::vector<ParamMeta> params;
           // Use TENSOR_META_VEC instead of two separate TENSOR_META parameters
-          rpc::TensorMetaVecValue tensor_metas;
+          rpc::TensorMetaVec tensor_metas;
           tensor_metas.push_back(tm1);
           tensor_metas.push_back(tm2);
           params.push_back(
@@ -1738,7 +1737,7 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
           // Verify TensorMetaVec
           ASSERT_EQ(resp_header->results[0].type, ParamType::TENSOR_META_VEC);
           const auto& resp_tensor_metas =
-            cista::get<rpc::TensorMetaVecValue>(resp_header->results[0].value);
+            cista::get<rpc::TensorMetaVec>(resp_header->results[0].value);
           ASSERT_EQ(resp_tensor_metas.size(), static_cast<size_t>(num_splits));
 
           // Verify float parameter (should be at index 1)

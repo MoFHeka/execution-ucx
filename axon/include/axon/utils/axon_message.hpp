@@ -68,29 +68,56 @@ inline std::optional<size_t> ExtractTensorParamIndex(const auto& params) {
   return tensor_index;
 }
 
-inline std::vector<std::reference_wrapper<const rpc::TensorMeta>>
-ExtractTensorMetas(const auto& params) {
-  std::vector<std::reference_wrapper<const rpc::TensorMeta>> tensor_metas;
-  // Find the first TENSOR_META or TENSOR_META_VEC parameter
+/// @brief Extract tensor metas from params without allocation.
+/// @return For TENSOR_META_VEC: reference to existing vector.
+///         For single TENSOR_META: std::nullopt (caller should use
+///         GetTensorParamIndex).
+[[nodiscard]] inline std::optional<
+  std::reference_wrapper<const rpc::TensorMetaVec>>
+ExtractTensorMetaVec(const auto& params) noexcept {
   for (const auto& param : params) {
-    if (param.type == rpc::ParamType::TENSOR_META) {
-      // Single TensorMeta: return vector with one element
-      tensor_metas.push_back(
-        std::ref(cista::get<rpc::TensorMeta>(param.value)));
-      return tensor_metas;
-    } else if (param.type == rpc::ParamType::TENSOR_META_VEC) {
-      // TensorMetaVecValue: return all metas from the vector
-      const auto& tensor_meta_vec =
-        cista::get<rpc::TensorMetaVecValue>(param.value);
-      tensor_metas.reserve(tensor_meta_vec.size());
-      for (const auto& meta : tensor_meta_vec) {
-        tensor_metas.push_back(std::ref(meta));
-      }
-      return tensor_metas;
+    if (param.type == rpc::ParamType::TENSOR_META_VEC) {
+      return std::cref(cista::get<rpc::TensorMetaVec>(param.value));
     }
   }
-  // No tensor meta parameter found
-  return tensor_metas;
+  return std::nullopt;
+}
+
+/// @brief Extract single tensor meta from params.
+/// @return Reference to TensorMeta if TENSOR_META found, nullopt otherwise.
+[[nodiscard]] inline std::optional<
+  std::reference_wrapper<const rpc::TensorMeta>>
+ExtractSingleTensorMeta(const auto& params) noexcept {
+  for (const auto& param : params) {
+    if (param.type == rpc::ParamType::TENSOR_META) {
+      return std::cref(cista::get<rpc::TensorMeta>(param.value));
+    }
+  }
+  return std::nullopt;
+}
+
+/// @brief Span alias for zero-copy view over tensor metas.
+using TensorMetaSpan = rpc::utils::TensorMetaSpan;
+
+/// @brief Get tensor metas from params as a span view.
+/// Handles both TENSOR_META and TENSOR_META_VEC cases.
+/// Uses reverse iteration for O(1) lookup when tensor meta is at the end
+/// (common case from finalize_header).
+[[nodiscard]] inline TensorMetaSpan GetTensorMetas(
+  const auto& params) noexcept {
+  // Tensor metas are typically added at the end by
+  // InvokeContext::finalize_header, so reverse iteration finds them in O(1)
+  // instead of O(n).
+  for (const auto& param : params | std::views::reverse) {
+    if (param.type == rpc::ParamType::TENSOR_META_VEC) {
+      const auto& vec = cista::get<rpc::TensorMetaVec>(param.value);
+      return TensorMetaSpan{vec.data(), vec.size()};
+    } else if (param.type == rpc::ParamType::TENSOR_META) {
+      const auto& meta = cista::get<rpc::TensorMeta>(param.value);
+      return TensorMetaSpan{&meta, 1};
+    }
+  }
+  return TensorMetaSpan{};
 }
 
 template <typename HeaderType>

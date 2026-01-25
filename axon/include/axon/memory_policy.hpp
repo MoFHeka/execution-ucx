@@ -20,22 +20,19 @@ limitations under the License.
 
 #include <proxy/proxy.h>
 
-#include <vector>
+#include <cstddef>
+#include <span>
 
-#include "rpc_core/utils/tensor_meta.hpp"
+#include "ucx_context/ucx_context_def.h"
 
 namespace eux {
 namespace axon {
 
-using TensorMetaRef = std::reference_wrapper<const rpc::utils::TensorMeta>;
-using TensorMetaRefVec = std::vector<TensorMetaRef>;
-
-// Facade for user to get the memory resource for the request.
 template <typename ReceivedBufferT>
 struct BufferProviderFacade
   : pro::facade_builder::add_convention<
       pro::operator_dispatch<"()">,
-      ReceivedBufferT(const TensorMetaRefVec&)>::build {};
+      ReceivedBufferT(std::span<const size_t>, ucx_memory_type_t)>::build {};
 
 template <typename ReceivedBufferT>
 using BufferProvider = pro::proxy<BufferProviderFacade<ReceivedBufferT>>;
@@ -91,9 +88,12 @@ struct is_variant_alternative_of_receiver_memory_policy<
 
 template <typename T, typename ReceivedBufferT>
 constexpr bool is_receiver_memory_policy_v =
-  std::is_same_v<std::decay_t<T>, ReceiverMemoryPolicy<ReceivedBufferT>>
-  || is_variant_alternative_of_receiver_memory_policy<
-    T, ReceivedBufferT, ReceiverMemoryPolicy<ReceivedBufferT>>::value;
+  std::is_same_v<std::decay_t<ReceivedBufferT>, std::monostate>
+    ? true  // No need to check memory policy when response buffer is monostate
+    : (
+      std::is_same_v<std::decay_t<T>, ReceiverMemoryPolicy<ReceivedBufferT>>
+      || is_variant_alternative_of_receiver_memory_policy<
+        T, ReceivedBufferT, ReceiverMemoryPolicy<ReceivedBufferT>>::value);
 
 }  // namespace axon
 }  // namespace eux
