@@ -359,7 +359,7 @@ int main() {
   // 2. 设置服务端 B (服务提供者)。
   // 它创建一个分发器，注册一个函数，并发布其签名。
   RpcDispatcher dispatcher_B("server_B_instance");
-  dispatcher_B.register_function(function_id_t{100}, &add,
+  dispatcher_B.register_function_raw(function_id_t{100}, &add,
                                  data::string{"add_func"});
 
   // 将签名发布到中央注册表。
@@ -445,7 +445,7 @@ cc_binary(
     *   **参数**:
         *   `instance_name`: 一个 `data::string`，用于标识此分发器实例，该名称将用于函数签名中以进行服务发现。
 
-*   **`register_function(id, func, name)`**
+*   **`register_function_raw(id, func, name)`**
     *   **描述**: 将一个 C++ 可调用对象（函数、lambda 表达式等）注册为 RPC 函数。
     *   **参数**:
         *   `id`: 一个 `function_id_t`（`uint64_t` 的强类型），用于唯一标识该函数。

@@ -27,5 +27,6 @@ refresh_compile_commands(
         "//axon:axon_worker": "",
         "//axon:axon_worker_test": "",
         "//axon:axon_worker_basic_test": "",
+        "//axon/python:axon_python_runtime": "",
     },
 )

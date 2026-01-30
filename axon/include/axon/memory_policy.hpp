@@ -23,6 +23,7 @@ limitations under the License.
 #include <cstddef>
 #include <span>
 
+#include "rpc_core/utils/tensor_meta.hpp"
 #include "ucx_context/ucx_context_def.h"
 
 namespace eux {
@@ -32,7 +33,7 @@ template <typename ReceivedBufferT>
 struct BufferProviderFacade
   : pro::facade_builder::add_convention<
       pro::operator_dispatch<"()">,
-      ReceivedBufferT(std::span<const size_t>, ucx_memory_type_t)>::build {};
+      ReceivedBufferT(rpc::utils::TensorMetaSpan)>::build {};
 
 template <typename ReceivedBufferT>
 using BufferProvider = pro::proxy<BufferProviderFacade<ReceivedBufferT>>;
@@ -62,7 +63,7 @@ struct AlwaysOnHostPolicy {};
  *
  * CustomMemoryPolicy is a proxy_view for BufferProviderFacade. The user
  * provides an implementation of the allocation logic capable of taking a @c
- * TensorMetaRefVec and returning a buffer (such as ucxx::UcxBuffer,
+ * TensorMetaVec view and returning a buffer (such as ucxx::UcxBuffer,
  * ucxx::UcxBufferVec, or PayloadVariant).
  *
  * @tparam ReceivedBufferT The buffer type to return.

@@ -241,7 +241,7 @@ class AxonRuntime {
     typename MemPolicyT = AlwaysOnHostPolicy>
     requires(rpc::is_payload_v<PayloadT>
              || std::is_same_v<PayloadT, std::monostate>)
-            && (rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate>)
+            && (rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate> || std::is_same_v<RespBufferT, rpc::PayloadVariant>)
             && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
             && detail::is_dynamic_api<PayloadT>::value
   auto InvokeRpc(
@@ -262,7 +262,7 @@ class AxonRuntime {
     typename MemPolicyT = AlwaysOnHostPolicy>
     requires(rpc::is_payload_v<PayloadT>
              || std::is_same_v<PayloadT, std::monostate>)
-            && (rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate>)
+            && (rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate> || std::is_same_v<RespBufferT, rpc::PayloadVariant>)
             && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
             && detail::is_dynamic_api<PayloadT>::value
             && (!std::is_same_v<

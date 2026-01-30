@@ -32,6 +32,7 @@
 *.app
 
 # Bazel
+.local_config.bazelrc
 MODULE.bazel.lock
 bazel-bin
 bazel-genfiles
@@ -46,3 +47,4 @@ bazel-execution-ucx
 
 # Python cache
 __pycache__
+*requirements_lock.txt
