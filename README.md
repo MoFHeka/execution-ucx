@@ -361,7 +361,7 @@ int main() {
   // It creates a dispatcher, registers a function, and publishes its
   // signatures.
   RpcDispatcher dispatcher_B("server_B_instance");
-  dispatcher_B.register_function(function_id_t{100}, &add,
+  dispatcher_B.register_function_raw(function_id_t{100}, &add,
                                  data::string{"add_func"});
 
   // Publish signatures to the central registry.
@@ -448,7 +448,7 @@ This section details the primary APIs provided by `RpcDispatcher`.
     *   **Parameters**:
         *   `instance_name`: A `data::string` to identify this dispatcher instance, used in function signatures for service discovery.
 
-*   **`register_function(id, func, name)`**
+*   **`register_function_raw(id, func, name)`**
     *   **Description**: Registers a C++ callable (function, lambda, etc.) as an RPC function.
     *   **Parameters**:
         *   `id`: A `function_id_t` (strong type over `uint64_t`) to uniquely identify the function.

@@ -1,0 +1,743 @@
+"""Python bindings for Axon Runtime using nanobind."""
+
+load("@python_deps//:requirements.bzl", "requirement")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_python//python:defs.bzl", "py_library")
+load("//axon:build_defs/utils_libs.bzl", "SUPPORTED_CPP_STANDARDS", "axon_utils_config_settings")
+load("//axon/python:tests.bzl", "axon_pytest_test")
+load("//axon/python:wheel.bzl", "axon_python_wheel", "copy_to_dir")
+
+package(default_visibility = ["//visibility:public"])
+
+# Define config settings for C++ standards
+axon_utils_config_settings()
+
+cc_library(
+    name = "async_bridge",
+    srcs = [
+        "async_bridge.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":python_module",
+    ],
+)
+
+# Header-only version for axon_python_runtime (which compiles .cpp directly)
+cc_library(
+    name = "dlpack_helpers_headers",
+    hdrs = [
+        "dlpack_helpers.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        "@execution-ucx//axon:axon_runtime",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+    ],
+)
+
+cc_library(
+    name = "dlpack_helpers",
+    srcs = [
+        "dlpack_helpers.cpp",
+    ],
+    hdrs = [
+        "dlpack_helpers.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":python_helpers",
+        ":python_module",
+        "@execution-ucx//axon:tensor",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+    ],
+    alwayslink = True,
+)
+
+# Header-only version for axon_python_runtime (which compiles .cpp directly)
+cc_library(
+    name = "param_conversion_headers",
+    hdrs = [
+        "param_conversion.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":dlpack_helpers_headers",
+        "@execution-ucx//axon:axon_runtime",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+    ],
+)
+
+cc_library(
+    name = "param_conversion",
+    srcs = [
+        "param_conversion.cpp",
+    ],
+    hdrs = [
+        "param_conversion.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":dlpack_helpers",
+        ":memory_policy_helpers",
+        ":python_module",
+        "@execution-ucx//axon:axon_runtime",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+    ],
+    alwayslink = True,
+)
+
+# Header-only version for axon_python_runtime (which compiles .cpp directly)
+cc_library(
+    name = "python_helpers_headers",
+    hdrs = [
+        "python_helpers.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@nanobind",
+    ],
+)
+
+cc_library(
+    name = "python_module",
+    srcs = [
+        "python_module.cpp",
+    ],
+    hdrs = [
+        "python_module.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        "@nanobind",
+    ],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "python_helpers",
+    srcs = [
+        "python_helpers.cpp",
+    ],
+    hdrs = [
+        "python_helpers.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":python_module",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@nanobind",
+    ],
+    alwayslink = True,
+)
+
+# Header-only version for memory_policy_helpers
+cc_library(
+    name = "memory_policy_helpers_headers",
+    hdrs = [
+        "memory_policy_helpers.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        "@execution-ucx//axon:axon_runtime",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+    ],
+)
+
+cc_library(
+    name = "memory_policy_helpers",
+    srcs = [
+        "memory_policy_helpers.cpp",
+    ],
+    hdrs = [
+        "memory_policy_helpers.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":dlpack_helpers",
+        ":python_helpers",
+        ":python_module",
+        "@execution-ucx//axon:axon_runtime",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+    ],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "python_wake_manager_headers",
+    hdrs = [
+        "python_wake_manager.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        "@execution-ucx//axon:axon_runtime",
+        "@nanobind",
+        "@unifex",
+    ],
+)
+
+cc_library(
+    name = "python_wake_manager",
+    srcs = [
+        "python_wake_manager.cpp",
+    ],
+    hdrs = [
+        "python_wake_manager.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":python_helpers",
+        ":python_module",
+        "@execution-ucx//axon:axon_runtime",
+        "@nanobind",
+        "@unifex",
+    ],
+    alwayslink = True,
+)
+
+# Header-only version for axon_python_runtime (which compiles .cpp directly)
+cc_library(
+    name = "bindings_enums_headers",
+    hdrs = [
+        "bindings_enums.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@nanobind",
+    ],
+)
+
+cc_library(
+    name = "bindings_enums",
+    srcs = [
+        "bindings_enums.cpp",
+    ],
+    hdrs = [
+        "bindings_enums.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@nanobind",
+    ],
+    alwayslink = True,
+)
+
+# Header-only version for axon_python_runtime (which compiles .cpp directly)
+cc_library(
+    name = "bindings_types_headers",
+    hdrs = [
+        "bindings_types.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        "@execution-ucx//axon:tensor",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+    ],
+)
+
+cc_library(
+    name = "bindings_types",
+    srcs = [
+        "bindings_types.cpp",
+    ],
+    hdrs = [
+        "bindings_types.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":param_conversion_headers",
+        "@execution-ucx//axon:tensor",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+    ],
+    alwayslink = True,
+)
+
+# Header-only version for bindings_runtime_helpers
+cc_library(
+    name = "bindings_runtime_helpers_headers",
+    hdrs = [
+        "bindings_runtime_helpers.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":dlpack_helpers_headers",
+        ":memory_policy_helpers_headers",
+        ":param_conversion_headers",
+        ":python_helpers_headers",
+        ":python_wake_manager_headers",
+        "@cista",
+        "@execution-ucx//axon:axon_runtime",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+        "@unifex",
+    ],
+)
+
+cc_library(
+    name = "bindings_runtime_helpers",
+    srcs = [
+        "bindings_runtime_helpers.cpp",
+    ],
+    hdrs = [
+        "bindings_runtime_helpers.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":bindings_runtime_helpers_headers",
+        ":dlpack_helpers",
+        ":memory_policy_helpers",
+        ":param_conversion",
+        ":python_helpers",
+        ":python_module",
+        ":python_wake_manager",
+        "@cista",
+        "@execution-ucx//axon:axon_runtime",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+        "@unifex",
+    ],
+    alwayslink = True,
+)
+
+# Header-only version for bindings_runtime_wrapper
+cc_library(
+    name = "bindings_runtime_wrapper_headers",
+    hdrs = [
+        "bindings_runtime_wrapper.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":bindings_runtime_helpers_headers",
+        ":dlpack_helpers_headers",
+        ":param_conversion_headers",
+        ":python_helpers_headers",
+        ":python_wake_manager_headers",
+        "@execution-ucx//axon:axon_runtime",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+        "@unifex",
+    ],
+)
+
+cc_library(
+    name = "bindings_runtime_wrapper",
+    srcs = [
+        "bindings_runtime_wrapper.cpp",
+    ],
+    hdrs = [
+        "bindings_runtime_wrapper.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":bindings_runtime_helpers",
+        ":bindings_runtime_wrapper_headers",
+        ":dlpack_helpers",
+        ":param_conversion",
+        ":python_helpers",
+        ":python_module",
+        ":python_wake_manager",
+        "@execution-ucx//axon:axon_runtime",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+        "@unifex",
+    ],
+    alwayslink = True,
+)
+
+# Header-only version for axon_python_runtime (which compiles .cpp directly)
+cc_library(
+    name = "bindings_runtime_headers",
+    hdrs = [
+        "bindings_runtime.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":bindings_runtime_helpers_headers",
+        ":bindings_runtime_wrapper_headers",
+        ":dlpack_helpers_headers",
+        ":memory_policy_helpers_headers",
+        ":param_conversion_headers",
+        ":python_helpers_headers",
+        ":python_wake_manager_headers",
+        "@cista",
+        "@execution-ucx//axon:axon_runtime",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+        "@unifex",
+    ],
+)
+
+cc_library(
+    name = "bindings_runtime",
+    srcs = [
+        "bindings_runtime.cpp",
+    ],
+    hdrs = [
+        "bindings_runtime.hpp",
+    ],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":bindings_runtime_helpers",
+        ":bindings_runtime_wrapper",
+        ":dlpack_helpers",
+        ":memory_policy_helpers",
+        ":param_conversion",
+        ":python_helpers",
+        ":python_wake_manager",
+        "@cista",
+        "@execution-ucx//axon:axon_runtime",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+        "@unifex",
+    ],
+    alwayslink = True,
+)
+
+copy_to_dir(
+    name = "copy_ucx_libs",
+    srcs = ["@ucx//:ucx_shared_libs"],
+    dirname = "libs",
+    match_pattern = "*.so.0",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "axon_python_entry",
+    srcs = ["axon_python.cpp"],
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":bindings_enums",
+        ":bindings_runtime",
+        ":bindings_types",
+        "@nanobind",
+    ],
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "axon_python_runtime",
+    linkopts = [
+        "-shared",
+        "-Wl,-rpath,$ORIGIN",
+        "-Wl,-rpath,$ORIGIN/libs",
+    ],
+    # For Python extension modules, we don't link Python statically
+    # Python symbols will be resolved at runtime from the Python interpreter
+    # We use linkstatic = True to force static linking of nanobind and other static deps.
+    # However, UCX dependencies (transitively via axon_runtime -> ucx_context)
+    # are now configured to use shared libraries only (via ucx_prebuilt_shared),
+    # so they will be linked dynamically, avoiding the double-init/bad_cast issues.
+    linkstatic = True,
+    target_compatible_with = select(
+        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+        {"//conditions:default": ["@platforms//:incompatible"]},
+    ),
+    deps = [
+        ":async_bridge",
+        ":axon_python_entry",
+        ":bindings_enums",
+        ":bindings_runtime",
+        ":bindings_runtime_helpers",
+        ":bindings_runtime_wrapper",
+        ":bindings_types",
+        ":dlpack_helpers",
+        ":memory_policy_helpers",
+        ":param_conversion",
+        ":python_helpers",
+        ":python_module",
+        ":python_wake_manager",
+        "@cista",
+        "@execution-ucx//axon:axon_runtime",
+        "@execution-ucx//axon:tensor",
+        "@execution-ucx//rpc_core:rpc_types_lib",
+        "@execution-ucx//ucx_context:ucx_context_data_lib",
+        "@nanobind",
+        "@unifex",
+    ],
+)
+
+# Create a symlink/copy with the correct name for Python import
+# nanobind expects the module name to match the .so filename
+# Bazel generates libaxon_python_runtime.so, but Python needs axon_runtime.so
+genrule(
+    name = "axon_python_lib",
+    srcs = [":axon_python_runtime"],
+    outs = ["axon.so"],
+    cmd = "cp $(location :axon_python_runtime) $@",
+    visibility = ["//visibility:public"],
+)
+
+# Python wrapper library that exposes the C++ extension module
+# This creates a py_library that can be imported as 'axon_runtime'
+py_library(
+    name = "axon_python",
+    srcs = ["axon.py"],
+    data = [
+        ":axon_python_lib",
+        ":copy_ucx_libs",
+    ],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+)
+
+# Python test library for shared utilities
+py_library(
+    name = "test_utils_lib",
+    srcs = ["tests/test_utils.py"],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+)
+
+# Pytest configuration
+py_library(
+    name = "conftest",
+    srcs = ["tests/conftest.py"],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+)
+
+# Python tests - using py_test with pytest
+axon_pytest_test(
+    name = "test_axon_runtime",
+    srcs = ["tests/test_axon_runtime.py"],
+    deps = [
+        requirement("pytest-asyncio"),
+    ],
+)
+
+axon_pytest_test(
+    name = "test_basic",
+    srcs = ["tests/test_basic.py"],
+)
+
+axon_pytest_test(
+    name = "test_types_enums",
+    srcs = ["tests/test_types_enums.py"],
+)
+
+axon_pytest_test(
+    name = "test_register_function",
+    srcs = ["tests/test_register_function.py"],
+)
+
+axon_pytest_test(
+    name = "test_invoke_args",
+    srcs = ["tests/test_invoke_args.py"],
+    deps = [
+        requirement("pytest-asyncio"),
+    ],
+)
+
+axon_pytest_test(
+    name = "test_invoke_rpc",
+    srcs = ["tests/test_invoke_rpc.py"],
+    deps = [
+        requirement("pytest-asyncio"),
+    ],
+)
+
+axon_pytest_test(
+    name = "test_connection",
+    srcs = ["tests/test_connection.py"],
+    deps = [
+        requirement("pytest-asyncio"),
+    ],
+)
+
+axon_pytest_test(
+    name = "test_signature_based_rpc",
+    srcs = ["tests/test_signature_based_rpc.py"],
+    deps = [
+        requirement("pytest-asyncio"),
+    ],
+)
+
+axon_pytest_test(
+    name = "test_simplified_register",
+    srcs = ["tests/test_simplified_register.py"],
+    deps = [
+        requirement("pytest-asyncio"),
+    ],
+)
+
+axon_pytest_test(
+    name = "test_integration",
+    srcs = ["tests/test_integration.py"],
+    deps = [
+        requirement("pytest-asyncio"),
+    ],
+)
+
+axon_pytest_test(
+    name = "test_edge_cases",
+    srcs = ["tests/test_edge_cases.py"],
+)
+
+axon_pytest_test(
+    name = "test_numpy_rpc.py",
+    srcs = ["tests/test_numpy_rpc.py"],
+    deps = [
+        requirement("pytest-asyncio"),
+        requirement("numpy"),
+    ],
+)
+
+axon_pytest_test(
+    name = "test_server_memory_policy",
+    srcs = ["tests/test_server_memory_policy.py"],
+    deps = [
+        requirement("pytest-asyncio"),
+        requirement("numpy"),
+    ],
+)
+
+axon_pytest_test(
+    name = "test_invoke_memory_policy",
+    srcs = ["tests/test_invoke_memory_policy.py"],
+    deps = [
+        requirement("pytest-asyncio"),
+        requirement("numpy"),
+    ],
+)
+
+# Test suite that runs all tests
+test_suite(
+    name = "python_tests",
+    tests = [
+        ":test_axon_runtime",
+        ":test_basic",
+        ":test_connection",
+        ":test_edge_cases",
+        ":test_integration",
+        ":test_invoke_args",
+        ":test_invoke_memory_policy",
+        ":test_invoke_rpc",
+        ":test_numpy_rpc.py",
+        ":test_register_function",
+        ":test_server_memory_policy",
+        ":test_signature_based_rpc",
+        ":test_simplified_register",
+        ":test_types_enums",
+    ],
+)
+
+# Python wheel package for distribution
+#
+# Usage:
+#   Build with default Python version:
+#     bazel build //axon/python:wheel
+#
+#   Build with specific Python version:
+#     bazel build //axon/python:wheel --python_version=PY3
+#     bazel build //axon/python:wheel --config=python38
+#     bazel build //axon/python:wheel --config=python39
+#     bazel build //axon/python:wheel --config=python310
+#     bazel build //axon/python:wheel --config=python311
+#     bazel build //axon/python:wheel --config=python312
+#
+# Note: For C++ extension modules, each Python version requires a separate build
+# because the extension module is compiled against a specific Python version.
+# The wheel will be tagged appropriately based on the Python version used.
+axon_python_wheel(
+    name = "wheel",
+    data_files = {
+        "axon.py": "platlib/axon/__init__.py",
+        ":axon_python_lib": "platlib/axon/axon.so",
+        ":copy_ucx_libs": "platlib/axon/libs",
+    },
+    description = "Axon Runtime Python bindings for distributed execution",
+    version = "0.0.1",
+    visibility = ["//visibility:public"],
+)

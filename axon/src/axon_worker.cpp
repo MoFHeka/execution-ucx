@@ -420,11 +420,9 @@ AxonWorker::RegisterEndpointSignatures(
 }
 
 template <typename ReceivedBufferT, typename MemPolicyT, typename MsgLcPolicyT>
-  requires(rpc::is_payload_v<ReceivedBufferT>
-           || std::is_same_v<ReceivedBufferT, std::monostate>
-           || std::is_same_v<ReceivedBufferT, rpc::PayloadVariant>)
-          && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
-          && is_message_lifecycle_policy_v<MsgLcPolicyT>
+  requires detail::ValidRegisterBuffer<ReceivedBufferT>
+           && detail::ValidRegisterMemPolicy<MemPolicyT, ReceivedBufferT>
+           && is_message_lifecycle_policy_v<MsgLcPolicyT>
 void AxonWorker::RegisterFunction(
   rpc::function_id_t id, const data::string& name,
   const data::vector<rpc::ParamType>& param_types,
@@ -631,7 +629,11 @@ auto AxonWorker::ServerHandleSendErrorResponse_(
     /*.hlc = */ hlc_,
     /*.workflow_id = */ rpc::workflow_id_t(error_ctx.workflow_id),
     /*.status = */ std::move(error_ctx.status),
-    /*.results = */ {},
+    /*.results = */
+    {rpc::ParamMeta{
+      .type = rpc::ParamType::STRING,
+      .value = data::string(error_ctx.what),
+    }},
   };
   auto header_buffer_size = rpc::utils::GetSerializedSize(header);
   ucxx::UcxAmData am_data(mr_, header_buffer_size, 0, ucx_memory_type::HOST);
@@ -1122,28 +1124,34 @@ AxonWorker::UcxRecvBufferCombinedSender AxonWorker::ProcessRndvBuffer_(
 }
 
 namespace {
-template <typename SenderT, typename MemPolicyT, typename BufferReceiverFn>
+template <
+  typename ReceivedBufferT, typename MemPolicyT, typename BufferReceiverFn>
 auto ProcessRndvBufferImpl_(
   BufferReceiverFn&& buffer_receiver_fn, MemPolicyT mem_policy,
-  std::span<const size_t> sizes, ucx_memory_type_t mem_type) {
+  rpc::utils::TensorMetaSpan tensor_metas) {
   constexpr const bool IsOnHost =
     std::is_same_v<MemPolicyT, AlwaysOnHostPolicy>;
+  // In the RNDV path, when RespBufferT = rpc::PayloadVariant, the code will
+  // select and call ProcessRndvBuffer_<ucxx::UcxBuffer> or
+  // ProcessRndvBuffer_<ucxx::UcxBufferVec> based tensor_metas.size(). However,
+  // MemPolicyT remains CustomMemoryPolicy<rpc::PayloadVariant>.
   constexpr const bool IsCustomMemory =
-    std::is_same_v<MemPolicyT, CustomMemoryPolicy<SenderT>>;
+    std::is_same_v<MemPolicyT, CustomMemoryPolicy<ReceivedBufferT>>
+    || std::is_same_v<MemPolicyT, CustomMemoryPolicy<rpc::PayloadVariant>>;
   if constexpr (IsOnHost) {
     return buffer_receiver_fn(ucx_memory_type::HOST);
   } else if constexpr (IsCustomMemory) {
-    auto payload_buffer = (*mem_policy)(sizes, mem_type);
+    auto payload_buffer = (*mem_policy)(tensor_metas);
 
     if constexpr (std::is_same_v<
                     std::decay_t<decltype(payload_buffer)>,
                     rpc::PayloadVariant>) {
       // payload_buffer is PayloadVariant
       return std::visit(
-        [&](
-          auto&& arg) -> decltype(buffer_receiver_fn(std::declval<SenderT>())) {
+        [&](auto&& arg) -> decltype(buffer_receiver_fn(
+                          std::declval<ReceivedBufferT>())) {
           using ArgT = std::decay_t<decltype(arg)>;
-          if constexpr (std::is_same_v<ArgT, SenderT>) {
+          if constexpr (std::is_same_v<ArgT, ReceivedBufferT>) {
             return buffer_receiver_fn(std::forward<decltype(arg)>(arg));
           } else {
             throw std::runtime_error(
@@ -1168,19 +1176,12 @@ auto AxonWorker::ProcessRndvBuffer_(
   WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicyT mem_policy,
   utils::TensorMetaSpan tensor_metas)
   -> ucxx::ucx_am_context::recv_buffer_sender {
-  std::vector<size_t> sizes;
-  sizes.reserve(tensor_metas.size());
-  ucx_memory_type_t mem_type = ucx_memory_type::HOST;
-  for (const auto& meta : tensor_metas) {
-    sizes.push_back(rpc::utils::CalculateTensorSize(meta));
-    mem_type = GetMemoryType(meta.device);
-  }
   return ProcessRndvBufferImpl_<ucxx::UcxBuffer>(
     [&](auto&& arg) {
       return ucxx::connection_recv_buffer(
         scheduler, am_desc_key, std::forward<decltype(arg)>(arg));
     },
-    std::move(mem_policy), sizes, mem_type);
+    std::move(mem_policy), tensor_metas);
 }
 
 template <typename ReceivedBufferT, typename MemPolicyT>
@@ -1190,18 +1191,16 @@ auto AxonWorker::ProcessRndvBuffer_(
   WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicyT mem_policy,
   utils::TensorMetaSpan tensor_metas)
   -> ucxx::ucx_am_context::recv_iovec_buffer_sender {
-  std::vector<size_t> sizes;
-  sizes.reserve(tensor_metas.size());
-  ucx_memory_type_t mem_type = ucx_memory_type::HOST;
-  for (const auto& meta : tensor_metas) {
-    sizes.push_back(rpc::utils::CalculateTensorSize(meta));
-    mem_type = GetMemoryType(meta.device);
-  }
   return ProcessRndvBufferImpl_<ucxx::UcxBufferVec>(
-    [&, sizes_copy = sizes](auto&& arg) {
+    [&](auto&& arg) {
       using ArgType = std::decay_t<decltype(arg)>;
       if constexpr (std::is_same_v<ArgType, ucx_memory_type>) {
-        auto empty_buffer_vec = ucxx::UcxBufferVec(mr_, arg, sizes_copy);
+        std::vector<size_t> sizes;
+        sizes.reserve(tensor_metas.size());
+        for (const auto& meta : tensor_metas) {
+          sizes.push_back(rpc::utils::CalculateTensorSize(meta));
+        }
+        auto empty_buffer_vec = ucxx::UcxBufferVec(mr_, arg, sizes);
         return ucxx::connection_recv_buffer(
           scheduler, am_desc_key, std::move(empty_buffer_vec));
       } else {
@@ -1209,7 +1208,7 @@ auto AxonWorker::ProcessRndvBuffer_(
           scheduler, am_desc_key, std::forward<decltype(arg)>(arg));
       }
     },
-    std::move(mem_policy), sizes, mem_type);
+    std::move(mem_policy), tensor_metas);
 }
 
 auto AxonWorker::ServerProcessMessage_(const RecvVariant& message) noexcept {

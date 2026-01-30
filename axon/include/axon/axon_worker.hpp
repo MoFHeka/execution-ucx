@@ -99,6 +99,41 @@ struct first_arg_is_memory_policy<RespBufferT, First, Rest...> {
     is_receiver_memory_policy_v<std::decay_t<First>, RespBufferT>;
 };
 
+template <typename T>
+concept IsPayload = rpc::is_payload_v<T>;
+
+template <typename T>
+concept IsPayloadVariant = std::is_same_v<T, rpc::PayloadVariant>;
+
+template <typename T>
+concept IsMonostate = std::is_same_v<T, std::monostate>;
+
+template <typename T>
+concept IsBufferOrVariant = IsPayload<T> || IsPayloadVariant<T>;
+
+template <typename T>
+concept ValidRegisterBuffer = IsBufferOrVariant<T> || IsMonostate<T>;
+
+template <typename MemPolicyT, typename PayloadT>
+concept ValidRegisterMemPolicy =
+  (IsBufferOrVariant<PayloadT>
+   && is_receiver_memory_policy_v<MemPolicyT, PayloadT>)
+  || (IsMonostate<PayloadT> && std::is_same_v<MemPolicyT, AlwaysOnHostPolicy>);
+
+template <typename T>
+concept ValidInvokePayload = IsPayload<T> || IsMonostate<T>;
+// InvokeRpc allows RespBufferT to be a Variant too? No, based on typical usage
+// checking implementation.
+// However RegisterFunction accepts Variant.
+// InvokeRpc `RespBufferT` constraints:
+// rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate>
+template <typename T>
+concept ValidInvokeResponse = IsBufferOrVariant<T> || IsMonostate<T>;
+
+template <typename MemPolicyT, typename RespBufferT>
+concept ValidInvokeMemPolicy =
+  is_receiver_memory_policy_v<MemPolicyT, RespBufferT>;
+
 // Type traits to distinguish InvokeRpc overloads
 // High-level API uses Args... parameter pack (variadic template)
 template <typename... Args>
@@ -262,12 +297,11 @@ class AxonWorker {
 
   // High-level API using RpcRequestBuilder
   template <typename RespBufferT, typename MemPolicyT, typename... Args>
-    requires(rpc::is_payload_v<RespBufferT>
-             || std::is_same_v<RespBufferT, std::monostate>)
-            && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
-            && (!detail::first_arg_is_memory_policy<
-                RespBufferT, Args...>::value)
-            && detail::is_high_level_api<Args...>::value
+    requires detail::ValidInvokeResponse<RespBufferT>
+             && detail::ValidInvokeMemPolicy<MemPolicyT, RespBufferT>
+             && (!detail::first_arg_is_memory_policy<
+                 RespBufferT, Args...>::value)
+             && detail::is_high_level_api<Args...>::value
   auto InvokeRpc(
     std::string_view worker_name, rpc::session_id_t session_id,
     rpc::function_id_t function_id, rpc::utils::workflow_id_t workflow_id = {},
@@ -284,9 +318,8 @@ class AxonWorker {
 
   // Overload with default memory policy for convenience
   template <typename RespBufferT, typename... Args>
-    requires(rpc::is_payload_v<RespBufferT>
-             || std::is_same_v<RespBufferT, std::monostate>)
-            && detail::is_high_level_api<Args...>::value
+    requires detail::ValidInvokeResponse<RespBufferT>
+             && detail::is_high_level_api<Args...>::value
   auto InvokeRpc(
     std::string_view worker_name, rpc::session_id_t session_id,
     rpc::function_id_t function_id, rpc::utils::workflow_id_t workflow_id = {},
@@ -297,12 +330,11 @@ class AxonWorker {
   }
 
   template <typename RespBufferT, typename MemPolicyT, typename... Args>
-    requires(rpc::is_payload_v<RespBufferT>
-             || std::is_same_v<RespBufferT, std::monostate>)
-            && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
-            && (!detail::first_arg_is_memory_policy<
-                RespBufferT, Args...>::value)
-            && detail::is_high_level_api<Args...>::value
+    requires detail::ValidInvokeResponse<RespBufferT>
+             && detail::ValidInvokeMemPolicy<MemPolicyT, RespBufferT>
+             && (!detail::first_arg_is_memory_policy<
+                 RespBufferT, Args...>::value)
+             && detail::is_high_level_api<Args...>::value
   auto InvokeRpc(
     WorkerKey worker_key, rpc::session_id_t session_id,
     rpc::function_id_t function_id, rpc::utils::workflow_id_t workflow_id = {},
@@ -332,9 +364,8 @@ class AxonWorker {
 
   // Overload with default memory policy
   template <typename RespBufferT, typename... Args>
-    requires(rpc::is_payload_v<RespBufferT>
-             || std::is_same_v<RespBufferT, std::monostate>)
-            && detail::is_high_level_api<Args...>::value
+    requires detail::ValidInvokeResponse<RespBufferT>
+             && detail::is_high_level_api<Args...>::value
   auto InvokeRpc(
     WorkerKey worker_key, rpc::session_id_t session_id,
     rpc::function_id_t function_id, rpc::utils::workflow_id_t workflow_id = {},
@@ -348,11 +379,10 @@ class AxonWorker {
   template <
     typename PayloadT = std::monostate, typename RespBufferT = std::monostate,
     typename MemPolicyT = AlwaysOnHostPolicy>
-    requires(rpc::is_payload_v<PayloadT>
-             || std::is_same_v<PayloadT, std::monostate>)
-            && (rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate>)
-            && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
-            && detail::is_dynamic_api<PayloadT>::value
+    requires detail::ValidInvokePayload<PayloadT>
+             && detail::ValidInvokeResponse<RespBufferT>
+             && detail::ValidInvokeMemPolicy<MemPolicyT, RespBufferT>
+             && detail::is_dynamic_api<PayloadT>::value
   auto InvokeRpc(
     std::string_view worker_name, rpc::RpcRequestHeader&& request_header,
     std::optional<PayloadT>&& payload = std::nullopt,
@@ -361,13 +391,12 @@ class AxonWorker {
   template <
     typename PayloadT = std::monostate, typename RespBufferT = std::monostate,
     typename MemPolicyT = AlwaysOnHostPolicy>
-    requires(rpc::is_payload_v<PayloadT>
-             || std::is_same_v<PayloadT, std::monostate>)
-            && (rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate>)
-            && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
-            && detail::is_dynamic_api<PayloadT>::value
-            && (!std::is_same_v<
-                std::decay_t<PayloadT>, std::optional<std::decay_t<PayloadT>>>)
+    requires detail::ValidInvokePayload<PayloadT>
+             && detail::ValidInvokeResponse<RespBufferT>
+             && detail::ValidInvokeMemPolicy<MemPolicyT, RespBufferT>
+             && detail::is_dynamic_api<PayloadT>::value
+             && (!std::is_same_v<
+                 std::decay_t<PayloadT>, std::optional<std::decay_t<PayloadT>>>)
   auto InvokeRpc(
     std::string_view worker_name, rpc::RpcRequestHeader&& request_header,
     PayloadT&& payload, MemPolicyT mem_policy = AlwaysOnHostPolicy{});
@@ -375,11 +404,10 @@ class AxonWorker {
   template <
     typename PayloadT = std::monostate, typename RespBufferT = std::monostate,
     typename MemPolicyT = AlwaysOnHostPolicy>
-    requires(rpc::is_payload_v<PayloadT>
-             || std::is_same_v<PayloadT, std::monostate>)
-            && (rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate>)
-            && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
-            && detail::is_dynamic_api<PayloadT>::value
+    requires detail::ValidInvokePayload<PayloadT>
+             && detail::ValidInvokeResponse<RespBufferT>
+             && detail::ValidInvokeMemPolicy<MemPolicyT, RespBufferT>
+             && detail::is_dynamic_api<PayloadT>::value
   auto InvokeRpc(
     WorkerKey worker_key, rpc::RpcRequestHeader&& request_header,
     std::optional<PayloadT>&& payload = std::nullopt,
@@ -388,13 +416,12 @@ class AxonWorker {
   template <
     typename PayloadT = std::monostate, typename RespBufferT = std::monostate,
     typename MemPolicyT = AlwaysOnHostPolicy>
-    requires(rpc::is_payload_v<PayloadT>
-             || std::is_same_v<PayloadT, std::monostate>)
-            && (rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate>)
-            && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
-            && detail::is_dynamic_api<PayloadT>::value
-            && (!std::is_same_v<
-                std::decay_t<PayloadT>, std::optional<std::decay_t<PayloadT>>>)
+    requires detail::ValidInvokePayload<PayloadT>
+             && detail::ValidInvokeResponse<RespBufferT>
+             && detail::ValidInvokeMemPolicy<MemPolicyT, RespBufferT>
+             && detail::is_dynamic_api<PayloadT>::value
+             && (!std::is_same_v<
+                 std::decay_t<PayloadT>, std::optional<std::decay_t<PayloadT>>>)
   auto InvokeRpc(
     WorkerKey worker_key, rpc::RpcRequestHeader&& request_header,
     PayloadT&& payload, MemPolicyT mem_policy = AlwaysOnHostPolicy{});
@@ -404,13 +431,8 @@ class AxonWorker {
     typename ReceivedBufferT, typename Fn,
     typename MemPolicyT = AlwaysOnHostPolicy,
     typename MsgLcPolicyT = TransientPolicy>
-    requires(((rpc::is_payload_v<ReceivedBufferT>
-               || std::is_same_v<
-                 ReceivedBufferT,
-                 rpc::
-                   PayloadVariant>)&&is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>)
-             || (std::is_same_v<ReceivedBufferT, std::monostate> && std::is_same_v<MemPolicyT, AlwaysOnHostPolicy>))
-            && is_message_lifecycle_policy_v<MsgLcPolicyT>
+    requires detail::ValidRegisterMemPolicy<MemPolicyT, ReceivedBufferT>
+             && is_message_lifecycle_policy_v<MsgLcPolicyT>
   void RegisterFunction(
     rpc::function_id_t id, Fn&& fn,
     data::string&& function_name = data::string(),
@@ -420,11 +442,9 @@ class AxonWorker {
   template <
     typename ReceivedBufferT, typename MemPolicyT = AlwaysOnHostPolicy,
     typename MsgLcPolicyT = TransientPolicy>
-    requires(rpc::is_payload_v<ReceivedBufferT>
-             || std::is_same_v<ReceivedBufferT, std::monostate>
-             || std::is_same_v<ReceivedBufferT, rpc::PayloadVariant>)
-            && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
-            && is_message_lifecycle_policy_v<MsgLcPolicyT>
+    requires detail::ValidRegisterBuffer<ReceivedBufferT>
+             && detail::ValidRegisterMemPolicy<MemPolicyT, ReceivedBufferT>
+             && is_message_lifecycle_policy_v<MsgLcPolicyT>
   void RegisterFunction(
     rpc::function_id_t id, const data::string& name,
     const data::vector<rpc::ParamType>& param_types,
@@ -434,9 +454,7 @@ class AxonWorker {
     MsgLcPolicyT lc_policy);
 
   template <typename ReceivedBufferT>
-    requires(
-      rpc::is_payload_v<ReceivedBufferT>
-      || std::is_same_v<ReceivedBufferT, rpc::PayloadVariant>)
+    requires detail::ValidRegisterBuffer<ReceivedBufferT>
   void RegisterFunction(
     rpc::function_id_t id, const data::string& name,
     const data::vector<rpc::ParamType>& param_types,
@@ -450,9 +468,8 @@ class AxonWorker {
   }
 
   template <typename ReceivedBufferT, typename MemPolicyT = AlwaysOnHostPolicy>
-    requires(rpc::is_payload_v<ReceivedBufferT>
-             || std::is_same_v<ReceivedBufferT, rpc::PayloadVariant>)
-            && is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>
+    requires detail::ValidRegisterBuffer<ReceivedBufferT>
+             && detail::ValidRegisterMemPolicy<MemPolicyT, ReceivedBufferT>
   void RegisterFunction(
     rpc::function_id_t id, const data::string& name,
     const data::vector<rpc::ParamType>& param_types,
@@ -466,10 +483,8 @@ class AxonWorker {
   }
 
   template <typename ReceivedBufferT, typename MsgLcPolicyT = TransientPolicy>
-    requires(rpc::is_payload_v<ReceivedBufferT>
-             || std::is_same_v<ReceivedBufferT, std::monostate>
-             || std::is_same_v<ReceivedBufferT, rpc::PayloadVariant>)
-            && is_message_lifecycle_policy_v<MsgLcPolicyT>
+    requires detail::ValidRegisterBuffer<ReceivedBufferT>
+             && is_message_lifecycle_policy_v<MsgLcPolicyT>
   void RegisterFunction(
     rpc::function_id_t id, const data::string& name,
     const data::vector<rpc::ParamType>& param_types,
@@ -923,21 +938,56 @@ class AxonWorker {
   };  // namespace axon
 
   template <typename RespBufferT, typename MemPolicyT>
- using ResponseHandlerRndvProcessReturnType = std::conditional_t< //
-  std::is_same_v<RespBufferT, std::monostate>, //
-  decltype(unifex::just_error(std::declval<errors::AxonErrorContext>())), //
-  decltype(unifex::on( //
-      std::declval<ucxx::ucx_am_context::scheduler>(), //
-      std::declval<ucxx::ucx_am_context::recv_buffer_sender_t<RespBufferT>>()) //
-    | unifex::then(std::declval<MoveBundleBuffer<RespBufferT>>()) //
-    | unifex::then(std::declval<ResponseHandlerRndvReturnType<RespBufferT, MemPolicyT>>()))>;
+  struct RndvProcessTypeHelper {
+    using type = decltype(                                //
+      unifex::on(                                         //
+        std::declval<ucxx::ucx_am_context::scheduler>(),  //
+        std::declval<
+          ucxx::ucx_am_context::recv_buffer_sender_t<RespBufferT>>())  //
+      | unifex::then(std::declval<MoveBundleBuffer<RespBufferT>>())    //
+      | unifex::then(
+        std::declval<
+          ResponseHandlerRndvReturnType<RespBufferT, MemPolicyT>>()));
+  };
+
+  template <typename BufferT>
+  struct RndvPayloadVariantConverter {
+    auto operator()(std::pair<rpc::ResponseHeaderUniquePtr, BufferT>&& p) const
+      -> std::pair<rpc::ResponseHeaderUniquePtr, rpc::PayloadVariant> {
+      return std::make_pair(
+        std::move(p.first), rpc::PayloadVariant(std::move(p.second)));
+    }
+  };
+
+  template <typename MemPolicyT>
+  struct RndvProcessTypeHelper<std::monostate, MemPolicyT> {
+    using type =
+      decltype(unifex::just_error(std::declval<errors::AxonErrorContext>()));
+  };
+
+  template <typename MemPolicyT>
+  struct RndvProcessTypeHelper<rpc::PayloadVariant, MemPolicyT> {
+    using type = unifex::variant_sender<
+      decltype(std::declval<typename RndvProcessTypeHelper<ucxx::UcxBuffer, MemPolicyT>::type>() | unifex::then(RndvPayloadVariantConverter<ucxx::UcxBuffer>{})),
+      decltype(std::declval<typename RndvProcessTypeHelper<ucxx::UcxBufferVec, MemPolicyT>::type>() | unifex::then(RndvPayloadVariantConverter<ucxx::UcxBufferVec>{}))>;
+  };
 
   template <typename RespBufferT, typename MemPolicyT>
-  using ResponseHandlerReturnType = unifex::variant_sender<
-    ResponseHandlerRndvProcessReturnType<RespBufferT, MemPolicyT>,
-    decltype(unifex::just(
-      std::declval<std::pair<rpc::ResponseHeaderUniquePtr, RespBufferT>>())),
-    decltype(unifex::just_error(std::declval<errors::AxonErrorContext>()))>;
+  using ResponseHandlerRndvProcessReturnType =
+    typename RndvProcessTypeHelper<RespBufferT, MemPolicyT>::type;
+
+  template <typename RespBufferT, typename MemPolicyT>
+  using ResponseHandlerReturnType = std::conditional_t<
+    std::is_same_v<RespBufferT, std::monostate>,
+    unifex::variant_sender<
+      ResponseHandlerRndvProcessReturnType<RespBufferT, MemPolicyT>,
+      decltype(unifex::just(
+        std::declval<std::pair<rpc::ResponseHeaderUniquePtr, RespBufferT>>()))>,
+    unifex::variant_sender<
+      ResponseHandlerRndvProcessReturnType<RespBufferT, MemPolicyT>,
+      decltype(unifex::just(
+        std::declval<std::pair<rpc::ResponseHeaderUniquePtr, RespBufferT>>())),
+      decltype(unifex::just_error(std::declval<errors::AxonErrorContext>()))>>;
 
   void ClientProcessExpectedResponseMessage_(
     RpcResponseHandler&& resp_handler,
@@ -990,8 +1040,9 @@ class AxonWorker {
   template <typename PayloadT, typename RespBufferT, typename MemPolicyT>
     requires(rpc::is_payload_v<PayloadT>
              || std::is_same_v<PayloadT, std::monostate>)
-            && (rpc::is_payload_v<RespBufferT>  //
-             || std::is_same_v<RespBufferT, std::monostate>)
+            && (rpc::is_payload_v<RespBufferT> //
+                || std::is_same_v<RespBufferT, std::monostate> //
+                || std::is_same_v<RespBufferT, rpc::PayloadVariant>)
             && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
   inline auto InvokeRpcImpl(
     std::expected<uint64_t, std::error_code> conn_id,
@@ -1215,11 +1266,10 @@ class AxonWorker {
 };  // namespace eux
 
 template <typename PayloadT, typename RespBufferT, typename MemPolicyT>
-  requires(rpc::is_payload_v<PayloadT>
-           || std::is_same_v<PayloadT, std::monostate>)
-          && (rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate>)
-          && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
-          && detail::is_dynamic_api<PayloadT>::value
+  requires detail::ValidInvokePayload<PayloadT>
+           && detail::ValidInvokeResponse<RespBufferT>
+           && detail::ValidInvokeMemPolicy<MemPolicyT, RespBufferT>
+           && detail::is_dynamic_api<PayloadT>::value
 auto AxonWorker::InvokeRpc(
   std::string_view worker_name, rpc::RpcRequestHeader&& request_header,
   std::optional<PayloadT>&& payload, MemPolicyT mem_policy) {
@@ -1235,13 +1285,12 @@ auto AxonWorker::InvokeRpc(
 }
 
 template <typename PayloadT, typename RespBufferT, typename MemPolicyT>
-  requires(rpc::is_payload_v<PayloadT>
-           || std::is_same_v<PayloadT, std::monostate>)
-          && (rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate>)
-          && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
-          && detail::is_dynamic_api<PayloadT>::value
-          && (!std::is_same_v<
-              std::decay_t<PayloadT>, std::optional<std::decay_t<PayloadT>>>)
+  requires detail::ValidInvokePayload<PayloadT>
+           && detail::ValidInvokeResponse<RespBufferT>
+           && detail::ValidInvokeMemPolicy<MemPolicyT, RespBufferT>
+           && detail::is_dynamic_api<PayloadT>::value
+           && (!std::is_same_v<
+               std::decay_t<PayloadT>, std::optional<std::decay_t<PayloadT>>>)
 auto AxonWorker::InvokeRpc(
   std::string_view worker_name, rpc::RpcRequestHeader&& request_header,
   PayloadT&& payload, MemPolicyT mem_policy) {
@@ -1257,11 +1306,10 @@ auto AxonWorker::InvokeRpc(
 }
 
 template <typename PayloadT, typename RespBufferT, typename MemPolicyT>
-  requires(rpc::is_payload_v<PayloadT>
-           || std::is_same_v<PayloadT, std::monostate>)
-          && (rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate>)
-          && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
-          && detail::is_dynamic_api<PayloadT>::value
+  requires detail::ValidInvokePayload<PayloadT>
+           && detail::ValidInvokeResponse<RespBufferT>
+           && detail::ValidInvokeMemPolicy<MemPolicyT, RespBufferT>
+           && detail::is_dynamic_api<PayloadT>::value
 auto AxonWorker::InvokeRpc(
   WorkerKey worker_key, rpc::RpcRequestHeader&& request_header,
   std::optional<PayloadT>&& payload, MemPolicyT mem_policy) {
@@ -1288,13 +1336,12 @@ auto AxonWorker::InvokeRpc(
 }
 
 template <typename PayloadT, typename RespBufferT, typename MemPolicyT>
-  requires(rpc::is_payload_v<PayloadT>
-           || std::is_same_v<PayloadT, std::monostate>)
-          && (rpc::is_payload_v<RespBufferT> || std::is_same_v<RespBufferT, std::monostate>)
-          && is_receiver_memory_policy_v<MemPolicyT, RespBufferT>
-          && detail::is_dynamic_api<PayloadT>::value
-          && (!std::is_same_v<
-              std::decay_t<PayloadT>, std::optional<std::decay_t<PayloadT>>>)
+  requires detail::ValidInvokePayload<PayloadT>
+           && detail::ValidInvokeResponse<RespBufferT>
+           && detail::ValidInvokeMemPolicy<MemPolicyT, RespBufferT>
+           && detail::is_dynamic_api<PayloadT>::value
+           && (!std::is_same_v<
+               std::decay_t<PayloadT>, std::optional<std::decay_t<PayloadT>>>)
 auto AxonWorker::InvokeRpc(
   WorkerKey worker_key, rpc::RpcRequestHeader&& request_header,
   PayloadT&& payload, MemPolicyT mem_policy) {
@@ -1445,13 +1492,8 @@ struct AxonWorker::ServerRequestHandlerVisitor_ {
 template <
   typename ReceivedBufferT, typename Fn, typename MemPolicyT,
   typename MsgLcPolicyT>
-  requires(((rpc::is_payload_v<ReceivedBufferT>
-             || std::is_same_v<
-               ReceivedBufferT,
-               rpc::
-                 PayloadVariant>)&&is_receiver_memory_policy_v<MemPolicyT, ReceivedBufferT>)
-           || (std::is_same_v<ReceivedBufferT, std::monostate> && std::is_same_v<MemPolicyT, AlwaysOnHostPolicy>))
-          && is_message_lifecycle_policy_v<MsgLcPolicyT>
+  requires detail::ValidRegisterMemPolicy<MemPolicyT, ReceivedBufferT>
+           && is_message_lifecycle_policy_v<MsgLcPolicyT>
 void AxonWorker::RegisterFunction(
   rpc::function_id_t id, Fn&& fn, data::string&& function_name,
   MemPolicyT mem_policy, MsgLcPolicyT lc_policy) {
@@ -1618,10 +1660,16 @@ struct AxonWorker::ClientResponseHandlerVisitor_ {
         .workflow_id = cista::to_idx(resp_header_ptr->workflow_id),
       });
     } else if constexpr (std::is_same_v<RespBufferT, rpc::PayloadVariant>) {
+      using RndvReturnT =
+        ResponseHandlerRndvProcessReturnType<RespBufferT, MemPolicyT>;
       if (tensor_metas.size() == 1) {
-        return run_pipeline.template operator()<ucxx::UcxBuffer>();
+        return RndvReturnT(
+          run_pipeline.template operator()<ucxx::UcxBuffer>()
+          | unifex::then(RndvPayloadVariantConverter<ucxx::UcxBuffer>{}));
       } else {
-        return run_pipeline.template operator()<ucxx::UcxBufferVec>();
+        return RndvReturnT(
+          run_pipeline.template operator()<ucxx::UcxBufferVec>()
+          | unifex::then(RndvPayloadVariantConverter<ucxx::UcxBufferVec>{}));
       }
     } else {
       return run_pipeline.template operator()<RespBufferT>();
@@ -1651,8 +1699,16 @@ struct AxonWorker::ClientResponseHandlerVisitor_ {
         return unifex::just(
           std::make_pair(std::move(resp_header_ptr), std::move(ucx_buffer)));
       }
+    } else if constexpr (std::is_same_v<RespBufferT, std::monostate>) {
+      // Return monostate as expected, ignoring the payload
+      return unifex::just(
+        std::make_pair(std::move(resp_header_ptr), std::monostate{}));
+    } else if constexpr (std::is_same_v<RespBufferT, rpc::PayloadVariant>) {
+      // UcxBuffer -> PayloadVariant
+      return unifex::just(std::make_pair(
+        std::move(resp_header_ptr), rpc::PayloadVariant(std::move(payload))));
     } else {
-      // UcxBuffer or rpc::PayloadVariant
+      // UcxBuffer -> UcxBuffer (or compatible)
       return unifex::just(
         std::make_pair(std::move(resp_header_ptr), std::move(payload)));
     }

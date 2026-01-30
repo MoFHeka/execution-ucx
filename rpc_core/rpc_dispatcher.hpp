@@ -15,6 +15,7 @@ limitations under the License.
 
 #pragma once
 
+#include <cstdio>
 #ifndef RPC_CORE_RPC_DISPATCHER_HPP_
 #define RPC_CORE_RPC_DISPATCHER_HPP_
 

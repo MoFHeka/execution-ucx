@@ -1,0 +1,4 @@
+# Python test dependencies
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+numpy>=1.21.0

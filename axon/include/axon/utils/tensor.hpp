@@ -106,12 +106,9 @@ struct TensorBase : public DLTensor {
 
   // Reconstructs this tensor from deserialized metadata, taking ownership.
   void assign(TensorMeta&& meta, void* data_ptr) {
-    if (
-      meta.ndim != 0
-      && (meta.shape.empty() || (meta.strides.empty() && meta.ndim > 1))) {
+    if (meta.ndim != 0 && meta.shape.empty()) {
       throw std::runtime_error(
-        "Invalid metadata: shape or strides are empty for non-zero "
-        "dimensions.");
+        "Invalid metadata: shape is empty for non-zero dimensions.");
     }
     metadata_owner_ = std::make_unique<TensorMeta>(std::move(meta));
     this->data = data_ptr;
