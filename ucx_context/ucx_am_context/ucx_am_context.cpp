@@ -85,6 +85,14 @@ ucx_am_context::ucx_am_context(
     clientId_(clientId),
     deviceContext_(std::move(
       const_cast<std::unique_ptr<UcxAutoDeviceContext>&>(deviceContext))) {
+  // Temporary activation for UCX initialization
+  // UCX may call CUDA APIs during ucp_context_init, ucp_worker_create, etc.
+  std::unique_ptr<OperationRAII> initDeviceOp = nullptr;
+  if (deviceContext_) {
+    // Worker is not created yet, pass nullptr
+    initDeviceOp = (*deviceContext_)(nullptr, nullptr);
+  }
+
   std::error_code ec = ucx_am_context::init(ucxContextName);
   if (ec) {
     throw std::runtime_error(
@@ -95,6 +103,8 @@ ucx_am_context::ucx_am_context(
 
   ucpContextInitialized_ = true;
   UCX_CTX_DEBUG << "UCX Context construction done\n";
+
+  // initDeviceOp destructs here, automatically pops the context
 }
 
 static std::string context_name_from_ucp_context_(ucp_context_h ucpContext) {
@@ -125,6 +135,14 @@ ucx_am_context::ucx_am_context(
       const_cast<std::unique_ptr<UcxAutoDeviceContext>&>(deviceContext))),
     ucpContext_(const_cast<ucp_context_h>(ucpContext)),
     isUcpContextExternal_(true) {
+  // Temporary activation for UCX initialization
+  // UCX may call CUDA APIs during ucp_worker_create, memory registration, etc.
+  std::unique_ptr<OperationRAII> initDeviceOp = nullptr;
+  if (deviceContext_) {
+    // UCP context exists but worker is not created yet, pass nullptr for worker
+    initDeviceOp = (*deviceContext_)(ucpContext_, nullptr);
+  }
+
   std::error_code ec = ucx_am_context::init_with_internal_ucp_context();
   if (ec) {
     throw std::runtime_error(
@@ -135,6 +153,8 @@ ucx_am_context::ucx_am_context(
 
   ucpContextInitialized_ = true;
   UCX_CTX_DEBUG << "UCX Context construction done\n";
+
+  // initDeviceOp destructs here, automatically pops the context
 }
 
 ucx_am_context::~ucx_am_context() {
@@ -211,7 +231,9 @@ void ucx_am_context::run_impl(const bool& shouldStop) {
       ucxAmContextName_.c_str(), result);
   }
 
-  // Activate the device context if it is provided.
+  // Persistent activation for the runtime event loop
+  // This activation persists for the entire while loop, ensuring CUDA APIs
+  // work correctly in UCX callbacks (AM recv, RNDV transfers, etc.)
   std::unique_ptr<OperationRAII> deviceAutoContextOperation = nullptr;
   if (deviceContext_) {
     deviceAutoContextOperation = (*deviceContext_)(ucpContext_, ucpWorker_);
