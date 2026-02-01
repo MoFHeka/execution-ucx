@@ -3382,9 +3382,7 @@ class ucx_am_context::connect_sender {
                 return std::nullopt;
               }
             } else {
-              if (
-                addr.src_saddr == nullptr || addr.dst_saddr == nullptr
-                || addr.addrlen == 0) {
+              if (addr.dst_saddr == nullptr || addr.addrlen == 0) {
                 return std::nullopt;
               }
               // sockaddr info

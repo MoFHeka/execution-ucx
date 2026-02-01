@@ -28,8 +28,8 @@ bazel_dep(name = "rules_cuda", version = "0.2.5")
 cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
 cuda.local_toolchain(
     name = "local_cuda",
-    # toolkit_path = "",
-    toolkit_path = "/opt/nvidia/hpc_sdk/Linux_x86_64/2024/cuda/",  # Specify local CUDA toolkit path
+    toolkit_path = "",
+    # toolkit_path = "/opt/nvidia/hpc_sdk/Linux_x86_64/2024/cuda/",  # Specify local CUDA toolkit path
 )
 use_repo(cuda, "local_cuda")
 

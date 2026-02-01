@@ -7,6 +7,7 @@ build --conlyopt=-std=gnu17
 build --flag_alias=cuda_archs=@rules_cuda//cuda:archs
 build --cuda_archs="compute_70:sm_70;compute_80:sm_80,sm_86"
 build --flag_alias=cuda_enable=@rules_cuda//cuda:enable
+build --flag_alias=cuda_compiler=@rules_cuda//cuda:compiler
 
 # Debug build settings
 build:debug --compilation_mode=dbg
