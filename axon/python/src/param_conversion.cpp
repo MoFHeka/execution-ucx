@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "axon/python/param_conversion.hpp"
+#include "axon/python/src/param_conversion.hpp"
 
 #include <dlpack/dlpack.h>
 #include <nanobind/nanobind.h>
@@ -27,9 +27,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "axon/python/dlpack_helpers.hpp"
-#include "axon/python/memory_policy_helpers.hpp"
-#include "axon/python/python_module.hpp"
+#include "axon/python/src/dlpack_helpers.hpp"
+#include "axon/python/src/memory_policy_helpers.hpp"
+#include "axon/python/src/python_module.hpp"
 #include "rpc_core/rpc_types.hpp"
 
 namespace eux {

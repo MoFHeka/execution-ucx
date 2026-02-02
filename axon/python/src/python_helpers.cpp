@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "axon/python/python_helpers.hpp"
+#include "axon/python/src/python_helpers.hpp"
 
 #include <Python.h>
 #include <nanobind/nanobind.h>
@@ -22,9 +22,8 @@ limitations under the License.
 
 #include <string>
 #include <utility>
-#include <vector>
 
-#include "axon/python/python_module.hpp"
+#include "axon/python/src/python_module.hpp"
 #include "rpc_core/rpc_types.hpp"
 
 namespace eux {

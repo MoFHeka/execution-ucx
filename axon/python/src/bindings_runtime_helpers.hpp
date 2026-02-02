@@ -15,9 +15,6 @@ limitations under the License.
 
 #pragma once
 
-#include <stdexcept>
-#include <variant>
-#include "rpc_core/rpc_payload_types.hpp"
 #ifndef AXON_PYTHON_BINDINGS_RUNTIME_HELPERS_HPP_
 #define AXON_PYTHON_BINDINGS_RUNTIME_HELPERS_HPP_
 
@@ -26,20 +23,23 @@ limitations under the License.
 #include <chrono>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 #include <unifex/any_sender_of.hpp>
 
 #include "axon/axon_runtime.hpp"
 #include "axon/errors/error_types.hpp"
 #include "axon/memory_policy.hpp"
-#include "axon/python/dlpack_helpers.hpp"
-#include "axon/python/memory_policy_helpers.hpp"
-#include "axon/python/param_conversion.hpp"
-#include "axon/python/python_helpers.hpp"
-#include "axon/python/python_wake_manager.hpp"
+#include "axon/python/src/dlpack_helpers.hpp"
+#include "axon/python/src/memory_policy_helpers.hpp"
+#include "axon/python/src/param_conversion.hpp"
+#include "axon/python/src/python_helpers.hpp"
+#include "axon/python/src/python_wake_manager.hpp"
+#include "rpc_core/rpc_payload_types.hpp"
 #include "rpc_core/rpc_types.hpp"
 #include "ucx_context/ucx_context_data.hpp"
 

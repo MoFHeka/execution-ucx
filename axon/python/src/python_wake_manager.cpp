@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "axon/python/python_wake_manager.hpp"
+#include "axon/python/src/python_wake_manager.hpp"
 
 #include <nanobind/nanobind.h>
 
@@ -27,7 +27,7 @@ limitations under the License.
 #include <stdexcept>
 #include <utility>
 
-#include "axon/python/python_module.hpp"
+#include "axon/python/src/python_module.hpp"
 
 namespace eux {
 namespace axon {

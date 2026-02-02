@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "axon/python/bindings_enums.hpp"
+#include "axon/python/src/bindings_enums.hpp"
 
 #include <nanobind/nanobind.h>
 

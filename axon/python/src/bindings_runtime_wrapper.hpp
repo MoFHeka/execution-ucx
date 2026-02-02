@@ -21,8 +21,8 @@ limitations under the License.
 #include <unifex/any_sender_of.hpp>
 
 #include "axon/axon_runtime.hpp"
-#include "axon/python/python_helpers.hpp"
-#include "axon/python/python_wake_manager.hpp"
+#include "axon/python/src/python_helpers.hpp"
+#include "axon/python/src/python_wake_manager.hpp"
 #include "rpc_core/rpc_types.hpp"
 #include "ucx_context/ucx_context_data.hpp"
 

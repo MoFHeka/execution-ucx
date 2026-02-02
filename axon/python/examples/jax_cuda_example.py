@@ -1,7 +1,8 @@
 import jax
 
-# Force usage of CPU to avoid CUDA context issues with UCX in this simple example
-jax.config.update("jax_platform_name", "cpu")
+# Force usage of CUDA
+jax.config.update("jax_platform_name", "cuda")
+
 import jax.numpy as jnp
 import axon
 import asyncio
@@ -56,8 +57,13 @@ async def jax_op_func(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
 
 
 async def main():
-    # 1. Start Server
-    server = axon.AxonRuntime("jax_worker")
+    # Trigger JAX initialization (ensure context is created)
+    _ = jnp.zeros((1,))
+
+    print("Using CUDA device")
+
+    # 1. Start Server with CUDA device
+    server = axon.AxonRuntime("jax_worker", device=axon.cuda(), timeout=30.0)
     server.start()
 
     # 2. Register function using jax.dlpack.from_dlpack for conversion
@@ -68,8 +74,8 @@ async def main():
     server_addr = server.get_local_address()
     print(f"Server started at {server_addr}")
 
-    # 3. Create Client
-    client = axon.AxonRuntime("client_worker_jax")
+    # 3. Create Client with CUDA device
+    client = axon.AxonRuntime("client_worker_jax", device=axon.cuda(), timeout=30.0)
     client.start_client()
 
     # Connect

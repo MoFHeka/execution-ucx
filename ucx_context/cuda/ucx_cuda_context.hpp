@@ -58,8 +58,17 @@ class UcxAutoCudaDeviceContext : public UcxAutoDeviceContext {
     }
 
     void deactivate() override {
-      auto* owner = static_cast<UcxAutoCudaDeviceContext*>(context_);
-      UCX_CUDA_API_CHECK(cuCtxPopCurrent(&(owner->cuda_context_)));
+      // Use a local variable to receive the popped context.
+      // We must NOT modify owner->cuda_context_ because:
+      // 1. cuCtxPopCurrent writes the popped context to the pointer argument
+      // 2. If another context was pushed in between, we'd corrupt our saved
+      // context
+      // 3. Subsequent activate() calls and clone() would use the wrong context
+      CUcontext popped_ctx = nullptr;
+      UCX_CUDA_API_CHECK(cuCtxPopCurrent(&popped_ctx));
+      // Optional: verify we popped the expected context
+      // assert(popped_ctx ==
+      // static_cast<UcxAutoCudaDeviceContext*>(context_)->cuda_context_);
     }
   };
 

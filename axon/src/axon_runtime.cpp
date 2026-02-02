@@ -39,11 +39,14 @@ AxonRuntime::AxonRuntime(
 
 AxonRuntime::AxonRuntime(
   const std::string& worker_name, size_t thread_pool_size,
-  std::chrono::milliseconds timeout)
+  std::chrono::milliseconds timeout,
+  std::unique_ptr<ucxx::UcxAutoDeviceContext> auto_device_context)
   : mr_(std::make_shared<ucxx::DefaultUcxMemoryResourceManager>()),
     worker_(std::make_unique<AxonWorker>(
       std::ref(*mr_), worker_name, thread_pool_size, timeout,
-      std::make_unique<ucxx::UcxAutoDefaultDeviceContext>())) {}
+      auto_device_context
+        ? std::move(auto_device_context)
+        : std::make_unique<ucxx::UcxAutoDefaultDeviceContext>())) {}
 
 AxonRuntime::~AxonRuntime() {
   if (worker_) {

@@ -78,22 +78,27 @@ def _find_and_load_module():
     # Possible library names
     # Bazel generates libaxon_python_runtime.so, we copy it to axon.so for Python import
     possible_names = [
-        "axon.so",  # Preferred: copied by copy_axon_python_runtime_lib genrule
+        "axon.so",  # Preferred: copied by genrule to axon/axon.so
         "libaxon_python_runtime.so",  # Bazel raw output (fallback)
     ]
 
     # Search in current directory and common Bazel output locations
     search_paths = [
-        current_dir,
-        current_dir.parent,
-        Path(current_dir) / ".." / ".." / "bazel-bin" / "axon" / "python",
+        current_dir,  # axon/ (source location)
+        current_dir.parent.parent.parent
+        / "bazel-bin"
+        / "axon"
+        / "python"
+        / "axon",  # bazel-bin output
     ]
 
     # Also check runfiles if running under Bazel
     if "TEST_SRCDIR" in os.environ:
         runfiles_dir = Path(os.environ["TEST_SRCDIR"])
+        search_paths.insert(
+            0, runfiles_dir / "execution_ucx" / "axon" / "python" / "axon"
+        )
         search_paths.insert(0, runfiles_dir)
-        search_paths.insert(0, runfiles_dir / "execution_ucx" / "axon" / "python")
 
     # Try to find the library
     for search_path in search_paths:
@@ -114,19 +119,10 @@ def _find_and_load_module():
                     spec = importlib.util.spec_from_file_location("axon", lib_path)
                     if spec and spec.loader:
                         module = importlib.util.module_from_spec(spec)
-                        # Store in sys.modules to avoid recursion
-                        # Save old module to restore on failure
-                        old_module = sys.modules.get("axon")
-                        sys.modules["axon"] = module
                         try:
                             spec.loader.exec_module(module)
                             return module
                         except Exception:
-                            # Restore old module on failure
-                            if old_module:
-                                sys.modules["axon"] = old_module
-                            else:
-                                sys.modules.pop("axon", None)
                             raise
                 except Exception:
                     # If we found the file but failed to load it, we should raise the error
@@ -158,3 +154,34 @@ if _module:
     for name in dir(_module):
         if not name.startswith("_"):
             setattr(sys.modules[__name__], name, getattr(_module, name))
+
+# Import and re-export device module
+from .device import (
+    Device,
+    DeviceType,
+    CpuDevice,
+    CudaDevice,
+    RocmDevice,
+    SyclDevice,
+    cpu,
+    cuda,
+    rocm,
+    sycl,
+    auto_detect,
+)
+
+__all__ = [
+    # Device types and classes
+    "Device",
+    "DeviceType",
+    "CpuDevice",
+    "CudaDevice",
+    "RocmDevice",
+    "SyclDevice",
+    # Device factory functions
+    "cpu",
+    "cuda",
+    "rocm",
+    "sycl",
+    "auto_detect",
+]

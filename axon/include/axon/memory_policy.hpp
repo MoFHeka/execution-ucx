@@ -20,11 +20,7 @@ limitations under the License.
 
 #include <proxy/proxy.h>
 
-#include <cstddef>
-#include <span>
-
 #include "rpc_core/utils/tensor_meta.hpp"
-#include "ucx_context/ucx_context_def.h"
 
 namespace eux {
 namespace axon {

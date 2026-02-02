@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "axon/python/dlpack_helpers.hpp"
+#include "axon/python/src/dlpack_helpers.hpp"
 
 #include <cstddef>
 #include <cstdio>
@@ -27,7 +27,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "axon/python/python_helpers.hpp"
+#include "axon/python/src/python_helpers.hpp"
 #include "axon/utils/tensor.hpp"
 #include "rpc_core/utils/tensor_meta.hpp"
 #include "ucx_context/ucx_context_data.hpp"
@@ -411,7 +411,13 @@ nb::object TensorMetaToDlpack(
   auto tensor = std::make_unique<axon::utils::TensorBase>();
   tensor->assign(std::move(meta), buffer.data());
 
-  DLDevice device = tensor->device;
+  // Override the device with the ACTUAL buffer memory type.
+  // The TensorMeta comes from the sender and may indicate CUDA, but when
+  // using AlwaysOnHostPolicy, the buffer is actually in host memory.
+  // We MUST use the buffer's memory type to ensure the DLPack device
+  // correctly reflects where the data actually resides.
+  DLDevice actual_device = UcxMemoryTypeToDlDevice(buffer.type());
+  tensor->device = actual_device;
 
   // Create DLManagedTensor for Python
   DLManagedTensor* dlm_tensor = new DLManagedTensor;
@@ -442,7 +448,7 @@ nb::object TensorMetaToDlpack(
     PyCapsule_New(dlm_tensor, "dltensor", SafeDlpackCapsuleDestructor));
 
   // Return wrapped in DLPackCapsuleWrapper for from_dlpack compatibility
-  return nb::cast(DLPackCapsuleWrapper(std::move(capsule), device));
+  return nb::cast(DLPackCapsuleWrapper(std::move(capsule), actual_device));
 }
 
 // Context struct for TensorMetaVecToDlpack ownership management
@@ -470,6 +476,11 @@ nb::list TensorMetaVecToDlpack(
     throw std::runtime_error("TensorMetaVec and UcxBufferVec size mismatch");
   }
 
+  // Get the actual memory type from buffer_vec BEFORE moving it.
+  // This ensures we use the receiver's actual memory location, not the
+  // sender's.
+  DLDevice actual_device = UcxMemoryTypeToDlDevice(buffer_vec.type());
+
   // Use shared_ptr to allow multiple capsules to share the same buffer_vec
   // IMPORTANT: Set own_buffer = false to prevent UcxBufferVec::~UcxBufferVec
   // from calling deallocate() on UcxMemoryResourceManager, which may have been
@@ -489,13 +500,13 @@ nb::list TensorMetaVecToDlpack(
     auto tensor = std::make_unique<axon::utils::TensorBase>();
     tensor->assign(std::move(meta), buffer.data);
 
-    // Save device before moving tensor (for DLPackCapsuleWrapper)
-    DLDevice device = tensor->device;
+    // Override device with actual buffer memory type
+    tensor->device = actual_device;
 
     // Create DLManagedTensor for Python (zero-copy)
     DLManagedTensor* dlm_tensor = new DLManagedTensor;
     dlm_tensor->dl_tensor.data = tensor->data;
-    dlm_tensor->dl_tensor.device = device;
+    dlm_tensor->dl_tensor.device = actual_device;
     dlm_tensor->dl_tensor.ndim = tensor->ndim;
     dlm_tensor->dl_tensor.dtype = tensor->dtype;
     dlm_tensor->dl_tensor.shape = tensor->shape;
@@ -513,7 +524,8 @@ nb::list TensorMetaVecToDlpack(
     // Wrap in DLPackCapsuleWrapper for from_dlpack compatibility
     nb::object capsule = nb::steal<nb::object>(
       PyCapsule_New(dlm_tensor, "dltensor", SafeDlpackCapsuleDestructor));
-    result.append(nb::cast(DLPackCapsuleWrapper(std::move(capsule), device)));
+    result.append(
+      nb::cast(DLPackCapsuleWrapper(std::move(capsule), actual_device)));
   }
   return result;
 }

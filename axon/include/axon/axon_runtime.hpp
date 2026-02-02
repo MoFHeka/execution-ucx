@@ -90,7 +90,8 @@ class AxonRuntime {
     const std::string& worker_name,
     size_t thread_pool_size =
       (std::thread::hardware_concurrency() < 16 ? 4 : 16),
-    std::chrono::milliseconds timeout = std::chrono::milliseconds(300));
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(300),
+    std::unique_ptr<ucxx::UcxAutoDeviceContext> auto_device_context = nullptr);
 
   ~AxonRuntime();
 

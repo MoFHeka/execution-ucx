@@ -15,9 +15,9 @@ limitations under the License.
 
 #include <nanobind/nanobind.h>
 
-#include "axon/python/bindings_enums.hpp"
-#include "axon/python/bindings_runtime.hpp"
-#include "axon/python/bindings_types.hpp"
+#include "axon/python/src/bindings_enums.hpp"
+#include "axon/python/src/bindings_runtime.hpp"
+#include "axon/python/src/bindings_types.hpp"
 
 namespace nb = nanobind;
 
