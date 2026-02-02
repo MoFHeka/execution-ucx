@@ -13,27 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "axon/python/bindings_runtime_wrapper.hpp"
+#include "axon/python/src/bindings_runtime_wrapper.hpp"
 
 #include <cstdio>
 #include <dlpack/dlpack.h>
-#include <format>
 #include <nanobind/nanobind.h>
 
-#include <array>
-#include <string>
 #include <utility>
-#include <vector>
 
 #include <unifex/create.hpp>
 #include <unifex/then.hpp>
 
 #include "axon/axon_runtime.hpp"
-#include "axon/python/dlpack_helpers.hpp"
-#include "axon/python/memory_policy_helpers.hpp"
-#include "axon/python/param_conversion.hpp"
-#include "axon/python/python_module.hpp"
-#include "axon/python/python_wake_manager.hpp"
+#include "axon/python/src/dlpack_helpers.hpp"
+#include "axon/python/src/memory_policy_helpers.hpp"
+#include "axon/python/src/param_conversion.hpp"
+#include "axon/python/src/python_module.hpp"
+#include "axon/python/src/python_wake_manager.hpp"
 #include "rpc_core/rpc_types.hpp"
 #include "ucx_context/ucx_context_data.hpp"
 

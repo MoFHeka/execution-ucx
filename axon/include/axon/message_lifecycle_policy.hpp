@@ -48,11 +48,14 @@ enum class LifecycleStatus : uint8_t {
  * should be preserved or finalized post-processing.
  */
 struct LifecycleStatusHandlerFacade
-  : pro::facade_builder::add_convention<
+  : pro::facade_builder  //
+    ::add_convention<
       pro::operator_dispatch<"()">,
       LifecycleStatus(
         std::shared_ptr<utils::AxonRequest>,
-        utils::AxonMessageID /*axon worker precomputed hash id*/)>::build {};
+        utils::AxonMessageID /*axon worker precomputed hash id*/)>  //
+    ::support_copy<pro::constraint_level::nontrivial>               //
+    ::build {};
 
 using LifecycleStatusHandler = pro::proxy<LifecycleStatusHandlerFacade>;
 

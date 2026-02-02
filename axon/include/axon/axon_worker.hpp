@@ -1412,7 +1412,7 @@ struct AxonWorker::ServerRequestHandlerVisitor_ {
                  worker->server_ctx_->get_scheduler(), am_desc_key,
                  std::move(mem_policy), tensor_metas))
              | unifex::let_value(BufferBundleProcessor_{
-               worker, conn_id, req_header_ptr, std::move(lc_policy)});
+               worker, conn_id, req_header_ptr, lc_policy});
     };
 
     // std::monostate is not a valid buffer type when RNDV Path
@@ -1466,8 +1466,7 @@ struct AxonWorker::ServerRequestHandlerVisitor_ {
           std::move(payload).to_buffer_vec({payload.size()});
         return worker
           ->ServerDispatchAndManageLifecycle_<ReceivedBufferT, MsgLcPolicyT>(
-            conn_id, req_header_ptr, std::move(ucx_buffer_vec),
-            std::move(lc_policy));
+            conn_id, req_header_ptr, std::move(ucx_buffer_vec), lc_policy);
       } else {
         std::vector<size_t> sizes;
         sizes.reserve(tensor_metas.size());
@@ -1478,13 +1477,12 @@ struct AxonWorker::ServerRequestHandlerVisitor_ {
         auto ucx_buffer = std::move(payload).to_buffer_vec(sizes);
         return worker
           ->ServerDispatchAndManageLifecycle_<ReceivedBufferT, MsgLcPolicyT>(
-            conn_id, req_header_ptr, std::move(ucx_buffer),
-            std::move(lc_policy));
+            conn_id, req_header_ptr, std::move(ucx_buffer), lc_policy);
       }
     } else {
       return worker
         ->ServerDispatchAndManageLifecycle_<ReceivedBufferT, MsgLcPolicyT>(
-          conn_id, req_header_ptr, std::move(payload), std::move(lc_policy));
+          conn_id, req_header_ptr, std::move(payload), lc_policy);
     }
   }
 };

@@ -13,9 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "axon/python/bindings_runtime.hpp"
+#include "axon/python/src/bindings_runtime.hpp"
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/string_view.h>
 #include <nanobind/stl/vector.h>
@@ -32,13 +33,20 @@ limitations under the License.
 #include <unifex/upon_error.hpp>
 
 #include "axon/axon_runtime.hpp"
-#include "axon/python/bindings_runtime_helpers.hpp"
-#include "axon/python/bindings_runtime_wrapper.hpp"
-#include "axon/python/dlpack_helpers.hpp"
-#include "axon/python/memory_policy_helpers.hpp"
-#include "axon/python/python_helpers.hpp"
-#include "axon/python/python_module.hpp"
-#include "axon/python/python_wake_manager.hpp"
+#include "axon/python/src/bindings_runtime_helpers.hpp"
+#include "axon/python/src/bindings_runtime_wrapper.hpp"
+#include "axon/python/src/dlpack_helpers.hpp"
+#include "axon/python/src/memory_policy_helpers.hpp"
+#include "axon/python/src/python_helpers.hpp"
+#include "axon/python/src/python_module.hpp"
+#include "axon/python/src/python_wake_manager.hpp"
+
+#include "ucx_context/ucx_device_context.hpp"
+
+#if CUDA_ENABLED
+#include <cuda.h>
+#include "ucx_context/cuda/ucx_cuda_context.hpp"
+#endif
 
 namespace nb = nanobind;
 namespace rpc = eux::rpc;
@@ -46,24 +54,106 @@ namespace ucxx = eux::ucxx;
 namespace axon = eux::axon;
 namespace python = eux::axon::python;
 
+#if CUDA_ENABLED
+std::optional<uint64_t> GetDeviceContextHandle(const std::string& device_type) {
+  if (device_type == "cuda") {
+    CUcontext ctx;
+    CUresult res = cuCtxGetCurrent(&ctx);
+    if (res != CUDA_SUCCESS || ctx == nullptr) {
+      return std::nullopt;
+    }
+    return reinterpret_cast<uint64_t>(ctx);
+  }
+  return std::nullopt;
+}
+#else
+std::optional<uint64_t> GetDeviceContextHandle(
+  const std::string& /*device_type*/) {
+  return std::nullopt;
+}
+#endif
+
 void RegisterRuntime(nb::module_& m) {
+  m.def(
+    "get_device_context_handle", &GetDeviceContextHandle,
+    nb::arg("device_type") = "cuda",
+    "Get the current device context handle as an integer.",
+    nb::call_guard<nb::gil_scoped_release>());
+
   nb::class_<axon::AxonRuntime> cls(m, "AxonRuntime");
 
-  // Custom constructor that accepts flexible timeout types
-  // Supports: int (milliseconds), float (seconds), timedelta, or None
+  // Custom constructor that accepts Device object
+  // Supports: CpuDevice, CudaDevice, RocmDevice, SyclDevice
+  // or None (defaults to CPU)
   // Use __init__ with placement new
   cls.def(
     "__init__",
     [](
       axon::AxonRuntime* self, const std::string& worker_name,
-      size_t thread_pool_size, nb::object timeout_obj) {
+      size_t thread_pool_size, nb::object timeout_obj, nb::object device_obj) {
+      std::unique_ptr<ucxx::UcxAutoDeviceContext> device_context = nullptr;
+
+      if (!device_obj.is_none()) {
+        // Get device type string
+        nb::object get_type_string = device_obj.attr("get_type_string");
+        std::string device_type = nb::cast<std::string>(get_type_string());
+
+        // Get context handle
+        nb::object get_context_handle = device_obj.attr("get_context_handle");
+        nb::object handle_obj = get_context_handle();
+
+        if (!handle_obj.is_none()) {
+          uint64_t handle = nb::cast<uint64_t>(handle_obj);
+
+          if (device_type == "cuda") {
+#if CUDA_ENABLED
+            CUcontext cuda_ctx = reinterpret_cast<CUcontext>(handle);
+            device_context =
+              std::make_unique<ucxx::UcxAutoCudaDeviceContext>(cuda_ctx);
+#else
+            throw std::runtime_error(
+              "CUDA device requested but CUDA support is not enabled in this "
+              "build.");
+#endif
+          } else if (device_type == "rocm") {
+#if ROCM_ENABLED
+            // TODO: Add ROCm support when available
+            throw std::runtime_error(
+              "ROCm device requested but ROCm support is not yet "
+              "implemented.");
+#else
+            throw std::runtime_error(
+              "ROCm device requested but ROCm support is not enabled in this "
+              "build.");
+#endif
+          } else if (device_type == "sycl") {
+#if SYCL_ENABLED
+            // TODO: Add SYCL support when available
+            throw std::runtime_error(
+              "SYCL device requested but SYCL support is not yet "
+              "implemented.");
+#else
+            throw std::runtime_error(
+              "SYCL device requested but SYCL support is not enabled in this "
+              "build.");
+#endif
+          } else if (device_type == "cpu") {
+            // CPU device doesn't need a context
+            device_context = nullptr;
+          } else {
+            throw std::runtime_error("Unsupported device type: " + device_type);
+          }
+        }
+      }
+
       new (self) axon::AxonRuntime(
-        worker_name, thread_pool_size, python::ConvertTimeout(timeout_obj));
+        worker_name, thread_pool_size, python::ConvertTimeout(timeout_obj),
+        std::move(device_context));
     },
     nb::arg("worker_name"),
     nb::arg("thread_pool_size") =
       (std::thread::hardware_concurrency() < 16 ? 4 : 16),
-    nb::arg("timeout") = nb::none());
+    nb::arg("timeout") = nb::none(), nb::arg("device") = nb::none());
 
   cls.def("__del__", [](axon::AxonRuntime& self) {
     nb::gil_scoped_release release;

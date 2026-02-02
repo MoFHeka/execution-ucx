@@ -27,10 +27,8 @@ limitations under the License.
 #include <unifex/upon_error.hpp>
 #include <unifex/v2/async_scope.hpp>
 
-#include "axon/python/python_helpers.hpp"
-#include "axon/python/python_wake_manager.hpp"
-
-#include <string>
+#include "axon/python/src/python_helpers.hpp"
+#include "axon/python/src/python_wake_manager.hpp"
 
 namespace eux {
 namespace axon {

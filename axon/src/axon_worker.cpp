@@ -75,6 +75,13 @@ AxonWorker::AxonWorker(
     auto_device_context_(std::move(auto_device_context)),
     dispatcher_(cista::offset::string(worker_name_)),
     thread_pool_(thread_pool_size) {
+  // Activate device context for the ENTIRE constructor to ensure UCX CUDA
+  // components are initialized with a valid CUDA context.
+  std::unique_ptr<ucxx::OperationRAII> init_op;
+  if (auto_device_context_) {
+    init_op = (*auto_device_context_)(nullptr, nullptr);
+  }
+
   if (common_ucp_context_ == nullptr) {
     auto ec = ucxx::ucx_am_context::init_ucp_context(
       worker_name_, &common_ucp_context_,

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "axon/python/bindings_types.hpp"
+#include "axon/python/src/bindings_types.hpp"
 
 #include <dlpack/dlpack.h>
 #include <nanobind/nanobind.h>
@@ -26,8 +26,8 @@ limitations under the License.
 #include <string_view>
 #include <utility>
 
-#include "axon/python/dlpack_helpers.hpp"
-#include "axon/python/param_conversion.hpp"
+#include "axon/python/src/dlpack_helpers.hpp"
+#include "axon/python/src/param_conversion.hpp"
 #include "rpc_core/rpc_types.hpp"
 #include "rpc_core/utils/cista_serialize_helper.hpp"
 #include "ucx_context/ucx_context_data.hpp"

@@ -15,7 +15,7 @@ axon_utils_config_settings()
 cc_library(
     name = "async_bridge",
     srcs = [
-        "async_bridge.hpp",
+        "src/async_bridge.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -30,7 +30,7 @@ cc_library(
 cc_library(
     name = "dlpack_helpers_headers",
     hdrs = [
-        "dlpack_helpers.hpp",
+        "src/dlpack_helpers.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -47,10 +47,10 @@ cc_library(
 cc_library(
     name = "dlpack_helpers",
     srcs = [
-        "dlpack_helpers.cpp",
+        "src/dlpack_helpers.cpp",
     ],
     hdrs = [
-        "dlpack_helpers.hpp",
+        "src/dlpack_helpers.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -71,7 +71,7 @@ cc_library(
 cc_library(
     name = "param_conversion_headers",
     hdrs = [
-        "param_conversion.hpp",
+        "src/param_conversion.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -89,10 +89,10 @@ cc_library(
 cc_library(
     name = "param_conversion",
     srcs = [
-        "param_conversion.cpp",
+        "src/param_conversion.cpp",
     ],
     hdrs = [
-        "param_conversion.hpp",
+        "src/param_conversion.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -114,7 +114,7 @@ cc_library(
 cc_library(
     name = "python_helpers_headers",
     hdrs = [
-        "python_helpers.hpp",
+        "src/python_helpers.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -129,10 +129,10 @@ cc_library(
 cc_library(
     name = "python_module",
     srcs = [
-        "python_module.cpp",
+        "src/python_module.cpp",
     ],
     hdrs = [
-        "python_module.hpp",
+        "src/python_module.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -147,10 +147,10 @@ cc_library(
 cc_library(
     name = "python_helpers",
     srcs = [
-        "python_helpers.cpp",
+        "src/python_helpers.cpp",
     ],
     hdrs = [
-        "python_helpers.hpp",
+        "src/python_helpers.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -168,7 +168,7 @@ cc_library(
 cc_library(
     name = "memory_policy_helpers_headers",
     hdrs = [
-        "memory_policy_helpers.hpp",
+        "src/memory_policy_helpers.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -184,10 +184,10 @@ cc_library(
 cc_library(
     name = "memory_policy_helpers",
     srcs = [
-        "memory_policy_helpers.cpp",
+        "src/memory_policy_helpers.cpp",
     ],
     hdrs = [
-        "memory_policy_helpers.hpp",
+        "src/memory_policy_helpers.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -207,7 +207,7 @@ cc_library(
 cc_library(
     name = "python_wake_manager_headers",
     hdrs = [
-        "python_wake_manager.hpp",
+        "src/python_wake_manager.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -223,10 +223,10 @@ cc_library(
 cc_library(
     name = "python_wake_manager",
     srcs = [
-        "python_wake_manager.cpp",
+        "src/python_wake_manager.cpp",
     ],
     hdrs = [
-        "python_wake_manager.hpp",
+        "src/python_wake_manager.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -246,7 +246,7 @@ cc_library(
 cc_library(
     name = "bindings_enums_headers",
     hdrs = [
-        "bindings_enums.hpp",
+        "src/bindings_enums.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -261,10 +261,10 @@ cc_library(
 cc_library(
     name = "bindings_enums",
     srcs = [
-        "bindings_enums.cpp",
+        "src/bindings_enums.cpp",
     ],
     hdrs = [
-        "bindings_enums.hpp",
+        "src/bindings_enums.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -281,7 +281,7 @@ cc_library(
 cc_library(
     name = "bindings_types_headers",
     hdrs = [
-        "bindings_types.hpp",
+        "src/bindings_types.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -298,10 +298,10 @@ cc_library(
 cc_library(
     name = "bindings_types",
     srcs = [
-        "bindings_types.cpp",
+        "src/bindings_types.cpp",
     ],
     hdrs = [
-        "bindings_types.hpp",
+        "src/bindings_types.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -321,7 +321,7 @@ cc_library(
 cc_library(
     name = "bindings_runtime_helpers_headers",
     hdrs = [
-        "bindings_runtime_helpers.hpp",
+        "src/bindings_runtime_helpers.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -345,10 +345,10 @@ cc_library(
 cc_library(
     name = "bindings_runtime_helpers",
     srcs = [
-        "bindings_runtime_helpers.cpp",
+        "src/bindings_runtime_helpers.cpp",
     ],
     hdrs = [
-        "bindings_runtime_helpers.hpp",
+        "src/bindings_runtime_helpers.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -376,7 +376,7 @@ cc_library(
 cc_library(
     name = "bindings_runtime_wrapper_headers",
     hdrs = [
-        "bindings_runtime_wrapper.hpp",
+        "src/bindings_runtime_wrapper.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -399,10 +399,10 @@ cc_library(
 cc_library(
     name = "bindings_runtime_wrapper",
     srcs = [
-        "bindings_runtime_wrapper.cpp",
+        "src/bindings_runtime_wrapper.cpp",
     ],
     hdrs = [
-        "bindings_runtime_wrapper.hpp",
+        "src/bindings_runtime_wrapper.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -429,7 +429,7 @@ cc_library(
 cc_library(
     name = "bindings_runtime_headers",
     hdrs = [
-        "bindings_runtime.hpp",
+        "src/bindings_runtime.hpp",
     ],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
@@ -455,11 +455,15 @@ cc_library(
 cc_library(
     name = "bindings_runtime",
     srcs = [
-        "bindings_runtime.cpp",
+        "src/bindings_runtime.cpp",
     ],
     hdrs = [
-        "bindings_runtime.hpp",
+        "src/bindings_runtime.hpp",
     ],
+    defines = select({
+        "@rules_cuda//cuda:is_enabled": ["CUDA_ENABLED=1"],
+        "//conditions:default": ["CUDA_ENABLED=0"],
+    }),
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -478,21 +482,26 @@ cc_library(
         "@execution-ucx//ucx_context:ucx_context_data_lib",
         "@nanobind",
         "@unifex",
-    ],
+    ] + select({
+        "@rules_cuda//cuda:is_enabled": [
+            "@execution-ucx//ucx_context:ucx_cuda_context",
+        ],
+        "//conditions:default": [],
+    }),
     alwayslink = True,
 )
 
 copy_to_dir(
     name = "copy_ucx_libs",
     srcs = ["@ucx//:ucx_shared_libs"],
-    dirname = "libs",
+    dirname = "axon/libs",
     match_pattern = "*.so.0",
     visibility = ["//visibility:public"],
 )
 
 cc_library(
     name = "axon_python_entry",
-    srcs = ["axon_python.cpp"],
+    srcs = ["src/axon_python.cpp"],
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -550,11 +559,11 @@ cc_binary(
 
 # Create a symlink/copy with the correct name for Python import
 # nanobind expects the module name to match the .so filename
-# Bazel generates libaxon_python_runtime.so, but Python needs axon_runtime.so
+# Bazel generates libaxon_python_runtime.so, we copy it to axon/axon.so
 genrule(
     name = "axon_python_lib",
     srcs = [":axon_python_runtime"],
-    outs = ["axon.so"],
+    outs = ["axon/axon.so"],
     cmd = "cp $(location :axon_python_runtime) $@",
     visibility = ["//visibility:public"],
 )
@@ -563,7 +572,10 @@ genrule(
 # This creates a py_library that can be imported as 'axon_runtime'
 py_library(
     name = "axon_python",
-    srcs = ["axon.py"],
+    srcs = [
+        "axon/__init__.py",
+        "axon/device.py",
+    ],
     data = [
         ":axon_python_lib",
         ":copy_ucx_libs",
@@ -692,6 +704,14 @@ axon_pytest_test(
     ],
 )
 
+axon_pytest_test(
+    name = "test_device_api",
+    srcs = ["tests/test_device_api.py"],
+    deps = [
+        requirement("pytest-asyncio"),
+    ],
+)
+
 # Test suite that runs all tests
 test_suite(
     name = "python_tests",
@@ -699,6 +719,7 @@ test_suite(
         ":test_axon_runtime",
         ":test_basic",
         ":test_connection",
+        ":test_device_api",
         ":test_edge_cases",
         ":test_integration",
         ":test_invoke_args",
@@ -733,7 +754,8 @@ test_suite(
 axon_python_wheel(
     name = "wheel",
     data_files = {
-        "axon.py": "platlib/axon/__init__.py",
+        "axon/__init__.py": "platlib/axon/__init__.py",
+        "axon/device.py": "platlib/axon/device.py",
         ":axon_python_lib": "platlib/axon/axon.so",
         ":copy_ucx_libs": "platlib/axon/libs",
     },

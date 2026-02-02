@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "axon/python/memory_policy_helpers.hpp"
+#include "axon/python/src/memory_policy_helpers.hpp"
 
 #include <nanobind/nanobind.h>
 
@@ -26,9 +26,9 @@ limitations under the License.
 #include "axon/axon_runtime.hpp"
 #include "axon/memory_policy.hpp"
 #include "axon/message_lifecycle_policy.hpp"
-#include "axon/python/dlpack_helpers.hpp"
-#include "axon/python/python_helpers.hpp"
-#include "axon/python/python_module.hpp"
+#include "axon/python/src/dlpack_helpers.hpp"
+#include "axon/python/src/python_helpers.hpp"
+#include "axon/python/src/python_module.hpp"
 #include "axon/utils/axon_message.hpp"
 #include "rpc_core/rpc_payload_types.hpp"
 #include "ucx_context/ucx_context_data.hpp"
