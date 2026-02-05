@@ -814,7 +814,10 @@ class AxonWorker {
   template <typename Func>
   Executor ServerMakeProcessStorageExecutor_(
     StorageRequestIt storage_it, Func&& func);
-  std::expected<void, errors::AxonErrorContext> ProcessLifecycleStatus_(
+  std::pair<
+    std::expected<void, errors::AxonErrorContext>,
+    std::optional<StorageRequestIt>>
+  ProcessLifecycleStatus_(
     StorageRequestIt storage_it, LifecycleStatus lifecycle_status);
 
   UcxSendCombinedSender ServerHandleSendResponse_(
@@ -1527,7 +1530,9 @@ std::expected<void, errors::AxonErrorContext> AxonWorker::ProcessStoredRequests(
   auto executor =
     ServerMakeProcessStorageExecutor_(storage_it, std::forward<Func>(func));
   auto lifecycle_status = (*visitor)(std::move(executor));
-  return ProcessLifecycleStatus_(storage_it, lifecycle_status);
+  auto [result, next_it] =
+    ProcessLifecycleStatus_(storage_it, lifecycle_status);
+  return result;
 }
 
 template <typename Func>
@@ -1537,13 +1542,13 @@ std::expected<void, errors::AxonErrorContext> AxonWorker::ProcessStoredRequests(
   for (auto it = storage_->begin(); it != storage_->end();) {
     auto executor = ServerMakeProcessStorageExecutor_(it, func);
     auto lifecycle_status = (*visitor)(std::move(executor));
-    auto result = ProcessLifecycleStatus_(it, lifecycle_status);
+    auto [result, next_it] = ProcessLifecycleStatus_(it, lifecycle_status);
     if (!result) {
       return result;
     }
-    if (
-      lifecycle_status != LifecycleStatus::Discard
-      && lifecycle_status != LifecycleStatus::Error) {
+    if (next_it) {
+      it = *next_it;
+    } else {
       ++it;
     }
   }
@@ -1570,7 +1575,9 @@ AxonWorker::Executor AxonWorker::ServerMakeProcessStorageExecutor_(
     });
 }
 
-inline std::expected<void, errors::AxonErrorContext>
+inline std::pair<
+  std::expected<void, errors::AxonErrorContext>,
+  std::optional<AxonWorker::StorageRequestIt>>
 AxonWorker::ProcessLifecycleStatus_(
   StorageRequestIt storage_it, LifecycleStatus lifecycle_status) {
   if (
@@ -1579,20 +1586,26 @@ AxonWorker::ProcessLifecycleStatus_(
     auto axon_req_id = GetMessageID((*storage_it)->header);
     const auto& req_header = (*storage_it)->header;
     request_id_to_iterator_.erase(axon_req_id);
-    storage_->erase(storage_it);
+    auto next_it = storage_->erase(storage_it);
     if (lifecycle_status == LifecycleStatus::Error) {
-      return std::unexpected(errors::AxonErrorContext{
-        .session_id = cista::to_idx(req_header.session_id),
-        .request_id = cista::to_idx(req_header.request_id),
-        .function_id = cista::to_idx(req_header.function_id),
-        .status = rpc::RpcStatus(std::make_error_code(rpc::RpcErrc::INTERNAL)),
-        .what = "Error processing stored request",
-        .hlc = hlc_,
-        .workflow_id = cista::to_idx(req_header.workflow_id),
-      });
+      return {
+        std::unexpected(errors::AxonErrorContext{
+          .session_id = cista::to_idx(req_header.session_id),
+          .request_id = cista::to_idx(req_header.request_id),
+          .function_id = cista::to_idx(req_header.function_id),
+          .status =
+            rpc::RpcStatus(std::make_error_code(rpc::RpcErrc::INTERNAL)),
+          .what = "Error processing stored request",
+          .hlc = hlc_,
+          .workflow_id = cista::to_idx(req_header.workflow_id),
+        }),
+        next_it};
     }
+    return {
+      std::expected<void, errors::AxonErrorContext>(std::in_place), next_it};
   }
-  return std::expected<void, errors::AxonErrorContext>(std::in_place);
+  return {
+    std::expected<void, errors::AxonErrorContext>(std::in_place), std::nullopt};
 }
 
 template <typename RespBufferT, typename MemPolicyT>

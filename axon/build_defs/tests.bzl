@@ -93,3 +93,35 @@ def axon_tests():
             "@googletest//:gtest_main",
         ],
     )
+
+    cc_test(
+        name = "message_lifecycle_policy_test",
+        srcs = ["tests/message_lifecycle_policy_test.cpp"],
+        includes = ["include"],
+        target_compatible_with = select(
+            {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+            {"//conditions:default": ["@platforms//:incompatible"]},
+        ),
+        deps = [
+            ":axon_message_lifecycle_policy",
+            ":axon_storage",
+            "@googletest//:gtest_main",
+            "@proxy",
+            "@execution-ucx//ucx_context:ucx_memory_resource_lib",
+        ],
+    )
+
+    cc_test(
+        name = "process_stored_requests_test",
+        srcs = ["tests/process_stored_requests_test.cpp"],
+        includes = ["include"],
+        target_compatible_with = select(
+            {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
+            {"//conditions:default": ["@platforms//:incompatible"]},
+        ),
+        deps = [
+            ":axon_worker",
+            "@execution-ucx//ucx_context:ucx_memory_resource_lib",
+            "@googletest//:gtest_main",
+        ],
+    )

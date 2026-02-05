@@ -1786,17 +1786,26 @@ std::expected<void, errors::AxonErrorContext> AxonWorker::ProcessStoredRequests(
   // Call visitor with storage iterator and process the lifecycle status with
   // default implementation
   auto lifecycle_status = (*visitor)(it->second);
-  return ProcessLifecycleStatus_(it->second, lifecycle_status);
+  auto [result, next_it] =
+    ProcessLifecycleStatus_(it->second, lifecycle_status);
+  return result;
 }
 
 std::expected<void, errors::AxonErrorContext> AxonWorker::ProcessStoredRequests(
   StorageIteratorVisitor visitor) {
   for (auto it = storage_->begin(); it != storage_->end();) {
-    auto current = it++;
+    auto current = it;
+    // We increment 'it' speculatively, but will override if erased.
+    ++it;
+
     auto lifecycle_status = (*visitor)(current);
-    auto result = ProcessLifecycleStatus_(current, lifecycle_status);
+    auto [result, next_it] = ProcessLifecycleStatus_(current, lifecycle_status);
     if (!result) {
       return result;
+    }
+
+    if (next_it) {
+      it = *next_it;
     }
   }
   return std::expected<void, errors::AxonErrorContext>(std::in_place);
@@ -1820,8 +1829,9 @@ std::expected<void, errors::AxonErrorContext> AxonWorker::ProcessStoredRequests(
 
 std::expected<void, errors::AxonErrorContext> AxonWorker::ProcessStoredRequests(
   rpc::DynamicAsyncRpcFunctionView func, RequestVisitor visitor) {
-  for (auto it = storage_->begin(); it != storage_->end(); ++it) {
-    auto result = ProcessSingleStoredRequest(it, func, visitor);
+  for (auto it = storage_->begin(); it != storage_->end();) {
+    auto current = it++;
+    auto result = ProcessSingleStoredRequest(current, func, visitor);
     if (!result) {
       return result;
     }
