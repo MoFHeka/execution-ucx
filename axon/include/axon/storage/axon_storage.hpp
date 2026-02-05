@@ -166,7 +166,9 @@ class AxonStorage {
    * @brief Erases a given iterator.
    * @param it The iterator to erase.
    */
-  void erase(request_iterator it) { arrival_requests_.erase(it); }
+  request_iterator erase(request_iterator it) {
+    return arrival_requests_.erase(it);
+  }
 
   /**
    * @brief Returns the size of the storage.

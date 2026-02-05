@@ -168,14 +168,15 @@ nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython(
   // Single pass: Find TENSOR_META_VEC + collect non-tensor params
   // ============================================================
   const rpc::TensorMetaVec* tensor_meta_vec_ptr = nullptr;
+  const rpc::utils::TensorMeta* single_tensor_meta_ptr = nullptr;
   size_t non_tensor_param_count = 0;
 
   for (const auto& param : params) {
     if (param.type == rpc::ParamType::TENSOR_META_VEC) {
       tensor_meta_vec_ptr = &cista::get<rpc::TensorMetaVec>(param.value);
-    } else if (
-      param.type != rpc::ParamType::TENSOR_META
-      && param.type != rpc::ParamType::TENSOR_META_VEC) {
+    } else if (param.type == rpc::ParamType::TENSOR_META) {
+      single_tensor_meta_ptr = &cista::get<rpc::utils::TensorMeta>(param.value);
+    } else {
       if (non_tensor_params_ptr) {
         non_tensor_params_ptr[non_tensor_param_count++] = &param;
       } else {
@@ -208,12 +209,12 @@ nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython(
         continue;
       }
       // Fallback to direct param if no TENSOR_META_VEC found
-      else if (
-        i < params.size() && params[i].type == rpc::ParamType::TENSOR_META) {
-        // Move meta from params (zero-copy)
+      else if (single_tensor_meta_ptr && tensor_idx == 0) {
+        // Move meta from single_tensor_meta_ptr (zero-copy)
         auto py_dlpack = ConvertSingleParamToPython(
           tensor_idx,
-          std::move(cista::get<rpc::utils::TensorMeta>(params[i].value)),
+          std::move(
+            const_cast<rpc::utils::TensorMeta&>(*single_tensor_meta_ptr)),
           payload);
         py_args.append(py_dlpack);
         ++tensor_idx;

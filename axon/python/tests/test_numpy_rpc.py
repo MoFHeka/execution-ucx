@@ -31,6 +31,10 @@ async def tuple_func(
     return (result_int, x.copy(), y.copy())
 
 
+async def mixed_args_func(a: np.ndarray, b: int, c: str) -> str:
+    return f"{np.sum(a)}_{b}_{c}"
+
+
 class RpcTestContext:
     def __init__(self):
         self.server = None
@@ -45,6 +49,7 @@ class RpcTestContext:
         self.server.register_function(1, sum_arr_func, from_dlpack_fn=np.from_dlpack)
         self.server.register_function(2, list_func, from_dlpack_fn=np.from_dlpack)
         self.server.register_function(3, tuple_func, from_dlpack_fn=np.from_dlpack)
+        self.server.register_function(4, mixed_args_func, from_dlpack_fn=np.from_dlpack)
 
         server_addr = self.server.get_local_address()
 
@@ -160,6 +165,29 @@ async def test_tuple_func():
         assert isinstance(result[2], np.ndarray)
         np.testing.assert_array_equal(result[1], x)
         np.testing.assert_array_equal(result[2], y)
+
+
+@pytest.mark.asyncio
+async def test_mixed_args_func():
+    """Test mixed arguments (Tensor, int, str) -> str."""
+    async with RpcTestContext() as client:
+        a = np.array([1, 2, 3], dtype=np.int64)
+        b = 100
+        c = "hello"
+
+        # Expected: "6_100_hello"
+        result = await client.invoke(
+            a,
+            b,
+            c,
+            worker_name="test_worker",
+            session_id=0,
+            function_id=4,
+            from_dlpack_fn=np.from_dlpack,
+        )
+
+        assert isinstance(result, str)
+        assert result == "6_100_hello"
 
 
 if __name__ == "__main__":
