@@ -67,9 +67,7 @@ async def main():
     server.start()
 
     # 2. Register function using jax.dlpack.from_dlpack for conversion
-    server.register_function(
-        0, jax_op_func, function_name="jax_op", from_dlpack_fn=jax_from_dlpack
-    )
+    server.register_function(jax_op_func, from_dlpack_fn=jax_from_dlpack)
 
     server_addr = server.get_local_address()
     print(f"Server started at {server_addr}")
@@ -94,7 +92,7 @@ async def main():
         b,
         worker_name="jax_worker",
         session_id=0,
-        function_id=0,
+        function="jax_op_func",
         memory_policy=custom_jax_policy,
         from_dlpack_fn=jax_from_dlpack,
     )
@@ -133,7 +131,7 @@ async def main():
         small_b,
         worker_name="jax_worker",
         session_id=0,
-        function_id=0,
+        function="jax_op_func",
         memory_policy=custom_jax_policy,
         from_dlpack_fn=jax_from_dlpack,
     )

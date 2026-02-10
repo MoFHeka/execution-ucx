@@ -111,6 +111,8 @@ class AxonRuntime {
   storage::AxonStorage& GetStorage();
   rpc::AsyncRpcDispatcher& GetDispatcher();
 
+  const std::string& GetWorkerName() const { return worker_->GetWorkerName(); }
+
   // --- Service Discovery & Connection APIs ---
   /**
    * @brief Get the local UCX address.

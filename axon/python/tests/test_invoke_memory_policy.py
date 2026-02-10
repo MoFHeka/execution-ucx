@@ -58,7 +58,7 @@ async def test_invoke_memory_policy_rndv():
 
     # 2. Register function
     server.register_function(
-        0, return_large_tensor, function_name="return_large_tensor"
+        return_large_tensor, 0, function_name="return_large_tensor"
     )
 
     server_addr = server.get_local_address()
@@ -82,7 +82,7 @@ async def test_invoke_memory_policy_rndv():
     result = await client.invoke(
         worker_name="test_server_invoke_mem",
         session_id=0,
-        function_id=0,
+        function=0,
         memory_policy=custom_policy,
         from_dlpack_fn=np.from_dlpack,
     )

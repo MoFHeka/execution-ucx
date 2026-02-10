@@ -257,7 +257,7 @@ async def test_invoke_without_request_header_positional_args():
             20,
             worker_name="server_worker",
             session_id=0,
-            function_id=1,
+            function=1,
             workflow_id=0,
         )
 
@@ -360,7 +360,7 @@ async def test_invoke_without_request_header_mixed_system_and_function_args():
             "hello",  # arg3: str
             worker_name="server_worker",
             session_id=0,
-            function_id=1,
+            function=1,
             workflow_id=100,  # workflow_id as kwargs
         )
 
@@ -414,7 +414,7 @@ async def test_invoke_without_request_header_with_memory_policy():
             20,  # arg2
             worker_name="server_worker",
             session_id=0,
-            function_id=1,
+            function=1,
             workflow_id=0,
             memory_policy=None,
         )
@@ -438,7 +438,7 @@ async def test_invoke_with_explicit_payload_error():
             await client.invoke(
                 worker_name="server_worker",
                 session_id=0,
-                function_id=1,
+                function=1,
                 payload="some_payload",
             )
     finally:

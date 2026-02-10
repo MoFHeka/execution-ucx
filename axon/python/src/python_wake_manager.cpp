@@ -135,16 +135,8 @@ std::size_t PythonWakeManager::ClearQueue() {
 }
 
 bool PythonWakeManager::RegisterAsyncioReader() {
-  // Increment reference count
-  int old_count = reader_ref_count_.fetch_add(1, std::memory_order_acq_rel);
-
-  // If already registered, just increment count and return
-  if (old_count > 0) {
-    return true;
-  }
-
-  // First registration, actually register with asyncio
   nb::gil_scoped_acquire acquire;
+
   try {
     nb::module_ asyncio = GetAsyncioModule();
 
@@ -171,18 +163,32 @@ bool PythonWakeManager::RegisterAsyncioReader() {
       }
     }
 
+    // Check if we are already registered on THIS loop
+    bool already_registered_on_loop =
+      (stored_loop_.ptr() != nullptr && stored_loop_.is(loop));
+    int old_count = reader_ref_count_.fetch_add(1, std::memory_order_acq_rel);
+
+    if (already_registered_on_loop && old_count > 0) {
+      return true;
+    }
+
     // Register the eventfd with asyncio's add_reader
     // Save the callback object to ensure remove_reader can properly remove it
-    reader_callback_ = nb::cpp_function([this]() {
-      [[maybe_unused]] std::size_t processed = this->ProcessQueue();
-    });
+    if (reader_callback_.ptr() == nullptr) {
+      reader_callback_ = nb::cpp_function([this]() {
+        [[maybe_unused]] std::size_t processed = this->ProcessQueue();
+      });
+    }
+
     // Store the callback object reference to ensure it's not garbage collected
     // and can be properly removed later
     loop.attr("add_reader")(event_fd_, reader_callback_);
+    stored_loop_ = loop;
 
     return true;
   } catch (const nb::python_error& e) {
-    // Registration failed, decrement count
+    // Registration failed, decrement count if we incremented it
+    // Note: we always incremented above.
     reader_ref_count_.fetch_sub(1, std::memory_order_acq_rel);
     return false;
   }

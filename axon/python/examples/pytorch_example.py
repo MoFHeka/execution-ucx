@@ -50,7 +50,7 @@ async def main():
 
     # 2. Register function using torch.from_dlpack for conversion
     server.register_function(
-        0, tensor_op_func, function_name="tensor_op", from_dlpack_fn=torch.from_dlpack
+        tensor_op_func, function_name="tensor_op", from_dlpack_fn=torch.from_dlpack
     )
 
     server_addr = server.get_local_address()
@@ -79,7 +79,7 @@ async def main():
         b,
         worker_name="torch_worker",
         session_id=0,
-        function_id=0,
+        function="tensor_op",
         memory_policy=custom_torch_policy,
         from_dlpack_fn=torch.from_dlpack,
     )
@@ -118,7 +118,7 @@ async def main():
         small_b,
         worker_name="torch_worker",
         session_id=0,
-        function_id=0,
+        function="tensor_op",
         memory_policy=custom_torch_policy,
         from_dlpack_fn=torch.from_dlpack,
     )
