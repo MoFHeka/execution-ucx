@@ -73,6 +73,15 @@ std::optional<uint64_t> GetDeviceContextHandle(
 }
 #endif
 
+// Helper to compute function ID from name and worker name
+inline uint32_t ComputeFunctionId(
+  const std::string& function_name, const std::string& worker_name) {
+  // Use MHash from Axon utils to compute a stable hash
+  // We use the lower 32 bits of the 128-bit hash
+  axon::utils::hash_t h = axon::utils::MHash(function_name, worker_name);
+  return static_cast<uint32_t>(h.low());
+}
+
 void RegisterRuntime(nb::module_& m) {
   m.def(
     "get_device_context_handle", &GetDeviceContextHandle,
@@ -588,9 +597,10 @@ void RegisterRuntime(nb::module_& m) {
   cls.def(
     "register_function",
     [](
-      axon::AxonRuntime& self, uint32_t function_id, nb::object py_callable,
-      nb::object function_name_obj, nb::object memory_policy_factory,
-      nb::object lifecycle_policy_obj, nb::object from_dlpack_fn) {
+      axon::AxonRuntime& self, nb::object py_callable,
+      std::optional<uint32_t> function_id, nb::object function_name_obj,
+      nb::object memory_policy_factory, nb::object lifecycle_policy_obj,
+      nb::object from_dlpack_fn) {
       // Check if function is async
       bool is_async = axon::python::IsAsyncFunction(py_callable);
       if (!is_async) {
@@ -606,10 +616,19 @@ void RegisterRuntime(nb::module_& m) {
           nb::object name_attr = py_callable.attr("__name__");
           function_name = nb::cast<std::string>(name_attr);
         } catch (const nb::python_error&) {
-          function_name = std::format("function_{}", function_id);
+          function_name = std::format("function_{}", function_id.value_or(0));
         }
       } else {
         function_name = nb::cast<std::string>(function_name_obj);
+      }
+
+      // Use provided ID or compute from name
+      uint32_t final_function_id;
+      if (function_id.has_value() && function_id.value() != 0) {
+        final_function_id = function_id.value();
+      } else {
+        final_function_id =
+          ComputeFunctionId(function_name, self.GetWorkerName());
       }
 
       // Parse function signature to infer types
@@ -730,13 +749,13 @@ void RegisterRuntime(nb::module_& m) {
 
       // Register function with policies
       python::RegisterFunctionWithPolicies(
-        self, rpc::function_id_t{function_id},
+        self, rpc::function_id_t{final_function_id},
         cista::offset::string(function_name), cista_param_types,
         cista_return_types, input_payload_type, return_payload_type,
         std::move(dynamic_func), memory_policy_factory, std::move(lc_policy),
         self);
     },
-    nb::arg("function_id"), nb::arg("callable"),
+    nb::arg("callable"), nb::arg("function_id") = nb::none(),
     nb::arg("function_name") = nb::none(),
     nb::arg("memory_policy") = nb::none(),
     nb::arg("lifecycle_policy") = nb::none(),
@@ -824,17 +843,30 @@ void RegisterRuntime(nb::module_& m) {
   cls.def(
     "invoke",
     [](
-      axon::AxonRuntime* self, nb::args args, std::string_view worker_name,
-      uint32_t session_id, uint32_t function_id, uint64_t workflow_id,
-      nb::object memory_policy_factory, nb::object from_dlpack_fn) {
-      // Import asyncio and create future
+      axon::AxonRuntime& self, nb::args args, const std::string& worker_name,
+      uint32_t session_id, nb::object function, uint32_t workflow_id,
+      nb::object memory_policy_factory,
+      nb::object from_dlpack_fn) {  // Removed kwargs
+      // Import asyncio
       nb::module_ asyncio = python::GetAsyncioModule();
       nb::object future = asyncio.attr("Future")();
+
+      // Resolve function ID
+      rpc::function_id_t function_id;
+      if (nb::isinstance<nb::int_>(function)) {
+        function_id = rpc::function_id_t{nb::cast<uint32_t>(function)};
+      } else if (nb::isinstance<nb::str>(function)) {
+        std::string fname = nb::cast<std::string>(function);
+        function_id = rpc::function_id_t{ComputeFunctionId(fname, worker_name)};
+      } else {
+        throw std::invalid_argument(
+          "function_id must be int (ID) or str (name)");
+      }
 
       // Build header
       rpc::RpcRequestHeader request_header;
       request_header.session_id = rpc::session_id_t{session_id};
-      request_header.function_id = rpc::function_id_t{function_id};
+      request_header.function_id = function_id;
       request_header.workflow_id = rpc::utils::workflow_id_t{workflow_id};
 
       // Use modular InvokeContext for single-pass argument processing
@@ -854,7 +886,7 @@ void RegisterRuntime(nb::module_& m) {
       ctx.finalize_header();
 
       // Prepare for dispatch
-      auto mr = self->GetMemoryResourceManager();
+      auto mr = self.GetMemoryResourceManager();
       bool use_custom_memory = !memory_policy_factory.is_none();
       auto result_handler = python::CreateRpcResultHandler(
         future, python::GetPythonWakeManager(), std::move(from_dlpack_fn));
@@ -862,47 +894,45 @@ void RegisterRuntime(nb::module_& m) {
       // Dispatch based on tensor count
       if (ctx.tensor_count() == 0) {
         if (use_custom_memory) {
-          self->SpawnClientTask(python::InvokeRpcWithCustomMemory(
-            *self, worker_name, std::move(request_header), std::monostate{},
+          self.SpawnClientTask(python::InvokeRpcWithCustomMemory(
+            self, worker_name, std::move(request_header), std::monostate{},
             memory_policy_factory, std::move(result_handler)));
         } else {
-          self->SpawnClientTask(python::InvokeRpcWithHostPolicy(
-            *self, worker_name, std::move(request_header), std::monostate{},
+          self.SpawnClientTask(python::InvokeRpcWithHostPolicy(
+            self, worker_name, std::move(request_header), std::monostate{},
             std::move(result_handler)));
         }
       } else if (ctx.tensor_count() == 1) {
         // Use cached data to create buffer (no repeated ExtractDlpackTensor)
         ucxx::UcxBuffer buffer = ctx.to_ucx_buffer(mr);
         if (use_custom_memory) {
-          self->SpawnClientTask(python::InvokeRpcWithCustomMemory(
-            *self, worker_name, std::move(request_header), std::move(buffer),
+          self.SpawnClientTask(python::InvokeRpcWithCustomMemory(
+            self, worker_name, std::move(request_header), std::move(buffer),
             memory_policy_factory, std::move(result_handler)));
         } else {
-          self->SpawnClientTask(python::InvokeRpcWithHostPolicy(
-            *self, worker_name, std::move(request_header), std::move(buffer),
+          self.SpawnClientTask(python::InvokeRpcWithHostPolicy(
+            self, worker_name, std::move(request_header), std::move(buffer),
             std::move(result_handler)));
         }
       } else {
-        // Use cached data to create buffer vec (no repeated
-        // ExtractDlpackTensor)
+        // Vector path
         ucxx::UcxBufferVec buffer_vec = ctx.to_ucx_buffer_vec(mr);
         if (use_custom_memory) {
-          self->SpawnClientTask(python::InvokeRpcWithCustomMemory(
-            *self, worker_name, std::move(request_header),
-            std::move(buffer_vec), memory_policy_factory,
-            std::move(result_handler)));
+          self.SpawnClientTask(python::InvokeRpcWithCustomMemory(
+            self, worker_name, std::move(request_header), std::move(buffer_vec),
+            memory_policy_factory, std::move(result_handler)));
         } else {
-          self->SpawnClientTask(python::InvokeRpcWithHostPolicy(
-            *self, worker_name, std::move(request_header),
-            std::move(buffer_vec), std::move(result_handler)));
+          self.SpawnClientTask(python::InvokeRpcWithHostPolicy(
+            self, worker_name, std::move(request_header), std::move(buffer_vec),
+            std::move(result_handler)));
         }
       }
 
       return future;
     },
     nb::rv_policy::none,  // Don't apply any rv_policy to prevent copy of self
-    nb::arg("args"), nb::kw_only(), nb::arg("worker_name"),
-    nb::arg("session_id"), nb::arg("function_id"), nb::arg("workflow_id") = 0,
+    nb::arg("args"), nb::arg("worker_name"), nb::arg("session_id"),
+    nb::arg("function"), nb::arg("workflow_id") = 0,
     nb::arg("memory_policy") = nb::none(),
     nb::arg("from_dlpack_fn") = nb::none(),
     "Invoke RPC with natural Python arguments (automatically handles Tensor "

@@ -45,11 +45,11 @@ class RpcTestContext:
         self.server = axon.AxonRuntime("test_worker")
         self.server.start()
 
-        self.server.register_function(0, sum_int_func, from_dlpack_fn=np.from_dlpack)
-        self.server.register_function(1, sum_arr_func, from_dlpack_fn=np.from_dlpack)
-        self.server.register_function(2, list_func, from_dlpack_fn=np.from_dlpack)
-        self.server.register_function(3, tuple_func, from_dlpack_fn=np.from_dlpack)
-        self.server.register_function(4, mixed_args_func, from_dlpack_fn=np.from_dlpack)
+        self.server.register_function(sum_int_func, 0, from_dlpack_fn=np.from_dlpack)
+        self.server.register_function(sum_arr_func, 1, from_dlpack_fn=np.from_dlpack)
+        self.server.register_function(list_func, 2, from_dlpack_fn=np.from_dlpack)
+        self.server.register_function(tuple_func, 3, from_dlpack_fn=np.from_dlpack)
+        self.server.register_function(mixed_args_func, 4, from_dlpack_fn=np.from_dlpack)
 
         server_addr = self.server.get_local_address()
 
@@ -76,7 +76,7 @@ async def test_sum_int_func():
 
         # Expected: sum(a+b) = sum([10, 12, ..., 24]) = 136
         result = await client.invoke(
-            a, b, worker_name="test_worker", session_id=0, function_id=0
+            a, b, worker_name="test_worker", session_id=0, function=0
         )
 
         # invoke returns a int
@@ -100,7 +100,7 @@ async def test_sum_arr_func():
             c,
             worker_name="test_worker",
             session_id=0,
-            function_id=1,
+            function=1,
             from_dlpack_fn=np.from_dlpack,
         )
 
@@ -122,7 +122,7 @@ async def test_list_func():
             b,
             worker_name="test_worker",
             session_id=0,
-            function_id=2,
+            function=2,
             from_dlpack_fn=np.from_dlpack,
         )
 
@@ -150,7 +150,7 @@ async def test_tuple_func():
             y,
             worker_name="test_worker",
             session_id=0,
-            function_id=3,
+            function=3,
             from_dlpack_fn=np.from_dlpack,
         )
 
@@ -182,7 +182,7 @@ async def test_mixed_args_func():
             c,
             worker_name="test_worker",
             session_id=0,
-            function_id=4,
+            function=4,
             from_dlpack_fn=np.from_dlpack,
         )
 

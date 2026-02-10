@@ -18,8 +18,8 @@ def test_register_function_valid_types():
 
     with create_server("test_worker_valid") as runtime:
         runtime.register_function(
-            function_id=1,
             callable=valid_func,
+            function_id=1,
         )
 
 
@@ -31,8 +31,8 @@ def test_register_function_valid_list():
 
     with create_server("test_worker_list") as runtime:
         runtime.register_function(
-            function_id=2,
             callable=list_func,
+            function_id=2,
         )
 
 
@@ -44,8 +44,8 @@ def test_register_function_valid_tuple_return():
 
     with create_server("test_worker_tuple") as runtime:
         runtime.register_function(
-            function_id=3,
             callable=tuple_func,
+            function_id=3,
         )
 
 
@@ -57,8 +57,8 @@ def test_register_function_void_return():
 
     with create_server("test_worker_void") as runtime:
         runtime.register_function(
-            function_id=4,
             callable=void_func,
+            function_id=4,
         )
 
 
@@ -73,8 +73,8 @@ def test_register_function_invalid_unknown_param():
             TypeError, match="Unsupported or missing type annotation for parameter 0"
         ):
             runtime.register_function(
-                function_id=5,
                 callable=invalid_param,
+                function_id=5,
             )
 
 
@@ -89,8 +89,8 @@ def test_register_function_invalid_unknown_return():
             TypeError, match="Unsupported or missing return type annotation"
         ):
             runtime.register_function(
-                function_id=6,
                 callable=invalid_return,
+                function_id=6,
             )
 
 
@@ -103,8 +103,8 @@ def test_register_function_invalid_untyped_list():
     with create_server("test_worker_invalid_list") as runtime:
         with pytest.raises(TypeError, match="Unsupported or missing type annotation"):
             runtime.register_function(
-                function_id=7,
                 callable=invalid_list,
+                function_id=7,
             )
 
 
@@ -117,8 +117,8 @@ def test_register_function_invalid_dict():
     with create_server("test_worker_invalid_dict") as runtime:
         with pytest.raises(TypeError, match="Unsupported or missing type annotation"):
             runtime.register_function(
-                function_id=8,
                 callable=invalid_dict,
+                function_id=8,
             )
 
 
@@ -131,8 +131,8 @@ def test_register_function_invalid_union():
     with create_server("test_worker_invalid_union") as runtime:
         with pytest.raises(TypeError, match="Unsupported or missing type annotation"):
             runtime.register_function(
-                function_id=9,
                 callable=invalid_union,
+                function_id=9,
             )
 
 
@@ -145,8 +145,8 @@ def test_register_function_missing_annotation():
     with create_server("test_worker_missing") as runtime:
         with pytest.raises(TypeError, match="Unsupported or missing type annotation"):
             runtime.register_function(
-                function_id=10,
                 callable=missing_anno,
+                function_id=10,
             )
 
 
@@ -162,8 +162,8 @@ def test_register_function_dlpack():
 
     with create_server("test_worker_dlpack") as runtime:
         runtime.register_function(
-            function_id=11,
             callable=tensor_func,
+            function_id=11,
         )
 
 

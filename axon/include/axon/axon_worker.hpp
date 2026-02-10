@@ -224,6 +224,8 @@ class AxonWorker {
   storage::AxonStorage& GetStorage();
   rpc::AsyncRpcDispatcher& GetDispatcher();
 
+  const std::string& GetWorkerName() const { return worker_name_; }
+
   // --- Service Discovery & Connection APIs ---
   std::vector<std::byte> GetLocalAddress();
 

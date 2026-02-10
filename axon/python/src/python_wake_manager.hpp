@@ -131,6 +131,8 @@ class PythonWakeManager {
   std::atomic<int> reader_ref_count_{0};  // Reference count for asyncio reader
   nanobind::object
     reader_callback_;  // Save the callback object to ensure remove_reader works
+  nanobind::object stored_loop_;  // Track the loop we are registered with to
+                                  // handle loop changes
 };
 
 /**

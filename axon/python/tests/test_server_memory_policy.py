@@ -76,8 +76,8 @@ async def test_custom_memory_policy_reuse():
 
     # 2. Register function with custom memory policy
     server.register_function(
-        0,
         rpc_handler,
+        0,
         memory_policy=custom_policy,
         from_dlpack_fn=np.from_dlpack,  # Required by validation
     )
@@ -97,7 +97,7 @@ async def test_custom_memory_policy_reuse():
     # Invoke needs worker_name, function_id(0), session_id(0).
     # And we expect a boolean result.
     is_reused = await client.invoke(
-        large_arr, worker_name="test_memory_policy_worker", session_id=0, function_id=0
+        large_arr, worker_name="test_memory_policy_worker", session_id=0, function=0
     )
 
     assert (

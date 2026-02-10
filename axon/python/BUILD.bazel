@@ -712,6 +712,15 @@ axon_pytest_test(
     ],
 )
 
+axon_pytest_test(
+    name = "test_invoke_by_name",
+    srcs = ["tests/test_invoke_by_name.py"],
+    deps = [
+        requirement("pytest-asyncio"),
+        requirement("numpy"),
+    ],
+)
+
 # Test suite that runs all tests
 test_suite(
     name = "python_tests",
