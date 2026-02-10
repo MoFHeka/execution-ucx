@@ -29,7 +29,8 @@ template <typename ReceivedBufferT>
 struct BufferProviderFacade
   : pro::facade_builder::add_convention<
       pro::operator_dispatch<"()">,
-      ReceivedBufferT(rpc::utils::TensorMetaSpan)>::build {};
+      ReceivedBufferT(rpc::utils::TensorMetaSpan)>::
+      template support_copy<pro::constraint_level::nontrivial>::build {};
 
 template <typename ReceivedBufferT>
 using BufferProvider = pro::proxy<BufferProviderFacade<ReceivedBufferT>>;

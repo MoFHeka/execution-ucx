@@ -624,7 +624,7 @@ void RegisterRuntime(nb::module_& m) {
 
       // Use provided ID or compute from name
       uint32_t final_function_id;
-      if (function_id.has_value() && function_id.value() != 0) {
+      if (function_id.has_value()) {
         final_function_id = function_id.value();
       } else {
         final_function_id =
@@ -643,7 +643,7 @@ void RegisterRuntime(nb::module_& m) {
               "Unsupported or missing type annotation for parameter {} in "
               "function '{}'. "
               "Supported types: int, float, bool, str, List[T], Tuple[...], "
-              "Tensor/Array.",
+              "Dlpack compatible Tensor/Array.",
               i, function_name)
               .c_str());
         }
@@ -659,7 +659,7 @@ void RegisterRuntime(nb::module_& m) {
               "Unsupported or missing return type annotation for function "
               "'{}'. "
               "Supported types: int, float, bool, str, List[T], Tuple[...], "
-              "Tensor/Array, None.",
+              "Dlpack compatible Tensor/Array, None.",
               function_name)
               .c_str());
         }

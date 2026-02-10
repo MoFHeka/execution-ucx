@@ -104,6 +104,14 @@ async def test_custom_memory_policy_reuse():
         is_reused == True
     ), "The server did not receive the reused object from the policy or data verification failed!"
 
+    # 5. Invoke AGAIN to verify the memory policy is reusable (i.e. not moved-from)
+    is_reused_2 = await client.invoke(
+        large_arr, worker_name="test_memory_policy_worker", session_id=0, function=0
+    )
+    assert (
+        is_reused_2 == True
+    ), "The server failed on second invocation (memory policy reuse failed)"
+
     # Verify cleanup
     try:
         client.stop()
