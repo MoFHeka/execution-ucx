@@ -1,7 +1,6 @@
 import torch
 import axon
 import asyncio
-import numpy as np
 
 # Global registry to track objects created by the policy
 created_objects = {}
@@ -56,17 +55,21 @@ async def main():
     print("Using CUDA device")
 
     # 1. Start Server with CUDA device
-    server = axon.AxonRuntime("torch_worker", device=axon.cuda())
+    server = axon.AxonRuntime("torch_worker", device=axon.cuda(), timeout=3000)
     server.start()
 
     # 2. Register function using torch.from_dlpack for conversion
-    server.register_function(tensor_op_func, from_dlpack_fn=torch.from_dlpack)
+    server.register_function(
+        tensor_op_func,
+        from_dlpack_fn=torch.from_dlpack,
+        memory_policy=custom_torch_policy,
+    )
 
     server_addr = server.get_local_address()
     print(f"Server started at {server_addr}")
 
     # 3. Create Client with CUDA device
-    client = axon.AxonRuntime("client_worker", device=axon.cuda())
+    client = axon.AxonRuntime("client_worker", device=axon.cuda(), timeout=3000)
     client.start_client()
 
     # Connect
@@ -124,8 +127,8 @@ async def main():
 
     # 6. Invoke RPC with custom memory policy (Eager Path)
     # Small tensors should use Eager path and IGNORE the memory policy (fallback to from_dlpack)
-    small_a = torch.ones((10, 10), dtype=torch.float32, device="cuda")
-    small_b = torch.ones((10, 10), dtype=torch.float32, device="cuda") * 2
+    small_a = torch.randn((10, 10), dtype=torch.float32, device="cuda")
+    small_b = torch.randn((10, 10), dtype=torch.float32, device="cuda")
 
     created_objects.clear()
     result_eager = await client.invoke(
@@ -144,7 +147,9 @@ async def main():
 
     # Verify Eager result
     assert isinstance(result_eager, torch.Tensor), "Result should be a torch.Tensor"
-    assert result_eager.is_cpu, "Result of eager path should be on Host"
+    assert (
+        result_eager.is_cuda
+    ), "Result of eager path should be on CUDA following policy"
 
     # Eager path should NOT use the policy (it uses internal buffer + from_dlpack)
     # So the object should NOT be in created_objects
@@ -158,7 +163,7 @@ async def main():
         )
 
     expected_small = small_a + small_b
-    if torch.allclose(result_eager, expected_small.cpu()):
+    if torch.allclose(result_eager, expected_small):
         print("Eager Data Verification SUCCESS.")
     else:
         print("Eager Data Verification FAILED.")

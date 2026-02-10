@@ -1414,8 +1414,8 @@ struct AxonWorker::ServerRequestHandlerVisitor_ {
       return unifex::on(
                worker->server_ctx_->get_scheduler(),
                worker->ProcessRndvBuffer_<BufferT, MemPolicyT>(
-                 worker->server_ctx_->get_scheduler(), am_desc_key,
-                 std::move(mem_policy), tensor_metas))
+                 worker->server_ctx_->get_scheduler(), am_desc_key, mem_policy,
+                 tensor_metas))
              | unifex::let_value(BufferBundleProcessor_{
                worker, conn_id, req_header_ptr, lc_policy});
     };

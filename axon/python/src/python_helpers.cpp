@@ -129,6 +129,36 @@ bool IsAsyncFunction(nb::object py_obj) {
   }
 }
 
+// Helper to check if a type is a subclass of a specific class from a module.
+// Uses fast C-API path, avoiding overhead of creating nanobind objects or
+// triggering imports. This is safe because if the type annotation is a class
+// object, its module MUST be loaded.
+static inline bool IsSubclassOf(
+  nb::handle type, const char* module_name, const char* class_name) {
+  PyObject* modules = PyImport_GetModuleDict();
+  if (!modules) return false;
+
+  // Check if module is loaded
+  PyObject* module = PyDict_GetItemString(modules, module_name);
+  if (!module) return false;
+
+  PyObject* cls = PyObject_GetAttrString(module, class_name);
+  if (!cls) {
+    PyErr_Clear();  // Attribute might not exist
+    return false;
+  }
+
+  // Check subclass relationship
+  int res = PyObject_IsSubclass(type.ptr(), cls);
+  Py_DECREF(cls);  // Release reference to class
+
+  if (res == -1) {
+    PyErr_Clear();
+    return false;
+  }
+  return res == 1;
+}
+
 // Helper function to convert Python type annotation to ParamType
 rpc::ParamType AnnotationToParamType(nb::object annotation) {
   if (annotation.is_none()) {
@@ -250,6 +280,15 @@ rpc::ParamType AnnotationToParamType(nb::object annotation) {
       return rpc::ParamType::VECTOR_FLOAT64;
     }
     return rpc::ParamType::UNKNOWN;  // Default
+  }
+
+  // Check known tensor types
+  if (
+    IsSubclassOf(annotation, "jax", "Array")
+    || IsSubclassOf(annotation, "tensorflow", "Tensor")
+    || IsSubclassOf(annotation, "torch", "Tensor")
+    || IsSubclassOf(annotation, "numpy", "ndarray")) {
+    return rpc::ParamType::TENSOR_META;
   }
 
   return rpc::ParamType::UNKNOWN;
