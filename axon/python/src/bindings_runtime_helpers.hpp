@@ -21,6 +21,7 @@ limitations under the License.
 #include <nanobind/nanobind.h>
 
 #include <chrono>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -38,6 +39,7 @@ limitations under the License.
 #include "axon/python/src/memory_policy_helpers.hpp"
 #include "axon/python/src/param_conversion.hpp"
 #include "axon/python/src/python_helpers.hpp"
+#include "axon/python/src/python_module.hpp"
 #include "axon/python/src/python_wake_manager.hpp"
 #include "rpc_core/rpc_payload_types.hpp"
 #include "rpc_core/rpc_types.hpp"
@@ -247,7 +249,88 @@ struct PayloadTypeInfo {
   bool is_ucx_buffer_vec = false;
 };
 
+// Nested tensor list group sizes tag
+inline constexpr std::string_view kNtlGroupSizesTag = "__ntl_group_sizes";
+
 // Single-pass context for collecting invoke arguments.
+// Complete classification of a Python argument's tensor nature.
+enum class ArgKind {
+  NonTensor,
+  SingleTensor,
+  FlatTensorList,
+  NestedTensorList
+};
+
+inline ArgKind ClassifyArg(const nb::object& obj) {
+  if (IsDlpackTensor(obj)) return ArgKind::SingleTensor;
+
+  // Both list and tuple are valid sequence containers.
+  bool is_list = nb::isinstance<nb::list>(obj);
+  bool is_tuple = nb::isinstance<nb::tuple>(obj);
+  if (!is_list && !is_tuple) return ArgKind::NonTensor;
+
+  size_t len = nb::len(obj);
+
+  // An empty sequence can only be a flat (zero-element) tensor list or a
+  // non-tensor plain argument.  Callers that intend to send List[Tensor] with
+  // zero elements should pass an empty list; we classify it as FlatTensorList
+  // so downstream builds an empty TENSOR_META_VEC rather than treating the
+  // argument as a scalar value.
+  if (len == 0) return ArgKind::FlatTensorList;
+
+  nb::sequence seq = nb::cast<nb::sequence>(obj);
+  nb::object first = nb::cast<nb::object>(seq[0]);
+
+  if (IsDlpackTensor(first)) return ArgKind::FlatTensorList;
+
+  // Check for NestedTensorList: scan forward past any empty inner lists to
+  // find the first non-empty one and inspect its first element.
+  bool is_first_seq =
+    nb::isinstance<nb::list>(first) || nb::isinstance<nb::tuple>(first);
+  if (is_first_seq) {
+    for (size_t i = 0; i < len; ++i) {
+      nb::object inner_obj = nb::cast<nb::object>(seq[i]);
+      bool inner_is_seq = nb::isinstance<nb::list>(inner_obj)
+                          || nb::isinstance<nb::tuple>(inner_obj);
+      if (!inner_is_seq) {
+        throw nb::type_error(
+          "Heterogeneous sequences are not supported as RPC arguments: "
+          "expected all elements to be sequences (list/tuple) for "
+          "List[List[Tensor]]");
+      }
+      size_t inner_len = nb::len(inner_obj);
+      if (inner_len == 0) continue;  // skip empty inner lists
+      nb::object inner_first =
+        nb::cast<nb::object>(nb::cast<nb::sequence>(inner_obj)[0]);
+      if (IsDlpackTensor(inner_first)) {
+        return ArgKind::NestedTensorList;
+      }
+
+      // Ordinary Python types will be handled by
+      // PythonToParamMeta/InferParamMeta
+      nb::module_ builtins = GetBuiltinsModule();
+      if (
+        nb::isinstance<int>(inner_first)
+        || nb::isinstance(inner_first, builtins.attr("float"))
+        || nb::isinstance<bool>(inner_first)
+        || nb::isinstance<nb::str>(inner_first)) {
+        return ArgKind::NonTensor;
+      }
+
+      throw nb::type_error(
+        "Unsupported element type inside nested sequence: expected a "
+        "DLPack-compatible tensor, int, float, bool, or str for List[List[T]] "
+        "argument");
+    }
+    // All inner lists were empty — Fall back to NonTensor.
+    // InferParamMeta will appropriately reject empty inner lists lacking
+    // explicit type hints with a concrete error message.
+    return ArgKind::NonTensor;
+  }
+
+  return ArgKind::NonTensor;
+}
+
 // Caches DLManagedTensor* and owner to avoid repeated
 // ExtractDlpackTensor calls when both TensorMeta and UcxBuffer are needed.
 struct InvokeContext {
@@ -279,6 +362,56 @@ struct InvokeContext {
   }
 
   void add_non_tensor(nb::object obj) { header.AddParam(InferParamMeta(obj)); }
+
+  /*
+   * Handle a List[List[Tensor]] function argument.
+   *
+   * The UCX transport layer only supports a flat buffer array (UcxBufferVec)
+   * with no concept of grouping. List[List[Tensor]] is therefore serialized
+   * as two separate pieces:
+   *
+   *   1. All tensors from every inner list are flattened in order into the
+   *      shared UcxBufferVec (via add_tensor), so they travel zero-copy over
+   *      UCX exactly like a plain List[Tensor].
+   *
+   *   2. A VECTOR_UINT32 ParamMeta (tag kNtlGroupSizesTag) is appended to the
+   *      header carrying the group sizes as a data::vector<uint32_t>, where
+   *      each element is the tensor count of the corresponding inner list.
+   *
+   * On the server side, ConvertParamsToPython reads encoded_params, finds the
+   * NL::NESTED_TENSOR_LIST entry for this parameter index, reads the
+   * VECTOR_UINT32 to recover the group sizes, and consumes that many tensors
+   * from the tensor stream to reconstruct the original List[List[Tensor]]
+   * shape.
+   */
+  void add_nested_tensor_list(nb::object obj) {
+    namespace data = cista::offset;
+    nb::sequence outer = nb::cast<nb::sequence>(obj);
+    size_t group_count = nb::len(outer);
+
+    // Store group sizes as VECTOR_UINT32 (avoids binary blob / strlen
+    // truncation that would occur with cista SBO string on \0 bytes in binary
+    // data).
+    data::vector<uint32_t> sizes;
+    sizes.reserve(group_count);
+
+    for (size_t gi = 0; gi < group_count; ++gi) {
+      nb::sequence inner = nb::cast<nb::sequence>(outer[gi]);
+      uint32_t inner_len = static_cast<uint32_t>(nb::len(inner));
+      sizes.push_back(inner_len);
+      // Flatten each tensor into the shared tensor stream
+      for (size_t ti = 0; ti < inner_len; ++ti) {
+        nb::object tensor_obj = nb::cast<nb::object>(inner[ti]);
+        add_tensor(std::move(tensor_obj));
+      }
+    }
+
+    rpc::ParamMeta gs_meta;
+    gs_meta.type = rpc::ParamType::VECTOR_UINT32;
+    gs_meta.name = data::string(kNtlGroupSizesTag);
+    gs_meta.value.emplace<rpc::VectorValue>(std::move(sizes));
+    header.AddParam(std::move(gs_meta));
+  }
 
   // Finalize header by adding tensor meta(s) at the end.
   // This enables GetTensorMetas to find them quickly via reverse iteration.

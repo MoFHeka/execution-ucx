@@ -52,6 +52,9 @@ struct __attribute__((visibility("hidden"))) PythonAsyncFunctionWrapper {
   std::vector<SharedPyObject> tensor_param_from_dlpack;
   std::vector<SharedPyObject> tensor_return_from_dlpack;
 
+  // Encoded param metadata for List[List[T]] and List[str] params
+  std::vector<FunctionSignatureInfo::EncodedParamInfo> encoded_params;
+
   // ===== Precomputed at registration time for zero-overhead extraction =====
   ResultExtractionMode extraction_mode = ResultExtractionMode::VOID;
   std::vector<size_t> non_tensor_indices;  // Positions of non-tensor returns
@@ -86,8 +89,8 @@ struct __attribute__((visibility("hidden"))) PythonAsyncFunctionWrapper {
   // Convert single tensor parameter to Python dlpack object
   template <typename PayloadT>
   nb::object ConvertSingleParamToPython(
-    size_t tensor_idx, rpc::utils::TensorMeta&& meta,
-    const PayloadT& payload) const;
+    size_t flat_tensor_idx, size_t tensor_param_idx,
+    rpc::utils::TensorMeta&& meta, const PayloadT& payload) const;
 
   // Convert all parameters to Python objects
   template <typename PayloadT>

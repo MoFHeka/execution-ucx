@@ -20,6 +20,7 @@ limitations under the License.
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -34,99 +35,86 @@ namespace nb = nanobind;
 namespace rpc = eux::rpc;
 
 bool IsAsyncFunction(nb::object py_obj) {
-  // Ensure we have a valid Python object before proceeding
   if (py_obj.is_none()) {
-    return false;
+    throw nb::type_error("Expected a callable, got None");
   }
-
-  // Create a new reference to ensure the object stays alive
-  // This is critical: nanobind objects may not hold a reference
-  nb::object py_obj_ref = py_obj;
 
   nb::gil_scoped_acquire acquire;
 
-  // Use Python C API directly to avoid potential issues with inspect module
-  // This is more reliable and avoids the segfault in
-  // inspect.iscoroutinefunction
-  try {
-    // Get the underlying PyObject* from nanobind
-    // Use the reference we created to ensure object is valid
-    PyObject* obj = py_obj_ref.ptr();
-    if (obj == nullptr) {
-      return false;
-    }
-
-    // Increment reference count to ensure object stays alive during our
-    // operations
-    Py_INCREF(obj);
-
-    // Check if it's a function or method
-    if (!PyCallable_Check(obj)) {
-      Py_DECREF(obj);
-      return false;
-    }
-
-    // Check object type to ensure it's valid
-    PyTypeObject* obj_type = Py_TYPE(obj);
-    if (obj_type == nullptr) {
-      Py_DECREF(obj);
-      return false;
-    }
-
-    // Try to get __code__ attribute using a safer approach
-    // Use PyObject_GetAttr instead of PyObject_GetAttrString for better error
-    // handling
-    PyObject* code_str = PyUnicode_FromString("__code__");
-    if (code_str == nullptr) {
-      Py_DECREF(obj);
-      PyErr_Clear();
-      return false;
-    }
-
-    PyObject* code_attr = PyObject_GetAttr(obj, code_str);
-    Py_DECREF(code_str);
-    Py_DECREF(obj);  // Release our reference to obj
-
-    if (code_attr == nullptr) {
-      PyErr_Clear();  // Clear the error
-      return false;
-    }
-
-    // Check if __code__ has CO_COROUTINE flag
-    if (!PyObject_HasAttrString(code_attr, "co_flags")) {
-      Py_DECREF(code_attr);
-      PyErr_Clear();
-      return false;
-    }
-
-    PyObject* flags_attr = PyObject_GetAttrString(code_attr, "co_flags");
-    Py_DECREF(code_attr);
-
-    if (flags_attr == nullptr) {
-      PyErr_Clear();  // Clear the error
-      return false;
-    }
-
-    // Check if CO_COROUTINE flag is set
-    int64_t flags = PyLong_AsLong(flags_attr);
-    Py_DECREF(flags_attr);
-
-    if (flags == -1 && PyErr_Occurred()) {
-      PyErr_Clear();  // Clear the error
-      return false;
-    }
-
-    // CO_COROUTINE = 0x80 (128)
-    bool is_async = (flags & 0x80) != 0;
-
-    return is_async;
-  } catch (const nb::python_error& e) {
-    PyErr_Clear();  // Clear any Python errors
-    return false;
-  } catch (const std::exception& e) {
-    PyErr_Clear();  // Clear any Python errors
-    return false;
+  PyObject* obj = py_obj.ptr();
+  if (!PyCallable_Check(obj)) {
+    throw nb::type_error(
+      "Expected a callable object (async function or async callable instance)");
   }
+
+  // Resolve the code object: for plain functions / methods, __code__ lives
+  // directly on the object; for callable class instances it lives on
+  // __call__.
+  auto get_code = [](PyObject* target) -> PyObject* {
+    PyObject* code_str = PyUnicode_FromString("__code__");
+    if (!code_str) {
+      PyErr_Clear();
+      return nullptr;
+    }
+    PyObject* code = PyObject_GetAttr(target, code_str);
+    Py_DECREF(code_str);
+    if (!code) PyErr_Clear();
+    return code;  // caller owns the reference
+  };
+
+  PyObject* code_attr = get_code(obj);
+
+  if (!code_attr) {
+    // Not a plain function: try obj.__call__
+    PyObject* call_str = PyUnicode_FromString("__call__");
+    if (!call_str) {
+      PyErr_Clear();
+      throw nb::type_error(
+        "IsAsyncFunction: failed to intern '__call__' string");
+    }
+    PyObject* call_method = PyObject_GetAttr(obj, call_str);
+    Py_DECREF(call_str);
+    if (!call_method) {
+      PyErr_Clear();
+      throw nb::type_error(
+        "Expected a callable with an accessible __call__ method");
+    }
+    code_attr = get_code(call_method);
+    Py_DECREF(call_method);
+    if (!code_attr) {
+      throw nb::type_error(
+        "Cannot determine if the callable is async: no __code__ attribute "
+        "found on the object or its __call__ method");
+    }
+  }
+
+  if (!PyObject_HasAttrString(code_attr, "co_flags")) {
+    Py_DECREF(code_attr);
+    throw nb::type_error(
+      "IsAsyncFunction: code object has no co_flags attribute");
+  }
+
+  PyObject* flags_attr = PyObject_GetAttrString(code_attr, "co_flags");
+  Py_DECREF(code_attr);
+
+  if (!flags_attr) {
+    PyErr_Clear();
+    throw nb::type_error(
+      "IsAsyncFunction: failed to read co_flags from code object");
+  }
+
+  int64_t flags = PyLong_AsLong(flags_attr);
+  Py_DECREF(flags_attr);
+
+  if (flags == -1 && PyErr_Occurred()) {
+    PyErr_Clear();
+    throw nb::type_error(
+      "IsAsyncFunction: co_flags value could not be converted to integer");
+  }
+
+  // CO_COROUTINE = 0x100 (Python 3.12+), 0x80 on older versions.
+  // Using both masks ensures compatibility across CPython versions.
+  return (flags & 0x100) != 0 || (flags & 0x80) != 0;
 }
 
 // Helper to check if a type is a subclass of a specific class from a module.
@@ -159,139 +147,172 @@ static inline bool IsSubclassOf(
   return res == 1;
 }
 
-// Helper function to convert Python type annotation to ParamType
-rpc::ParamType AnnotationToParamType(nb::object annotation) {
+static bool IsListType(
+  nb::object type, nb::object typing_list, nb::object builtin_list) {
+  try {
+    if (nb::isinstance(type, typing_list)) return true;
+  } catch (...) {
+  }
+  if (nb::hasattr(type, "__origin__")) {
+    nb::object origin = nb::cast<nb::object>(type.attr("__origin__"));
+    return origin.is(typing_list) || origin.is(builtin_list);
+  }
+  return false;
+}
+
+static bool IsTensorType(nb::object type) {
+  // Reject generic container types (e.g. List[np.ndarray]) that happen to
+  // contain tensor type names in their string representation. Only bare types
+  // or types with __dlpack__ are actual tensor types.
+  if (nb::hasattr(type, "__origin__")) return false;
+  if (nb::hasattr(type, "__dlpack__")) return true;
+  std::string type_str = nb::cast<std::string>(nb::str(type));
+  return type_str.find("numpy.ndarray") != std::string::npos
+         || type_str.find("torch.Tensor") != std::string::npos
+         || type_str.find("jax.Array") != std::string::npos
+         || type_str.find("jaxlib.xla_extension.ArrayImpl")
+              != std::string::npos;
+}
+
+struct AnnotationTypeInfo {
+  rpc::ParamType param_type;
+  std::optional<FunctionSignatureInfo::EncodedElementType> encoded_element_type;
+  nb::object nested_tensor_type;
+};
+
+static AnnotationTypeInfo AnnotationToTypeInfo(nb::object annotation) {
+  using NL = FunctionSignatureInfo::EncodedElementType;
+
   if (annotation.is_none()) {
-    return rpc::ParamType::UNKNOWN;
+    return {rpc::ParamType::UNKNOWN, std::nullopt, nb::none()};
   }
 
   nb::module_ builtins = GetBuiltinsModule();
   nb::module_ typing = GetTypingModule();
 
-  // Check for common builtin types
-  if (nb::isinstance(annotation, builtins.attr("int"))) {
-    return rpc::ParamType::PRIMITIVE_INT64;
+  if (annotation.is(builtins.attr("int"))) {
+    return {rpc::ParamType::PRIMITIVE_INT64, std::nullopt, nb::none()};
   }
-  if (nb::isinstance(annotation, builtins.attr("float"))) {
-    return rpc::ParamType::PRIMITIVE_FLOAT64;
+  if (annotation.is(builtins.attr("float"))) {
+    return {rpc::ParamType::PRIMITIVE_FLOAT64, std::nullopt, nb::none()};
   }
-  if (nb::isinstance(annotation, builtins.attr("bool"))) {
-    return rpc::ParamType::PRIMITIVE_BOOL;
+  if (annotation.is(builtins.attr("bool"))) {
+    return {rpc::ParamType::PRIMITIVE_BOOL, std::nullopt, nb::none()};
   }
-  if (nb::isinstance(annotation, builtins.attr("str"))) {
-    return rpc::ParamType::STRING;
-  }
-
-  // Check for __dlpack__ attribute (standard DLPack protocol)
-  const bool has_dlpack = nb::hasattr(annotation, "__dlpack__");
-  if (has_dlpack) {
-    return rpc::ParamType::TENSOR_META;
+  if (annotation.is(builtins.attr("str"))) {
+    return {rpc::ParamType::STRING, std::nullopt, nb::none()};
   }
 
-  // Check for typing types (List, Tuple, etc.)
+  if (nb::hasattr(annotation, "__dlpack__")) {
+    return {rpc::ParamType::TENSOR_META, std::nullopt, nb::none()};
+  }
+
   try {
-    // Check if it's a List type
     if (nb::hasattr(typing, "List")) {
       nb::object list_type = typing.attr("List");
       nb::object builtin_list = builtins.attr("list");
 
-      bool is_list = false;
-      try {
-        is_list = nb::isinstance(annotation, list_type);
-      } catch (...) {
-      }
-
-      if (!is_list && nb::hasattr(annotation, "__origin__")) {
-        nb::object origin = nb::cast<nb::object>(annotation.attr("__origin__"));
-        is_list = origin.is(list_type) || origin.is(builtin_list);
-      }
-
-      if (is_list) {
-        // Try to get element type
+      if (IsListType(annotation, list_type, builtin_list)) {
         if (nb::hasattr(annotation, "__args__")) {
           nb::tuple args = nb::cast<nb::tuple>(annotation.attr("__args__"));
           if (nb::len(args) > 0) {
             nb::object elem_type = args[0];
-            std::string elem_str = nb::cast<std::string>(nb::str(elem_type));
 
-            if (nb::isinstance(elem_type, builtins.attr("int"))) {
-              return rpc::ParamType::VECTOR_INT64;
+            if (elem_type.is(builtins.attr("int"))) {
+              return {rpc::ParamType::VECTOR_INT64, std::nullopt, nb::none()};
             }
-            if (nb::isinstance(elem_type, builtins.attr("float"))) {
-              return rpc::ParamType::VECTOR_FLOAT64;
+            if (elem_type.is(builtins.attr("float"))) {
+              return {rpc::ParamType::VECTOR_FLOAT64, std::nullopt, nb::none()};
             }
-            if (nb::isinstance(elem_type, builtins.attr("bool"))) {
-              return rpc::ParamType::VECTOR_BOOL;
+            if (elem_type.is(builtins.attr("bool"))) {
+              return {rpc::ParamType::VECTOR_BOOL, std::nullopt, nb::none()};
             }
-            // Check if element type has __dlpack__ for TENSOR_META_VEC
-            // OR if it matches known tensor type names (string fallback)
-            if (
-              nb::hasattr(elem_type, "__dlpack__")
-              || elem_str.find("numpy.ndarray") != std::string::npos
-              || elem_str.find("torch.Tensor") != std::string::npos
-              || elem_str.find("jax.Array") != std::string::npos
-              || elem_str.find("jaxlib.xla_extension.ArrayImpl")
-                   != std::string::npos) {
-              return rpc::ParamType::TENSOR_META_VEC;
+            if (elem_type.is(builtins.attr("str"))) {
+              return {rpc::ParamType::STRING, NL::STRING_ELEM, nb::none()};
             }
+            if (IsTensorType(elem_type)) {
+              return {
+                rpc::ParamType::TENSOR_META_VEC, std::nullopt, nb::none()};
+            }
+
+            if (IsListType(elem_type, list_type, builtin_list)) {
+              if (nb::hasattr(elem_type, "__args__")) {
+                nb::tuple inner_args =
+                  nb::cast<nb::tuple>(elem_type.attr("__args__"));
+                if (nb::len(inner_args) > 0) {
+                  nb::object inner_type = inner_args[0];
+                  if (inner_type.is(builtins.attr("int"))) {
+                    return {rpc::ParamType::STRING, NL::INT64, nb::none()};
+                  }
+                  if (inner_type.is(builtins.attr("float"))) {
+                    return {rpc::ParamType::STRING, NL::FLOAT64, nb::none()};
+                  }
+                  if (inner_type.is(builtins.attr("bool"))) {
+                    return {rpc::ParamType::STRING, NL::BOOL, nb::none()};
+                  }
+                  if (IsTensorType(inner_type)) {
+                    return {
+                      rpc::ParamType::STRING, NL::NESTED_TENSOR_LIST,
+                      inner_type};
+                  }
+                  std::string inner_str =
+                    nb::cast<std::string>(nb::str(inner_type));
+                  throw nb::type_error(
+                    ("Unsupported inner element type in List[List[...]]:"
+                     " '"
+                     + inner_str + "'. Supported: int, float, bool, Tensor")
+                      .c_str());
+                }
+              }
+              throw nb::type_error(
+                "List[List[...]] requires explicit element type annotation"
+                " (e.g. List[List[int]])");
+            }
+            std::string elem_str = nb::cast<std::string>(nb::str(elem_type));
+            throw nb::type_error(
+              ("Unsupported List element type: '" + elem_str
+               + "'. Supported: int, float, bool, str, Tensor, List[int],"
+                 " List[float], List[bool], List[Tensor]")
+                .c_str());
           }
         }
-        // Default to UNKNOWN for untyped List or unsupported element types
-        return rpc::ParamType::UNKNOWN;
+        throw nb::type_error(
+          "List without type argument is not supported."
+          " Use List[int], List[float], List[str], List[bool], List[Tensor],"
+          " List[List[int]], List[List[float]], List[List[bool]], "
+          "List[List[Tensor]]"
+          " instead.");
       }
     }
 
-    // Check if it's a Tuple type (for return types)
     if (nb::hasattr(typing, "Tuple")) {
       nb::object tuple_type = typing.attr("Tuple");
-      if (nb::isinstance(annotation, tuple_type) ||
-          (nb::hasattr(annotation, "__origin__") &&
-           nb::cast<nb::object>(
-            annotation.attr("__origin__")).is(tuple_type))) {
-        // Tuple is handled separately in ParseFunctionSignature
-        return rpc::ParamType::UNKNOWN;
+      if (nb::isinstance(annotation, tuple_type)
+          || (nb::hasattr(annotation, "__origin__")
+              && nb::cast<nb::object>(annotation.attr("__origin__"))
+                   .is(tuple_type))) {
+        throw nb::type_error(
+          "Tuple is not supported as a parameter type annotation."
+          " Tuple is only allowed as a return type.");
       }
     }
   } catch (const nb::python_error&) {
-    // Fall through to string-based matching
+    throw;
   }
 
-  // String-based matching as fallback
-  auto annotation_str = nb::cast<std::string>(nb::str(annotation));
-  if (annotation_str.find("int") != std::string::npos) {
-    return rpc::ParamType::PRIMITIVE_INT64;
-  }
-  if (annotation_str.find("float") != std::string::npos) {
-    return rpc::ParamType::PRIMITIVE_FLOAT64;
-  }
-  if (annotation_str.find("bool") != std::string::npos) {
-    return rpc::ParamType::PRIMITIVE_BOOL;
-  }
-  if (annotation_str.find("str") != std::string::npos) {
-    return rpc::ParamType::STRING;
-  }
-  if (
-    annotation_str.find("List") != std::string::npos
-    || annotation_str.find("list") != std::string::npos) {
-    if (annotation_str.find("int") != std::string::npos) {
-      return rpc::ParamType::VECTOR_INT64;
-    }
-    if (annotation_str.find("float") != std::string::npos) {
-      return rpc::ParamType::VECTOR_FLOAT64;
-    }
-    return rpc::ParamType::UNKNOWN;  // Default
-  }
-
-  // Check known tensor types
   if (
     IsSubclassOf(annotation, "jax", "Array")
     || IsSubclassOf(annotation, "tensorflow", "Tensor")
     || IsSubclassOf(annotation, "torch", "Tensor")
     || IsSubclassOf(annotation, "numpy", "ndarray")) {
-    return rpc::ParamType::TENSOR_META;
+    return {rpc::ParamType::TENSOR_META, std::nullopt, nb::none()};
   }
 
-  return rpc::ParamType::UNKNOWN;
+  return {rpc::ParamType::UNKNOWN, std::nullopt, nb::none()};
+}
+
+rpc::ParamType AnnotationToParamType(nb::object annotation) {
+  return AnnotationToTypeInfo(std::move(annotation)).param_type;
 }
 
 // Helper to extract from_dlpack method from a type annotation.
@@ -354,21 +375,44 @@ FunctionSignatureInfo ParseFunctionSignature(nb::object py_func) {
     bool has_annotation = !empty_param.is(param_annotation);
 
     if (has_annotation) {
-      rpc::ParamType param_type = AnnotationToParamType(param_annotation);
-      info.param_types.push_back(param_type);
+      auto type_info = AnnotationToTypeInfo(param_annotation);
+      size_t current_idx = info.param_types.size();
+      info.param_types.push_back(type_info.param_type);
 
-      // Track tensor parameter indices and save from_dlpack method
-      if (param_type == rpc::ParamType::TENSOR_META) {
-        info.tensor_param_indices.push_back(info.param_types.size() - 1);
-
-        // Extract and save from_dlpack method for this tensor type
+      if (type_info.param_type == rpc::ParamType::TENSOR_META) {
+        info.tensor_param_indices.push_back(current_idx);
         nb::object from_dlpack_fn = ExtractFromDlpack(param_annotation);
         if (!from_dlpack_fn.is_none()) {
           info.tensor_param_from_dlpack.push_back(
             SharedPyObject(std::move(from_dlpack_fn)));
         } else {
-          // Push a placeholder to maintain index alignment
           info.tensor_param_from_dlpack.push_back(SharedPyObject());
+        }
+      } else if (type_info.param_type == rpc::ParamType::TENSOR_META_VEC) {
+        info.tensor_param_indices.push_back(current_idx);
+        nb::object from_dlpack_fn = nb::none();
+        if (nb::hasattr(param_annotation, "__args__")) {
+          nb::tuple pargs =
+            nb::cast<nb::tuple>(param_annotation.attr("__args__"));
+          if (nb::len(pargs) > 0) {
+            from_dlpack_fn = ExtractFromDlpack(pargs[0]);
+          }
+        }
+        info.tensor_param_from_dlpack.push_back(
+          SharedPyObject(std::move(from_dlpack_fn)));
+      }
+
+      if (type_info.encoded_element_type.has_value()) {
+        auto elem_type = *type_info.encoded_element_type;
+        info.encoded_params.push_back({current_idx, elem_type});
+        if (
+          elem_type
+          == FunctionSignatureInfo::EncodedElementType::NESTED_TENSOR_LIST) {
+          info.tensor_param_indices.push_back(current_idx);
+          nb::object from_dlpack_fn =
+            ExtractFromDlpack(type_info.nested_tensor_type);
+          info.tensor_param_from_dlpack.push_back(
+            SharedPyObject(std::move(from_dlpack_fn)));
         }
       }
     } else {
@@ -522,19 +566,7 @@ FunctionSignatureInfo ParseFunctionSignature(nb::object py_func) {
       }
 
     } catch (const nb::python_error&) {
-      // Fallback: try to infer from string representation
-      std::string return_str =
-        nb::cast<std::string>(nb::str(return_annotation));
-      if (
-        return_str.find("tuple") != std::string::npos
-        || return_str.find("Tuple") != std::string::npos) {
-        // Multiple returns, but can't determine types
-        info.return_types.push_back(rpc::ParamType::UNKNOWN);
-      } else {
-        rpc::ParamType return_type = AnnotationToParamType(return_annotation);
-        info.return_types.push_back(return_type);
-      }
-      info.return_payload_type = rpc::PayloadType::NO_PAYLOAD;
+      throw;
     }
   } else {
     // No return annotation - default to UNKNOWN
@@ -542,11 +574,34 @@ FunctionSignatureInfo ParseFunctionSignature(nb::object py_func) {
     info.return_payload_type = rpc::PayloadType::NO_PAYLOAD;
   }
 
-  // Determine input payload type based on tensor parameters
-  if (info.tensor_param_indices.size() == 1) {
-    info.input_payload_type = rpc::PayloadType::UCX_BUFFER;
-  } else if (info.tensor_param_indices.size() > 1) {
+  // Determine input payload type based on tensor parameters.
+  // - NESTED_TENSOR_LIST (List[List[Tensor]]): flattens into multiple buffers →
+  // VEC
+  // - TENSOR_META_VEC (List[Tensor]): multiple tensor buffers in one param →
+  // VEC
+  // - TENSOR_META (Tensor): one buffer → single UCX_BUFFER
+  // - Multiple Tensor params: all share one TENSOR_META_VEC in the header → VEC
+  bool has_multi_buffer_param = false;
+  for (const auto& ep : info.encoded_params) {
+    if (
+      ep.element_type
+      == FunctionSignatureInfo::EncodedElementType::NESTED_TENSOR_LIST) {
+      has_multi_buffer_param = true;
+      break;
+    }
+  }
+  if (!has_multi_buffer_param) {
+    for (size_t idx : info.tensor_param_indices) {
+      if (info.param_types[idx] == rpc::ParamType::TENSOR_META_VEC) {
+        has_multi_buffer_param = true;
+        break;
+      }
+    }
+  }
+  if (has_multi_buffer_param || info.tensor_param_indices.size() > 1) {
     info.input_payload_type = rpc::PayloadType::UCX_BUFFER_VEC;
+  } else if (info.tensor_param_indices.size() == 1) {
+    info.input_payload_type = rpc::PayloadType::UCX_BUFFER;
   } else {
     info.input_payload_type = rpc::PayloadType::NO_PAYLOAD;
   }

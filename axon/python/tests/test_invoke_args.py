@@ -49,8 +49,7 @@ async def test_invoke_with_request_header_allowed_params():
         request_header.AddParam(10)  # arg1
         request_header.AddParam(20)  # arg2
 
-        # Test: Allowed parameters with request_header
-        # This should not raise an error about disallowed arguments
+        # invoke_raw returns the function's actual return value
         result = await client.invoke_raw(
             worker_name="server_worker",
             request_header=request_header,
@@ -58,12 +57,7 @@ async def test_invoke_with_request_header_allowed_params():
             payload=None,  # Allowed
         )
 
-        # Verify response - result is a list of return values
-        assert isinstance(result, list)
-        assert len(result) > 0
-        # The result contains the function's return value(s)
-        # For server_add(10, 20), result should be [30]
-        assert result[0] == 30
+        assert result == 30
 
     finally:
         client.stop()
@@ -151,20 +145,13 @@ async def test_invoke_with_request_header_and_payload():
         request_header.AddParam(20)  # arg2
         # Note: params in request_header are TensorMeta
 
-        # Test: payload can be passed separately when using request_header
-        # This should not raise an error about disallowed arguments
         result = await client.invoke_raw(
             worker_name="server_worker",
             request_header=request_header,
             payload=None,  # Allowed and can be passed separately
         )
 
-        # Verify response - result is a list of return values
-        assert isinstance(result, list)
-        assert len(result) > 0
-        # The result contains the function's return value(s)
-        # For server_add(10, 20), result should be [30]
-        assert result[0] == 30
+        assert result == 30
 
     finally:
         client.stop()
@@ -250,8 +237,6 @@ async def test_invoke_without_request_header_positional_args():
         # Connect to server
         await client.connect_endpoint_async(server_address, "server_worker")
 
-        # Test: invoke(worker_name, function_id, *args, **kwargs)
-        # worker_name=server_worker, function_id=1, args=(10, 20)
         result = await client.invoke(
             10,
             20,
@@ -261,12 +246,7 @@ async def test_invoke_without_request_header_positional_args():
             workflow_id=0,
         )
 
-        # Verify response - result is a list of return values
-        assert isinstance(result, list)
-        assert len(result) > 0
-        # The result contains the function's return value(s)
-        # For server_add(10, 20), result should be [30]
-        assert result[0] == 30
+        assert result == 30
 
     finally:
         client.stop()
@@ -364,14 +344,9 @@ async def test_invoke_without_request_header_mixed_system_and_function_args():
             workflow_id=100,  # workflow_id as kwargs
         )
 
-        # Verify response
-        assert isinstance(result, list)
-        assert len(result) > 0
-        # The result contains the function's return value(s)
-        # For server_mixed(42, "hello", 3.14), result should be ["hello: 42 + 3.14"]
-        assert isinstance(result[0], str)
-        assert "hello" in result[0]
-        assert "42" in result[0]
+        assert isinstance(result, str)
+        assert "hello" in result
+        assert "42" in result
 
     finally:
         client.stop()
@@ -408,7 +383,6 @@ async def test_invoke_without_request_header_with_memory_policy():
         # Connect to server
         await client.connect_endpoint_async(server_address, "server_worker")
 
-        # Test: invoke(worker, function, *args, memory_policy=...)
         result = await client.invoke(
             10,  # arg1
             20,  # arg2
@@ -419,9 +393,7 @@ async def test_invoke_without_request_header_with_memory_policy():
             memory_policy=None,
         )
 
-        assert isinstance(result, list)
-        assert len(result) > 0
-        assert result[0] == 30
+        assert result == 30
 
     finally:
         client.stop()

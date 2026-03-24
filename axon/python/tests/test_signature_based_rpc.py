@@ -193,10 +193,7 @@ async def test_signature_based_rpc_call_basic():
             payload=None,  # NO_PAYLOAD as per signature
         )
 
-        # Verify response
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert result[0] == 30
+        assert result == 30
 
     finally:
         client.stop()
@@ -241,9 +238,7 @@ async def test_signature_based_rpc_call_string():
             request_header=request_header,
         )
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert result[0] == "Hello, World!"
+        assert result == "Hello, World!"
 
     finally:
         client.stop()
@@ -287,9 +282,7 @@ async def test_signature_based_rpc_call_no_params():
             request_header=request_header,
         )
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert result[0] == 42
+        assert result == 42
 
     finally:
         client.stop()
@@ -340,9 +333,7 @@ async def test_signature_based_rpc_call_mixed_params():
             request_header=request_header,
         )
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert result[0] == "test: 10 + 3.14"
+        assert result == "test: 10 + 3.14"
 
     finally:
         client.stop()
@@ -387,9 +378,7 @@ async def test_signature_based_rpc_call_vector():
             request_header=request_header,
         )
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert result[0] == [2, 4, 6]
+        assert result == [2, 4, 6]
 
     finally:
         client.stop()
@@ -436,7 +425,7 @@ async def test_signature_mismatch_wrong_function_id():
                 request_header=request_header,
             )
             # If we get here, check result (it might be an empty list or error)
-            assert isinstance(result, list)
+            pass  # got a result (may be empty or error value)
         except Exception:
             # Expected to fail
             pass
@@ -508,7 +497,7 @@ async def test_signature_based_multiple_functions():
             worker_name="server_worker",
             request_header=request_header1,
         )
-        assert result1[0] == 30
+        assert result1 == 30
 
         # Call function 2
         request_header2 = axon.RpcRequestHeader()
@@ -522,7 +511,7 @@ async def test_signature_based_multiple_functions():
             worker_name="server_worker",
             request_header=request_header2,
         )
-        assert result2[0] == "Hello, World!"
+        assert result2 == "Hello, World!"
 
         # Call function 3
         request_header3 = axon.RpcRequestHeader()
@@ -535,7 +524,7 @@ async def test_signature_based_multiple_functions():
             worker_name="server_worker",
             request_header=request_header3,
         )
-        assert result3[0] == 42
+        assert result3 == 42
 
     finally:
         client.stop()

@@ -22,6 +22,8 @@ limitations under the License.
 
 #include <csignal>
 #include <cstdio>
+#include <cstring>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -31,6 +33,116 @@ limitations under the License.
 #include "axon/python/src/memory_policy_helpers.hpp"
 #include "axon/python/src/python_module.hpp"
 #include "rpc_core/rpc_types.hpp"
+
+// ---------------------------------------------------------------------------
+// Nested list binary encoding helpers
+// Format: [uint32 group_count][uint32 sizes[group_count]][T flat_data[...]]
+// All values are native-endian (C++ struct layout on host).
+// Sub-type tag stored in ParamMeta::name: "i64", "f64", "b"
+// ---------------------------------------------------------------------------
+namespace {
+
+namespace data = cista::offset;
+namespace nb = nanobind;
+
+template <typename T>
+data::string EncodeNestedList(const std::vector<std::vector<T>>& groups) {
+  uint32_t gc = static_cast<uint32_t>(groups.size());
+  uint32_t total_elems = 0;
+  for (const auto& g : groups) total_elems += static_cast<uint32_t>(g.size());
+  std::string blob;
+  blob.resize(sizeof(uint32_t) * (1 + gc) + sizeof(T) * total_elems);
+  char* p = blob.data();
+  std::memcpy(p, &gc, sizeof(uint32_t));
+  p += sizeof(uint32_t);
+  for (const auto& g : groups) {
+    uint32_t sz = static_cast<uint32_t>(g.size());
+    std::memcpy(p, &sz, sizeof(uint32_t));
+    p += sizeof(uint32_t);
+  }
+  for (const auto& g : groups) {
+    std::memcpy(p, g.data(), sizeof(T) * g.size());
+    p += sizeof(T) * g.size();
+  }
+  return data::string(blob.data(), static_cast<uint32_t>(blob.size()));
+}
+
+template <typename T>
+nb::list DecodeNestedListT(const char* d, size_t sz) {
+  if (sz < sizeof(uint32_t))
+    throw std::runtime_error("NestedList blob too small for group_count");
+  uint32_t gc = 0;
+  std::memcpy(&gc, d, sizeof(uint32_t));
+  size_t off = sizeof(uint32_t);
+  if (sz < off + sizeof(uint32_t) * gc)
+    throw std::runtime_error("NestedList blob too small for sizes");
+  std::vector<uint32_t> sizes(gc);
+  for (uint32_t i = 0; i < gc; ++i) {
+    std::memcpy(&sizes[i], d + off, sizeof(uint32_t));
+    off += sizeof(uint32_t);
+  }
+  nb::list outer;
+  for (uint32_t i = 0; i < gc; ++i) {
+    nb::list inner;
+    for (uint32_t j = 0; j < sizes[i]; ++j) {
+      if (off + sizeof(T) > sz)
+        throw std::runtime_error("NestedList blob truncated");
+      T v;
+      std::memcpy(&v, d + off, sizeof(T));
+      off += sizeof(T);
+      if constexpr (std::is_same_v<T, uint8_t>) {
+        inner.append(nb::bool_(v != 0));
+      } else {
+        inner.append(nb::cast(v));
+      }
+    }
+    outer.append(std::move(inner));
+  }
+  return outer;
+}
+
+nb::list DecodeNestedListWithTag(
+  const data::string& blob, const data::string& tag) {
+  const char* d = blob.data();
+  size_t sz = blob.size();
+  if (tag == data::string("nli64")) return DecodeNestedListT<int64_t>(d, sz);
+  if (tag == data::string("nlf64")) return DecodeNestedListT<double>(d, sz);
+  if (tag == data::string("nlb")) return DecodeNestedListT<uint8_t>(d, sz);
+  throw std::runtime_error(
+    "DecodeNestedListWithTag: unknown tag '"
+    + std::string(tag.data(), tag.size()) + "'");
+}
+
+// nb::cast<std::string> triggers RTTI dynamic_cast under linkstatic nanobind.
+// This helper uses nb::str::c_str() which bypasses that code path.
+data::string NbStrToCistaString(nb::handle py_obj) {
+  nb::str s(py_obj);
+  const char* cs = s.c_str();
+  return data::string{cs, static_cast<uint32_t>(strlen(cs))};
+}
+
+nb::list DecodeVectorString(const char* d, size_t sz) {
+  if (sz < sizeof(uint32_t))
+    throw std::runtime_error("VectorString blob too small");
+  uint32_t count = 0;
+  std::memcpy(&count, d, sizeof(uint32_t));
+  size_t off = sizeof(uint32_t);
+  nb::list result;
+  for (uint32_t i = 0; i < count; ++i) {
+    if (off + sizeof(uint32_t) > sz)
+      throw std::runtime_error("VectorString blob truncated at length");
+    uint32_t len = 0;
+    std::memcpy(&len, d + off, sizeof(uint32_t));
+    off += sizeof(uint32_t);
+    if (off + len > sz)
+      throw std::runtime_error("VectorString blob truncated at data");
+    result.append(nb::str(d + off, len));
+    off += len;
+  }
+  return result;
+}
+
+}  // namespace
 
 namespace eux {
 namespace axon {
@@ -79,8 +191,14 @@ nb::object ResultMetaToPython(
         cista::get<double>(cista::get<rpc::PrimitiveValue>(param.value)));
     case rpc::ParamType::STRING: {
       const data::string& str_ref = cista::get<data::string>(param.value);
-      // Create Python string directly using nb::str constructor
-      // This avoids nb::cast which throws std::bad_cast
+      if (
+        param.name == data::string("nli64")
+        || param.name == data::string("nlf64")
+        || param.name == data::string("nlb")) {
+        return DecodeNestedListBlob(param);
+      } else if (param.name == data::string("vs")) {
+        return DecodeVectorStringBlob(param);
+      }
       return nb::str(str_ref.data(), str_ref.size());
     }
     case rpc::ParamType::VECTOR_BOOL: {
@@ -168,8 +286,20 @@ rpc::ParamMeta PythonToParamMeta(
           nb::cast<double>(py_obj));
         break;
       case rpc::ParamType::STRING: {
-        std::string str = nb::cast<std::string>(py_obj);
-        meta.value.template emplace<data::string>(data::string{str});
+        if (
+          nb::isinstance<nb::list>(py_obj)
+          || nb::isinstance<nb::tuple>(py_obj)) {
+          rpc::ParamMeta inferred = InferParamMeta(py_obj);
+          if (inferred.type == rpc::ParamType::STRING) {
+            meta = std::move(inferred);
+            break;
+          } else {
+            throw std::runtime_error(
+              "PythonToParamMeta: Expected list to infer as encoded STRING "
+              "type.");
+          }
+        }
+        meta.value.template emplace<data::string>(NbStrToCistaString(py_obj));
         break;
       }
       case rpc::ParamType::VECTOR_INT32: {
@@ -235,8 +365,7 @@ rpc::ParamMeta InferParamMeta(nb::object py_obj) {
     meta.value.template emplace<rpc::PrimitiveValue>(nb::cast<double>(py_obj));
   } else if (nb::isinstance<nb::str>(py_obj)) {
     meta.type = rpc::ParamType::STRING;
-    std::string str = nb::cast<std::string>(py_obj);
-    meta.value.template emplace<data::string>(data::string{str});
+    meta.value.template emplace<data::string>(NbStrToCistaString(py_obj));
   } else if (
     nb::isinstance<nb::list>(py_obj) || nb::isinstance<nb::tuple>(py_obj)) {
     // Infer vector type from first element
@@ -250,7 +379,19 @@ rpc::ParamMeta InferParamMeta(nb::object py_obj) {
       meta.value.template emplace<rpc::VectorValue>(std::move(cista_vec));
     } else {
       nb::object first = seq[0];
-      if (nb::isinstance<int>(first)) {
+      if (nb::isinstance<nb::list>(first) || nb::isinstance<nb::tuple>(first)) {
+        return EncodeNestedListToParamMeta(py_obj);
+      } else if (nb::isinstance<nb::str>(first)) {
+        return EncodeVectorStringToParamMeta(py_obj);
+      } else if (nb::isinstance<bool>(first)) {
+        meta.type = rpc::ParamType::VECTOR_BOOL;
+        nb::sequence bseq = nb::cast<nb::sequence>(py_obj);
+        data::vector<bool> cista_vec;
+        for (size_t bi = 0; bi < nb::len(bseq); ++bi) {
+          cista_vec.push_back(nb::cast<bool>(bseq[bi]));
+        }
+        meta.value.template emplace<rpc::VectorValue>(std::move(cista_vec));
+      } else if (nb::isinstance<int>(first)) {
         meta.type = rpc::ParamType::VECTOR_INT64;
         std::vector<int64_t> vec = nb::cast<std::vector<int64_t>>(py_obj);
         data::vector<int64_t> cista_vec;
@@ -273,6 +414,158 @@ rpc::ParamMeta InferParamMeta(nb::object py_obj) {
   }
 
   return meta;
+}
+
+rpc::ParamMeta EncodeNestedListToParamMeta(nb::object py_obj) {
+  namespace data = cista::offset;
+  rpc::ParamMeta meta;
+  meta.type = rpc::ParamType::STRING;
+
+  nb::sequence outer = nb::cast<nb::sequence>(py_obj);
+  size_t outer_len = nb::len(outer);
+
+  // Detect element type from first non-empty inner list
+  nb::module_ builtins = GetBuiltinsModule();
+  std::string tag;
+  bool tag_found = false;
+  for (size_t gi = 0; gi < outer_len; ++gi) {
+    nb::sequence inner = nb::cast<nb::sequence>(outer[gi]);
+    if (nb::len(inner) > 0) {
+      nb::object first = inner[0];
+      if (nb::isinstance<bool>(first)) {
+        tag = "nlb";
+      } else if (nb::isinstance<int>(first)) {
+        tag = "nli64";
+      } else if (nb::isinstance(first, builtins.attr("float"))) {
+        tag = "nlf64";
+      } else {
+        std::string type_name = nb::cast<std::string>(nb::str(first.type()));
+        throw std::runtime_error(
+          "EncodeNestedListToParamMeta: unsupported element type '" + type_name
+          + "'. List[List[...]] only supports int, float, bool elements.");
+      }
+      tag_found = true;
+      break;
+    }
+  }
+  if (!tag_found) {
+    throw std::runtime_error(
+      "EncodeNestedListToParamMeta: cannot infer element type from"
+      " List[List[...]] when all inner lists are empty."
+      " Use register_function with type annotations (e.g."
+      " List[List[int]]) instead of runtime inference.");
+  }
+
+  std::vector<nb::sequence> inners(outer_len);
+  std::vector<uint32_t> sizes(outer_len);
+  uint32_t total_elems = 0;
+  for (size_t gi = 0; gi < outer_len; ++gi) {
+    inners[gi] = nb::cast<nb::sequence>(outer[gi]);
+    sizes[gi] = static_cast<uint32_t>(nb::len(inners[gi]));
+    total_elems += sizes[gi];
+  }
+
+  size_t elem_size = (tag == "nli64")   ? sizeof(int64_t)
+                     : (tag == "nlf64") ? sizeof(double)
+                                        : sizeof(uint8_t);
+  size_t header_bytes = sizeof(uint32_t) * (1 + outer_len);
+  size_t blob_size = header_bytes + elem_size * total_elems;
+  std::string blob;
+  blob.resize(blob_size);
+  char* p = blob.data();
+
+  uint32_t gc = static_cast<uint32_t>(outer_len);
+  std::memcpy(p, &gc, sizeof(uint32_t));
+  p += sizeof(uint32_t);
+  std::memcpy(p, sizes.data(), sizeof(uint32_t) * outer_len);
+  p += sizeof(uint32_t) * outer_len;
+
+  for (size_t gi = 0; gi < outer_len; ++gi) {
+    const auto& inner = inners[gi];
+    for (size_t j = 0; j < sizes[gi]; ++j) {
+      if (tag == "nli64") {
+        int64_t v = nb::cast<int64_t>(inner[j]);
+        std::memcpy(p, &v, sizeof(int64_t));
+        p += sizeof(int64_t);
+      } else if (tag == "nlf64") {
+        double v = nb::cast<double>(inner[j]);
+        std::memcpy(p, &v, sizeof(double));
+        p += sizeof(double);
+      } else {
+        uint8_t v = nb::cast<bool>(inner[j]) ? uint8_t(1) : uint8_t(0);
+        std::memcpy(p, &v, sizeof(uint8_t));
+        p += sizeof(uint8_t);
+      }
+    }
+  }
+
+  meta.value.template emplace<data::string>(
+    data::string(blob.data(), static_cast<uint32_t>(blob.size())));
+  meta.name = data::string(tag);
+  return meta;
+}
+
+rpc::ParamMeta EncodeVectorStringToParamMeta(nb::object py_obj) {
+  namespace data = cista::offset;
+  nb::sequence seq = nb::cast<nb::sequence>(py_obj);
+  size_t seq_len = nb::len(seq);
+
+  struct Entry {
+    nb::str s;
+    size_t len;
+  };
+  std::vector<Entry> entries;
+  entries.reserve(seq_len);
+  size_t total = sizeof(uint32_t);
+  for (size_t i = 0; i < seq_len; ++i) {
+    nb::str s(seq[i]);
+    size_t len = strlen(s.c_str());
+    total += sizeof(uint32_t) + len;
+    entries.push_back({std::move(s), len});
+  }
+
+  std::string blob;
+  blob.resize(total);
+  char* p = blob.data();
+  uint32_t count = static_cast<uint32_t>(seq_len);
+  std::memcpy(p, &count, sizeof(uint32_t));
+  p += sizeof(uint32_t);
+  for (const auto& e : entries) {
+    uint32_t len = static_cast<uint32_t>(e.len);
+    std::memcpy(p, &len, sizeof(uint32_t));
+    p += sizeof(uint32_t);
+    std::memcpy(p, e.s.c_str(), e.len);
+    p += e.len;
+  }
+
+  rpc::ParamMeta meta;
+  meta.type = rpc::ParamType::STRING;
+  meta.name = data::string("vs");
+  meta.value.template emplace<data::string>(
+    data::string(blob.data(), static_cast<uint32_t>(blob.size())));
+  return meta;
+}
+
+nb::list DecodeNestedListBlob(const rpc::ParamMeta& param) {
+  namespace data = cista::offset;
+  if (!cista::holds_alternative<data::string>(param.value)) {
+    throw std::runtime_error(
+      "Expected STRING-encoded NestedList blob, but received different "
+      "ParamMeta type. Ensure client uses type-hints or sends correct data.");
+  }
+  return DecodeNestedListWithTag(
+    cista::get<data::string>(param.value), param.name);
+}
+
+nb::list DecodeVectorStringBlob(const rpc::ParamMeta& param) {
+  namespace data = cista::offset;
+  if (!cista::holds_alternative<data::string>(param.value)) {
+    throw std::runtime_error(
+      "Expected STRING-encoded VectorString blob, but received different "
+      "ParamMeta type.");
+  }
+  const data::string& blob = cista::get<data::string>(param.value);
+  return DecodeVectorString(blob.data(), blob.size());
 }
 
 nb::dict HeaderToDict(const rpc::RpcRequestHeader& header) {

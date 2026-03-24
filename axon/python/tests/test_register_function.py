@@ -36,6 +36,32 @@ def test_register_function_valid_list():
         )
 
 
+def test_register_function_valid_list_str():
+    """Test register_function with valid List[str] types."""
+
+    async def list_str_func(names: List[str]) -> List[str]:
+        return [f"Hello {name}" for name in names]
+
+    with create_server("test_worker_list_str") as runtime:
+        runtime.register_function(
+            callable=list_str_func,
+            function_id=201,
+        )
+
+
+def test_register_function_valid_nested_list():
+    """Test register_function with valid nested List types."""
+
+    async def nested_list_func(matrix: List[List[int]]) -> List[List[float]]:
+        return [[float(x) for x in row] for row in matrix]
+
+    with create_server("test_worker_nested_list") as runtime:
+        runtime.register_function(
+            callable=nested_list_func,
+            function_id=202,
+        )
+
+
 def test_register_function_valid_tuple_return():
     """Test register_function with valid Tuple return."""
 
@@ -164,6 +190,63 @@ def test_register_function_dlpack():
         runtime.register_function(
             callable=tensor_func,
             function_id=11,
+        )
+
+
+def test_register_function_invalid_list_list_str():
+    """Test register_function errors on List[List[str]] (unsupported nested string list)."""
+
+    async def nested_str_func(matrix: List[List[str]]) -> int:
+        return 1
+
+    with create_server("test_worker_nested_str") as runtime:
+        with pytest.raises(TypeError, match="Unsupported or missing type annotation"):
+            runtime.register_function(
+                callable=nested_str_func,
+                function_id=203,
+            )
+
+
+def test_register_function_invalid_tuple_param():
+    """Test register_function errors on Tuple as a parameter type (unsupported)."""
+
+    async def tuple_param_func(x: Tuple[int, str]) -> int:
+        return 1
+
+    with create_server("test_worker_tuple_param") as runtime:
+        with pytest.raises(TypeError, match="Unsupported or missing type annotation"):
+            runtime.register_function(
+                callable=tuple_param_func,
+                function_id=204,
+            )
+
+
+def test_register_function_invalid_list_list_untyped():
+    """Test register_function errors on List[List] without inner type args."""
+
+    async def untyped_nested(matrix: List[List]) -> int:
+        return 1
+
+    with create_server("test_worker_nested_untyped") as runtime:
+        with pytest.raises(TypeError, match="Unsupported or missing type annotation"):
+            runtime.register_function(
+                callable=untyped_nested,
+                function_id=205,
+            )
+
+
+def test_register_function_async_callable():
+    """Test register_function with a callable class instance."""
+
+    class AsyncCallable:
+        async def __call__(self, x: int) -> int:
+            return x
+
+    with create_server("test_worker_callable") as runtime:
+        # Should not raise any TypeError regarding IsAsyncFunction
+        runtime.register_function(
+            callable=AsyncCallable(),
+            function_id=206,
         )
 
 

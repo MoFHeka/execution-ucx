@@ -50,7 +50,10 @@ void BindDltensorMetaTypes(nb::module_& m) {
     .value("kDLOneAPI", kDLOneAPI);
 
   nb::class_<DLDevice>(m, "DLDevice")
-    .def_rw("device_type", &DLDevice::device_type)
+    .def_prop_rw(
+      "device_type",
+      [](const DLDevice& d) { return static_cast<int>(d.device_type); },
+      [](DLDevice& d, int v) { d.device_type = static_cast<DLDeviceType>(v); })
     .def_rw("device_id", &DLDevice::device_id)
     .def("__repr__", [](const DLDevice& d) {
       return std::format(
@@ -254,8 +257,11 @@ void RegisterTypes(nb::module_& m) {
       "params",
       [](const rpc::RpcRequestHeader& self) {
         namespace python = eux::axon::python;
-        // TODO(He Jia): support different payload types
-        return python::ResultsToPython(self.params);
+        nb::list result;
+        for (const auto& param : self.params) {
+          result.append(python::ResultMetaToPython(param));
+        }
+        return result;
       })
     .def(
       "AddParam",
@@ -303,7 +309,11 @@ void RegisterTypes(nb::module_& m) {
       })
     .def_prop_ro("results", [](const rpc::RpcResponseHeader& self) {
       namespace python = eux::axon::python;
-      return python::ResultsToPython(self.results);
+      nb::list result;
+      for (const auto& param : self.results) {
+        result.append(python::ResultMetaToPython(param));
+      }
+      return result;
     });
 
   // ============================================================================

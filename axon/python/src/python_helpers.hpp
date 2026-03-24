@@ -125,6 +125,26 @@ struct FunctionSignatureInfo {
   // ===== Precomputed for zero-overhead result extraction =====
   ResultExtractionMode extraction_mode = ResultExtractionMode::VOID;
   std::vector<size_t> non_tensor_indices;  // Positions of non-tensor returns
+
+  // Describes how a STRING-encoded RPC parameter was produced on the client:
+  //   INT64 / FLOAT64 / BOOL → List[List[T]] packed as binary blob
+  //   STRING_ELEM             → List[str] packed as length-prefixed blob
+  //   NESTED_TENSOR_LIST      → List[List[Tensor]]: groups sizes carried as
+  //                             VECTOR_INT64, tensors in the flat tensor stream
+  enum class EncodedElementType : uint8_t {
+    INT64,
+    FLOAT64,
+    BOOL,
+    STRING_ELEM,
+    NESTED_TENSOR_LIST
+  };
+
+  struct EncodedParamInfo {
+    size_t param_index;
+    EncodedElementType element_type;
+  };
+
+  std::vector<EncodedParamInfo> encoded_params;
 };
 
 FunctionSignatureInfo ParseFunctionSignature(nb::object py_func);

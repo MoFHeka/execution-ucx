@@ -732,6 +732,7 @@ test_suite(
         ":test_edge_cases",
         ":test_integration",
         ":test_invoke_args",
+        ":test_invoke_by_name",
         ":test_invoke_memory_policy",
         ":test_invoke_rpc",
         ":test_numpy_rpc.py",

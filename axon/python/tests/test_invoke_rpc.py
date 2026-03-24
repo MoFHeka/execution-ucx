@@ -1,4 +1,4 @@
-"""Tests for RPC invocation."""
+"""Test RPC invocation."""
 
 import asyncio
 import pytest
@@ -67,10 +67,8 @@ async def test_basic_rpc_call():
             request_header=request_header,
         )
 
-        # Verify response
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert result[0] == 30
+        # invoke_raw returns the function's actual return value
+        assert result == 30
 
     finally:
         client.stop()
@@ -119,9 +117,7 @@ async def test_rpc_call_with_string():
             request_header=request_header,
         )
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert result[0] == "Hello, World!"
+        assert result == "Hello, World!"
 
     finally:
         client.stop()
@@ -169,9 +165,7 @@ async def test_rpc_call_with_payload_none():
             payload=None,
         )
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert result[0] == 30
+        assert result == 30
 
     finally:
         client.stop()
@@ -218,9 +212,7 @@ async def test_rpc_call_request_header_fields():
             request_header=request_header,
         )
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert result[0] == 30
+        assert result == 30
 
     finally:
         client.stop()
@@ -296,9 +288,7 @@ async def test_rpc_call_memory_policy():
             memory_policy=None,
         )
 
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert result[0] == 30
+        assert result == 30
 
     finally:
         client.stop()

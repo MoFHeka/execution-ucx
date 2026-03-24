@@ -462,6 +462,43 @@ void RegisterRuntime(nb::module_& m) {
         }
       }
 
+      // Infer extraction_mode from return_types so the server correctly
+      // packages return values rather than always using VOID.
+      python::ResultExtractionMode extraction_mode =
+        python::ResultExtractionMode::VOID;
+      if (!return_types.empty()) {
+        if (
+          return_types.size() == 1 && return_types[0] != rpc::ParamType::VOID) {
+          if (return_types[0] == rpc::ParamType::TENSOR_META_VEC) {
+            extraction_mode = python::ResultExtractionMode::LIST_TENSOR;
+          } else if (return_types[0] == rpc::ParamType::TENSOR_META) {
+            extraction_mode = python::ResultExtractionMode::SINGLE_TENSOR;
+          } else {
+            extraction_mode = python::ResultExtractionMode::SINGLE_NON_TENSOR;
+          }
+        } else if (return_types.size() > 1) {
+          extraction_mode =
+            tensor_return_indices.empty()
+              ? python::ResultExtractionMode::TUPLE_NON_TENSORS_ONLY
+              : python::ResultExtractionMode::TUPLE_WITH_TENSORS;
+        }
+      }
+
+      // non_tensor_indices for TUPLE modes: all non-tensor return positions
+      std::vector<size_t> non_tensor_indices;
+      if (
+        extraction_mode == python::ResultExtractionMode::TUPLE_NON_TENSORS_ONLY
+        || extraction_mode
+             == python::ResultExtractionMode::TUPLE_WITH_TENSORS) {
+        for (size_t i = 0; i < return_types.size(); ++i) {
+          if (
+            return_types[i] != rpc::ParamType::TENSOR_META
+            && return_types[i] != rpc::ParamType::TENSOR_META_VEC) {
+            non_tensor_indices.push_back(i);
+          }
+        }
+      }
+
       // Create function object
       python::PythonAsyncFunctionWrapper wrapped_func{
         py_callable,
@@ -472,9 +509,9 @@ void RegisterRuntime(nb::module_& m) {
         self,
         std::move(tensor_param_from_dlpack),
         std::move(tensor_return_from_dlpack),
-        python::ResultExtractionMode::VOID,  // extraction_mode (unknown)
-        {}  // non_tensor_indices - empty for raw register
-      };
+        {},
+        extraction_mode,
+        std::move(non_tensor_indices)};
 
       // Create DynamicAsyncRpcFunction
       auto dynamic_func = pro::make_proxy<rpc::DynamicAsyncRpcFunctionFacade>(
@@ -565,6 +602,7 @@ void RegisterRuntime(nb::module_& m) {
         self,
         std::move(sig_info.tensor_param_from_dlpack),
         std::move(sig_info.tensor_return_from_dlpack),
+        std::move(sig_info.encoded_params),
         sig_info.extraction_mode,
         std::move(sig_info.non_tensor_indices)};
 
@@ -732,6 +770,7 @@ void RegisterRuntime(nb::module_& m) {
         self,
         std::move(tensor_param_from_dlpack),
         std::move(tensor_return_from_dlpack),
+        std::move(sig_info.encoded_params),
         sig_info.extraction_mode,
         std::move(sig_info.non_tensor_indices)};
 
@@ -875,10 +914,22 @@ void RegisterRuntime(nb::module_& m) {
       // Single pass: classify and collect all arguments
       for (size_t i = 0; i < args.size(); ++i) {
         nb::object obj = nb::cast<nb::object>(args[i]);
-        if (axon::python::IsDlpackTensor(obj)) {
-          ctx.add_tensor(std::move(obj));
-        } else {
-          ctx.add_non_tensor(std::move(obj));
+        switch (python::ClassifyArg(obj)) {
+          case python::ArgKind::SingleTensor:
+            ctx.add_tensor(std::move(obj));
+            break;
+          case python::ArgKind::FlatTensorList: {
+            nb::sequence seq = nb::cast<nb::sequence>(obj);
+            for (size_t ti = 0; ti < nb::len(seq); ++ti)
+              ctx.add_tensor(nb::cast<nb::object>(seq[ti]));
+            break;
+          }
+          case python::ArgKind::NestedTensorList:
+            ctx.add_nested_tensor_list(std::move(obj));
+            break;
+          case python::ArgKind::NonTensor:
+            ctx.add_non_tensor(std::move(obj));
+            break;
         }
       }
 

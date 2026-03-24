@@ -16,9 +16,12 @@ limitations under the License.
 #include "axon/python/src/bindings_runtime_wrapper.hpp"
 
 #include <cstdio>
+#include <cstring>
 #include <dlpack/dlpack.h>
 #include <nanobind/nanobind.h>
 
+#include <optional>
+#include <span>
 #include <utility>
 
 #include <unifex/create.hpp>
@@ -71,8 +74,8 @@ PythonAsyncFunctionWrapper::operator()(
 
 template <typename PayloadT>
 nb::object PythonAsyncFunctionWrapper::ConvertSingleParamToPython(
-  size_t tensor_idx, rpc::utils::TensorMeta&& meta,
-  const PayloadT& payload) const {
+  size_t flat_tensor_idx, size_t tensor_param_idx,
+  rpc::utils::TensorMeta&& meta, const PayloadT& payload) const {
   // Check if we have a cached Python object from custom memory policy
   // This avoids reconstructing the object from UcxBuffer/UcxBufferVec
   if constexpr (std::is_same_v<PayloadT, ucxx::UcxBuffer>) {
@@ -82,8 +85,8 @@ nb::object PythonAsyncFunctionWrapper::ConvertSingleParamToPython(
     }
   } else if constexpr (std::is_same_v<PayloadT, ucxx::UcxBufferVec>) {
     const auto& buffers = payload.buffers();
-    if (tensor_idx < buffers.size()) {
-      auto cached_obj = TryGetCustomBuffer(buffers[tensor_idx].data);
+    if (flat_tensor_idx < buffers.size()) {
+      auto cached_obj = TryGetCustomBuffer(buffers[flat_tensor_idx].data);
       if (!cached_obj.is_none()) {
         return cached_obj;
       }
@@ -101,13 +104,11 @@ nb::object PythonAsyncFunctionWrapper::ConvertSingleParamToPython(
       TensorMetaToDlpack(std::move(meta), std::move(non_owning_buffer));
   } else if constexpr (std::is_same_v<PayloadT, ucxx::UcxBufferVec>) {
     const auto& buffers = payload.buffers();
-    if (tensor_idx >= buffers.size()) {
+    if (flat_tensor_idx >= buffers.size()) {
       throw std::runtime_error("Tensor index out of range in UcxBufferVec");
     }
 
-    // Create a non-owning UcxBuffer view for this specific tensor
-    // instead of passing the entire UcxBufferVec
-    const auto& buffer = buffers[tensor_idx];
+    const auto& buffer = buffers[flat_tensor_idx];
     ucxx::UcxBuffer non_owning_buffer(
       self.GetMemoryResourceManager(), payload.type(), buffer.data, buffer.size,
       payload.mem_h(), false);
@@ -120,8 +121,8 @@ nb::object PythonAsyncFunctionWrapper::ConvertSingleParamToPython(
   }
 
   // Use saved from_dlpack_fn method to convert to user-expected type
-  if (tensor_idx < tensor_param_from_dlpack.size()) {
-    const auto& from_dlpack_ref = tensor_param_from_dlpack[tensor_idx];
+  if (tensor_param_idx < tensor_param_from_dlpack.size()) {
+    const auto& from_dlpack_ref = tensor_param_from_dlpack[tensor_param_idx];
     if (from_dlpack_ref) {
       nb::object from_dlpack_fn = from_dlpack_ref.get();
       if (!from_dlpack_fn.is_none()) {
@@ -148,20 +149,17 @@ nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython(
   // ============================================================
   // Small Buffer Optimization: Use stack for typical RPC cases
   // ============================================================
-  // Most RPC functions have <= 16 parameters, avoid heap allocation
   static constexpr size_t kMaxStackParams = 16;
 
-  // Stack-allocated buffer for non-tensor param pointers
   std::array<const rpc::ParamMeta*, kMaxStackParams> stack_non_tensor_params;
   std::vector<const rpc::ParamMeta*> heap_non_tensor_params;
 
-  // Choose stack or heap based on param count
   const rpc::ParamMeta** non_tensor_params_ptr;
   if (params.size() <= kMaxStackParams) {
     non_tensor_params_ptr = stack_non_tensor_params.data();
   } else {
     heap_non_tensor_params.reserve(params.size());
-    non_tensor_params_ptr = nullptr;  // Will use vector directly
+    non_tensor_params_ptr = nullptr;
   }
 
   // ============================================================
@@ -185,46 +183,125 @@ nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython(
     }
   }
 
-  // If we used heap, update the count
   if (!non_tensor_params_ptr) {
     non_tensor_param_count = heap_non_tensor_params.size();
     non_tensor_params_ptr = heap_non_tensor_params.data();
   }
 
-  size_t tensor_idx = 0;
+  // Pre-build O(1) encoded param lookup indexed by param position
+  using NL = FunctionSignatureInfo::EncodedElementType;
+  std::vector<std::optional<NL>> encoded_lookup(num_params, std::nullopt);
+  for (const auto& ep : encoded_params) {
+    if (ep.param_index < num_params) {
+      encoded_lookup[ep.param_index] = ep.element_type;
+    }
+  }
+
+  // flat_tensor_idx: position in the flattened tensor array (UcxBufferVec
+  //   buffers and TensorMetaVec). Increments once per individual tensor.
+  // tensor_param_idx: index into tensor_param_from_dlpack[], increments once
+  // per
+  //   tensor-typed *parameter*. Multiple tensors in the same parameter
+  //   (List[Tensor] / List[List[Tensor]]) share one tensor_param_idx.
+  size_t flat_tensor_idx = 0;
+  size_t tensor_param_idx = 0;
   size_t non_tensor_idx = 0;
 
   for (size_t i = 0; i < num_params; ++i) {
-    if (param_types[i] == rpc::ParamType::TENSOR_META) {
-      // Try TENSOR_META_VEC first (common case for multiple tensors)
-      if (tensor_meta_vec_ptr && tensor_idx < tensor_meta_vec_ptr->size()) {
-        // Move meta from vector (zero-copy)
+    const auto& enc = encoded_lookup[i];
+    if (enc == NL::NESTED_TENSOR_LIST) {
+      // List[List[Tensor]]: group sizes stored as VECTOR_UINT32
+      // (data::vector<uint32_t>)
+      if (non_tensor_idx >= non_tensor_param_count) {
+        throw std::runtime_error(
+          "Missing group-sizes param for nested tensor list at index "
+          + std::to_string(i));
+      }
+      const auto& group_sizes_vec =
+        cista::get<data::vector<uint32_t>>(cista::get<rpc::VectorValue>(
+          non_tensor_params_ptr[non_tensor_idx]->value));
+      nb::list outer;
+      for (uint32_t gsz : group_sizes_vec) {
+        nb::list inner;
+        for (uint32_t ti = 0; ti < gsz; ++ti) {
+          if (
+            !tensor_meta_vec_ptr
+            || flat_tensor_idx >= tensor_meta_vec_ptr->size()) {
+            throw std::runtime_error(
+              "Not enough tensors for nested tensor list");
+          }
+          auto py_dlpack = ConvertSingleParamToPython(
+            flat_tensor_idx, tensor_param_idx,
+            std::move(const_cast<rpc::utils::TensorMeta&>(
+              (*tensor_meta_vec_ptr)[flat_tensor_idx])),
+            payload);
+          inner.append(std::move(py_dlpack));
+          ++flat_tensor_idx;
+        }
+        outer.append(std::move(inner));
+      }
+      py_args.append(std::move(outer));
+      ++non_tensor_idx;
+      ++tensor_param_idx;
+    } else if (enc == NL::STRING_ELEM) {
+      if (non_tensor_idx >= non_tensor_param_count) {
+        throw std::runtime_error(
+          "Missing param for vector-string at index " + std::to_string(i));
+      }
+      py_args.append(
+        DecodeVectorStringBlob(*non_tensor_params_ptr[non_tensor_idx++]));
+    } else if (enc.has_value()) {
+      // List[List[int/float/bool]]
+      if (non_tensor_idx >= non_tensor_param_count) {
+        throw std::runtime_error(
+          "Missing param for nested list at index " + std::to_string(i));
+      }
+      py_args.append(
+        DecodeNestedListBlob(*non_tensor_params_ptr[non_tensor_idx++]));
+    } else if (param_types[i] == rpc::ParamType::TENSOR_META) {
+      // Single Tensor parameter. Note: the header always uses TENSOR_META_VEC
+      // when multiple Tensor params exist; each TENSOR_META branch takes the
+      // next tensor from the shared stream sequentially.
+      if (
+        tensor_meta_vec_ptr && flat_tensor_idx < tensor_meta_vec_ptr->size()) {
         auto py_dlpack = ConvertSingleParamToPython(
-          tensor_idx,
+          flat_tensor_idx, tensor_param_idx,
           std::move(const_cast<rpc::utils::TensorMeta&>(
-            (*tensor_meta_vec_ptr)[tensor_idx])),
+            (*tensor_meta_vec_ptr)[flat_tensor_idx])),
           payload);
         py_args.append(py_dlpack);
-        ++tensor_idx;
-        continue;
-      }
-      // Fallback to direct param if no TENSOR_META_VEC found
-      else if (single_tensor_meta_ptr && tensor_idx == 0) {
-        // Move meta from single_tensor_meta_ptr (zero-copy)
+        ++flat_tensor_idx;
+      } else if (single_tensor_meta_ptr && flat_tensor_idx == 0) {
         auto py_dlpack = ConvertSingleParamToPython(
-          tensor_idx,
+          flat_tensor_idx, tensor_param_idx,
           std::move(
             const_cast<rpc::utils::TensorMeta&>(*single_tensor_meta_ptr)),
           payload);
         py_args.append(py_dlpack);
-        ++tensor_idx;
-        continue;
+        ++flat_tensor_idx;
+      } else {
+        throw std::runtime_error(
+          "Tensor meta not found for parameter " + std::to_string(i));
       }
-
-      throw std::runtime_error(
-        "Tensor meta not found for parameter " + std::to_string(i));
+      ++tensor_param_idx;
+    } else if (param_types[i] == rpc::ParamType::TENSOR_META_VEC) {
+      // List[Tensor] parameter (or the implicit vec created for multiple Tensor
+      // params). Consumes all remaining tensors in the stream for this param.
+      nb::list tensor_list;
+      if (tensor_meta_vec_ptr) {
+        while (flat_tensor_idx < tensor_meta_vec_ptr->size()) {
+          auto py_dlpack = ConvertSingleParamToPython(
+            flat_tensor_idx, tensor_param_idx,
+            std::move(const_cast<rpc::utils::TensorMeta&>(
+              (*tensor_meta_vec_ptr)[flat_tensor_idx])),
+            payload);
+          tensor_list.append(std::move(py_dlpack));
+          ++flat_tensor_idx;
+        }
+      }
+      py_args.append(std::move(tensor_list));
+      ++tensor_param_idx;
     } else {
-      // Non-tensor parameter: direct O(1) lookup
       if (non_tensor_idx < non_tensor_param_count) {
         py_args.append(
           ResultMetaToPython(*non_tensor_params_ptr[non_tensor_idx]));
@@ -576,10 +653,10 @@ PythonAsyncFunctionWrapper::FunctionImpl(
 // Explicit template instantiations
 template nb::object
 PythonAsyncFunctionWrapper::ConvertSingleParamToPython<ucxx::UcxBuffer>(
-  size_t, rpc::utils::TensorMeta&&, const ucxx::UcxBuffer&) const;
+  size_t, size_t, rpc::utils::TensorMeta&&, const ucxx::UcxBuffer&) const;
 template nb::object
 PythonAsyncFunctionWrapper::ConvertSingleParamToPython<ucxx::UcxBufferVec>(
-  size_t, rpc::utils::TensorMeta&&, const ucxx::UcxBufferVec&) const;
+  size_t, size_t, rpc::utils::TensorMeta&&, const ucxx::UcxBufferVec&) const;
 
 template nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython<
   std::monostate>(data::vector<rpc::ParamMeta>&, const std::monostate&) const;

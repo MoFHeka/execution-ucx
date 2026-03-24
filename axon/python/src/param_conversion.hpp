@@ -21,6 +21,7 @@ limitations under the License.
 #include <cista.h>
 #include <nanobind/nanobind.h>
 
+#include <span>
 #include <type_traits>
 
 #include "rpc_core/rpc_types.hpp"
@@ -45,6 +46,20 @@ rpc::ParamMeta PythonToParamMeta(
 
 // Infer ParamMeta from Python object
 rpc::ParamMeta InferParamMeta(nb::object py_obj);
+
+// Decode a STRING-typed ParamMeta that carries a nested list binary blob.
+// The name field carries the sub-type tag ("nli64", "nlf64", "nlb").
+nb::list DecodeNestedListBlob(const rpc::ParamMeta& param);
+
+// Decode a STRING-typed ParamMeta that carries a vector-of-strings blob.
+// Wire format: [uint32 count][uint32 len0][bytes0][uint32 len1][bytes1]...
+nb::list DecodeVectorStringBlob(const rpc::ParamMeta& param);
+
+// Encode a Python List[List[T]] into a STRING-typed ParamMeta with name tag.
+rpc::ParamMeta EncodeNestedListToParamMeta(nb::object py_obj);
+
+// Encode a Python List[str] into a STRING-typed ParamMeta with name tag "vs".
+rpc::ParamMeta EncodeVectorStringToParamMeta(nb::object py_obj);
 
 // Convert RpcRequestHeader to Python dict
 nb::dict HeaderToDict(const rpc::RpcRequestHeader& header);

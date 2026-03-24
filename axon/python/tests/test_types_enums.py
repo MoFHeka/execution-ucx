@@ -188,19 +188,22 @@ def test_tensor_meta_type():
     # Test default values
     assert meta.ndim == 0
     assert meta.byte_offset == 0
-    assert isinstance(meta.device, dict)
-    assert isinstance(meta.dtype, dict)
+    # device and dtype are standard DLPack objects (part of the DLPack protocol)
+    assert isinstance(meta.device, axon.DLDevice)
+    assert isinstance(meta.dtype, axon.DLDataType)
     assert isinstance(meta.shape, list)
     assert isinstance(meta.strides, list)
 
-    # Test device dict structure
-    assert "device_type" in meta.device
-    assert "device_id" in meta.device
+    # Test device field access (device_type is int to support raw/uninitialized values)
+    assert hasattr(meta.device, "device_type")
+    assert hasattr(meta.device, "device_id")
+    assert isinstance(meta.device.device_type, int)
+    assert isinstance(meta.device.device_id, int)
 
-    # Test dtype dict structure
-    assert "code" in meta.dtype
-    assert "bits" in meta.dtype
-    assert "lanes" in meta.dtype
+    # Test dtype field access
+    assert hasattr(meta.dtype, "code")
+    assert hasattr(meta.dtype, "bits")
+    assert hasattr(meta.dtype, "lanes")
 
 
 if __name__ == "__main__":

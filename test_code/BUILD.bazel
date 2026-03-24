@@ -1,0 +1,41 @@
+cc_binary(
+    name = "readme",
+    srcs = ["readme.cpp"],
+    copts = [
+        "-std=c++17",
+        "-fcoroutines",
+    ],
+    linkstatic = False,  # Important for OpenUCX specific linking
+    deps = [
+        "@execution-ucx//ucx_context:ucx_am_context",
+        "@unifex",
+    ],
+)
+
+cc_binary(
+    name = "test_cuda_connection",
+    srcs = ["test_cuda_connection.cpp"],
+    copts = [
+        "-std=c++17",
+        "-fcoroutines",
+    ],
+    linkstatic = False,  # Important for OpenUCX specific linking
+    deps = [
+        "@execution-ucx//ucx_context:ucx_connection",
+        "@local_cuda//:cuda_runtime",
+        "@ucx//:ucx_runtime",
+    ],
+)
+
+cc_binary(
+    name = "stop_when",
+    srcs = ["stop_when.cpp"],
+    copts = [
+        "-std=c++20",
+        "-fcoroutines",
+    ],
+    linkstatic = False,  # Important for OpenUCX specific linking
+    deps = [
+        "@unifex",
+    ],
+)
