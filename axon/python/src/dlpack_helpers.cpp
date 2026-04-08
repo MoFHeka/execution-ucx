@@ -394,138 +394,87 @@ ucxx::UcxBufferVec DlpackToUcxBufferVec(
     [owners = std::move(owners)](void*) {});
 }
 
-// Context struct for TensorMetaToDlpack ownership management
 struct TensorDlpackContext {
   std::unique_ptr<axon::utils::TensorBase> tensor;
-  std::unique_ptr<ucxx::UcxBuffer> buffer;
+  std::shared_ptr<void> data_keeper;
 
   TensorDlpackContext(
-    std::unique_ptr<axon::utils::TensorBase> t,
-    std::unique_ptr<ucxx::UcxBuffer> b)
-    : tensor(std::move(t)), buffer(std::move(b)) {}
+    std::unique_ptr<axon::utils::TensorBase> t, std::shared_ptr<void> keeper)
+    : tensor(std::move(t)), data_keeper(std::move(keeper)) {}
 };
 
 nb::object TensorMetaToDlpack(
   rpc::utils::TensorMeta&& meta, ucxx::UcxBuffer&& buffer) {
-  // Create TensorBase from TensorMeta and UcxBuffer
+  auto owned = std::make_shared<ucxx::UcxBuffer>(std::move(buffer), false);
+  DLDevice device = UcxMemoryTypeToDlDevice(owned->type());
   auto tensor = std::make_unique<axon::utils::TensorBase>();
-  tensor->assign(std::move(meta), buffer.data());
+  tensor->assign(std::move(meta), owned->data());
+  tensor->device = device;
 
-  // Override the device with the ACTUAL buffer memory type.
-  // The TensorMeta comes from the sender and may indicate CUDA, but when
-  // using AlwaysOnHostPolicy, the buffer is actually in host memory.
-  // We MUST use the buffer's memory type to ensure the DLPack device
-  // correctly reflects where the data actually resides.
-  DLDevice actual_device = UcxMemoryTypeToDlDevice(buffer.type());
-  tensor->device = actual_device;
-
-  // Create DLManagedTensor for Python
   DLManagedTensor* dlm_tensor = new DLManagedTensor;
   dlm_tensor->dl_tensor.data = tensor->data;
-  dlm_tensor->dl_tensor.device = tensor->device;
+  dlm_tensor->dl_tensor.device = device;
   dlm_tensor->dl_tensor.ndim = tensor->ndim;
   dlm_tensor->dl_tensor.dtype = tensor->dtype;
   dlm_tensor->dl_tensor.shape = tensor->shape;
   dlm_tensor->dl_tensor.strides = tensor->strides;
   dlm_tensor->dl_tensor.byte_offset = tensor->byte_offset;
-
-  // Use unique_ptr-based context for ownership management
-  // IMPORTANT: Set own_buffer = false to prevent UcxBuffer::~UcxBuffer
-  // from calling deallocate() on UcxMemoryResourceManager, which may have been
-  // destroyed before this DLPack capsule (lifetime is controlled by Python GC).
-  auto owned_buffer =
-    std::make_unique<ucxx::UcxBuffer>(std::move(buffer), false);
-
-  dlm_tensor->manager_ctx =
-    new TensorDlpackContext(std::move(tensor), std::move(owned_buffer));
+  dlm_tensor->manager_ctx = new TensorDlpackContext(
+    std::move(tensor), std::static_pointer_cast<void>(std::move(owned)));
   dlm_tensor->deleter = [](DLManagedTensor* self) {
     delete static_cast<TensorDlpackContext*>(self->manager_ctx);
     delete self;
   };
 
-  // Create PyCapsule with safe destructor that handles consumed capsules
   nb::object capsule = nb::steal<nb::object>(
     PyCapsule_New(dlm_tensor, "dltensor", SafeDlpackCapsuleDestructor));
-
-  // Return wrapped in DLPackCapsuleWrapper for from_dlpack compatibility
-  return nb::cast(DLPackCapsuleWrapper(std::move(capsule), actual_device));
+  return nb::cast(DLPackCapsuleWrapper(std::move(capsule), device));
 }
-
-// Context struct for TensorMetaVecToDlpack ownership management
-// Uses shared_ptr for UcxBufferVec because:
-// 1. UcxBufferVec may have a single backing_buffer_ that's a contiguous
-// allocation
-// 2. Individual buffers are views into the backing buffer, can't be freed
-// independently
-// 3. All DLPack objects must keep the backing memory alive until ALL are done
-struct TensorVecDlpackContext {
-  std::unique_ptr<axon::utils::TensorBase> tensor;
-  std::shared_ptr<ucxx::UcxBufferVec> buffer_vec;
-
-  TensorVecDlpackContext(
-    std::unique_ptr<axon::utils::TensorBase> t,
-    std::shared_ptr<ucxx::UcxBufferVec> bv)
-    : tensor(std::move(t)), buffer_vec(std::move(bv)) {}
-};
 
 nb::list TensorMetaVecToDlpack(
   cista::offset::vector<rpc::utils::TensorMeta>&& meta_vec,
   ucxx::UcxBufferVec&& buffer_vec) {
-  nb::list result;
   if (meta_vec.size() != buffer_vec.size()) {
     throw std::runtime_error("TensorMetaVec and UcxBufferVec size mismatch");
   }
+  nb::list result;
 
-  // Get the actual memory type from buffer_vec BEFORE moving it.
-  // This ensures we use the receiver's actual memory location, not the
-  // sender's.
-  DLDevice actual_device = UcxMemoryTypeToDlDevice(buffer_vec.type());
+  if (buffer_vec.has_backing_buffer()) {
+    auto shared_buffer_vec =
+      std::make_shared<ucxx::UcxBufferVec>(std::move(buffer_vec));
+    ucx_memory_type_t mem_type = shared_buffer_vec->type();
+    DLDevice device = UcxMemoryTypeToDlDevice(mem_type);
 
-  // Use shared_ptr to allow multiple capsules to share the same buffer_vec
-  // IMPORTANT: Set own_buffer = false to prevent UcxBufferVec::~UcxBufferVec
-  // from calling deallocate() on UcxMemoryResourceManager, which may have been
-  // destroyed before this DLPack capsule (lifetime is controlled by Python GC).
-  // The actual buffer memory will be freed when the unifex sender chain
-  // completes.
-  auto shared_buffer_vec =
-    std::make_shared<ucxx::UcxBufferVec>(std::move(buffer_vec), false);
+    for (size_t i = 0; i < meta_vec.size(); ++i) {
+      auto tensor = std::make_unique<axon::utils::TensorBase>();
+      tensor->assign(std::move(meta_vec[i]), (*shared_buffer_vec)[i].data);
+      tensor->device = device;
 
-  // Get buffers from UcxBufferVec
-  const auto& buffers = shared_buffer_vec->buffers();
-  for (size_t i = 0; i < meta_vec.size(); ++i) {
-    auto& meta = meta_vec[i];
-    const auto& buffer = buffers[i];
+      DLManagedTensor* dlm_tensor = new DLManagedTensor;
+      dlm_tensor->dl_tensor.data = tensor->data;
+      dlm_tensor->dl_tensor.device = device;
+      dlm_tensor->dl_tensor.ndim = tensor->ndim;
+      dlm_tensor->dl_tensor.dtype = tensor->dtype;
+      dlm_tensor->dl_tensor.shape = tensor->shape;
+      dlm_tensor->dl_tensor.strides = tensor->strides;
+      dlm_tensor->dl_tensor.byte_offset = tensor->byte_offset;
+      dlm_tensor->manager_ctx =
+        new TensorDlpackContext(std::move(tensor), shared_buffer_vec);
+      dlm_tensor->deleter = [](DLManagedTensor* self) {
+        delete static_cast<TensorDlpackContext*>(self->manager_ctx);
+        delete self;
+      };
 
-    // Create TensorBase from TensorMeta and buffer data
-    auto tensor = std::make_unique<axon::utils::TensorBase>();
-    tensor->assign(std::move(meta), buffer.data);
-
-    // Override device with actual buffer memory type
-    tensor->device = actual_device;
-
-    // Create DLManagedTensor for Python (zero-copy)
-    DLManagedTensor* dlm_tensor = new DLManagedTensor;
-    dlm_tensor->dl_tensor.data = tensor->data;
-    dlm_tensor->dl_tensor.device = actual_device;
-    dlm_tensor->dl_tensor.ndim = tensor->ndim;
-    dlm_tensor->dl_tensor.dtype = tensor->dtype;
-    dlm_tensor->dl_tensor.shape = tensor->shape;
-    dlm_tensor->dl_tensor.strides = tensor->strides;
-    dlm_tensor->dl_tensor.byte_offset = tensor->byte_offset;
-
-    // Use named context struct for ownership management
-    dlm_tensor->manager_ctx =
-      new TensorVecDlpackContext(std::move(tensor), shared_buffer_vec);
-    dlm_tensor->deleter = [](DLManagedTensor* self) {
-      delete static_cast<TensorVecDlpackContext*>(self->manager_ctx);
-      delete self;
-    };
-
-    // Wrap in DLPackCapsuleWrapper for from_dlpack compatibility
-    nb::object capsule = nb::steal<nb::object>(
-      PyCapsule_New(dlm_tensor, "dltensor", SafeDlpackCapsuleDestructor));
-    result.append(
-      nb::cast(DLPackCapsuleWrapper(std::move(capsule), actual_device)));
+      nb::object capsule = nb::steal<nb::object>(
+        PyCapsule_New(dlm_tensor, "dltensor", SafeDlpackCapsuleDestructor));
+      result.append(nb::cast(DLPackCapsuleWrapper(std::move(capsule), device)));
+    }
+  } else {
+    auto bufs = std::move(buffer_vec).ExtractBuffers();
+    for (size_t i = 0; i < meta_vec.size(); ++i) {
+      result.append(
+        TensorMetaToDlpack(std::move(meta_vec[i]), std::move(bufs[i])));
+    }
   }
   return result;
 }
