@@ -195,7 +195,6 @@ ucxx::UcxBufferVec DlpackToUcxBufferVec(
   ucx_memory_type_t mem_type,
   std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr);
 
-// Convert TensorMeta + UcxBuffer to dlpack object (single tensor)
 nb::object TensorMetaToDlpack(
   rpc::utils::TensorMeta&& meta, ucxx::UcxBuffer&& buffer);
 

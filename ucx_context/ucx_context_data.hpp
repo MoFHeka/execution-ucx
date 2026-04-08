@@ -594,6 +594,27 @@ class UcxBufferVec {
    */
   bool own_buffer() const { return own_buffer_; }
 
+  std::vector<UcxBuffer> ExtractBuffers() && {
+    if (backing_buffer_ != nullptr) {
+      throw std::logic_error(
+        "ExtractBuffers() requires independently-allocated UcxBufferVec");
+    }
+    std::vector<UcxBuffer> result;
+    result.reserve(buffers_.size());
+    for (auto& buf : buffers_) {
+      result.emplace_back(
+        mr_, type_, buf, mem_h_, own_buffer_, ucp_release_fn_);
+    }
+    own_buffer_ = false;
+    return result;
+  }
+
+  /**
+   * @brief Checks if the buffer vector has a backing buffer.
+   * @return True if there is a backing buffer, false otherwise.
+   */
+  bool has_backing_buffer() const { return backing_buffer_ != nullptr; }
+
  private:
   explicit UcxBufferVec(
     std::reference_wrapper<UcxMemoryResourceManager> mr, ucx_memory_type_t type,

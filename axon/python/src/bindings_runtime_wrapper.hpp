@@ -87,15 +87,14 @@ struct __attribute__((visibility("hidden"))) PythonAsyncFunctionWrapper {
 
  private:
   // Convert single tensor parameter to Python dlpack object
-  template <typename PayloadT>
   nb::object ConvertSingleParamToPython(
-    size_t flat_tensor_idx, size_t tensor_param_idx,
-    rpc::utils::TensorMeta&& meta, const PayloadT& payload) const;
+    size_t tensor_param_idx, rpc::utils::TensorMeta&& meta,
+    ucxx::UcxBuffer&& buffer) const;
 
   // Convert all parameters to Python objects
   template <typename PayloadT>
   nb::list ConvertParamsToPython(
-    data::vector<rpc::ParamMeta>& params, const PayloadT& payload) const;
+    data::vector<rpc::ParamMeta>& params, PayloadT& payload) const;
 
   // Convert payload to Python object (for non-tensor payloads)
   template <typename PayloadT>

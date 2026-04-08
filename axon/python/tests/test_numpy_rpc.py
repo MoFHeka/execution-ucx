@@ -432,5 +432,68 @@ async def test_nested_bool():
             pass
 
 
+_stored_input_tensor = None
+
+
+async def _store_input_func(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    global _stored_input_tensor
+    _stored_input_tensor = a
+    return a + b
+
+
+@pytest.mark.asyncio
+async def test_input_tensor_lifetime_safety():
+    """Input tensors must remain valid when stored beyond the coroutine lifetime.
+
+    The server function captures an input tensor into a global. With the old
+    non-owning UcxBuffer design, the backing UCX buffer was freed when the
+    payload_keeper callback fired (after coroutine completion), causing a
+    use-after-free. With the shared_ptr<void> keeper design the tensor keeps
+    the buffer alive for as long as any Python object references it.
+    """
+    global _stored_input_tensor
+    _stored_input_tensor = None
+
+    server = axon.AxonRuntime("test_lifetime_server")
+    server.start()
+    server.register_function(_store_input_func, 200, from_dlpack_fn=np.from_dlpack)
+
+    client = axon.AxonRuntime("test_lifetime_client")
+    client.start_client()
+    await client.connect_endpoint_async(
+        server.get_local_address(), "test_lifetime_server"
+    )
+
+    try:
+        a = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float64)
+        b = np.array([10.0, 20.0, 30.0, 40.0], dtype=np.float64)
+
+        result = await client.invoke(
+            a,
+            b,
+            worker_name="test_lifetime_server",
+            session_id=0,
+            function=200,
+            from_dlpack_fn=np.from_dlpack,
+        )
+
+        # Yield to the event loop so the done_callback fires and
+        # payload_keeper in the callback lambda is released.
+        await asyncio.sleep(0)
+
+        # _stored_input_tensor must still point to valid memory even after
+        # the callback released payload_keeper.
+        assert _stored_input_tensor is not None
+        np.testing.assert_array_equal(_stored_input_tensor, a)
+        np.testing.assert_array_equal(result, a + b)
+    finally:
+        _stored_input_tensor = None
+        try:
+            client.stop()
+            server.stop()
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
