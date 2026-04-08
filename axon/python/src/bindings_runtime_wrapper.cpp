@@ -72,73 +72,33 @@ PythonAsyncFunctionWrapper::operator()(
   return FunctionImpl(params, payload);
 }
 
-template <typename PayloadT>
 nb::object PythonAsyncFunctionWrapper::ConvertSingleParamToPython(
-  size_t flat_tensor_idx, size_t tensor_param_idx,
-  rpc::utils::TensorMeta&& meta, const PayloadT& payload) const {
-  // Check if we have a cached Python object from custom memory policy
-  // This avoids reconstructing the object from UcxBuffer/UcxBufferVec
-  if constexpr (std::is_same_v<PayloadT, ucxx::UcxBuffer>) {
-    auto cached_obj = TryGetCustomBuffer(payload.data());
-    if (!cached_obj.is_none()) {
-      return cached_obj;
-    }
-  } else if constexpr (std::is_same_v<PayloadT, ucxx::UcxBufferVec>) {
-    const auto& buffers = payload.buffers();
-    if (flat_tensor_idx < buffers.size()) {
-      auto cached_obj = TryGetCustomBuffer(buffers[flat_tensor_idx].data);
-      if (!cached_obj.is_none()) {
-        return cached_obj;
-      }
-    }
+  size_t tensor_param_idx, rpc::utils::TensorMeta&& meta,
+  ucxx::UcxBuffer&& buffer) const {
+  auto cached_obj = TryGetCustomBuffer(buffer.data());
+  if (!cached_obj.is_none()) {
+    return cached_obj;
   }
 
-  nb::object dltensor_capsule;
+  nb::object dltensor_capsule =
+    TensorMetaToDlpack(std::move(meta), std::move(buffer));
 
-  if constexpr (std::is_same_v<PayloadT, ucxx::UcxBuffer>) {
-    // Create a non-owning UcxBuffer view for this tensor
-    ucxx::UcxBuffer non_owning_buffer(
-      self.GetMemoryResourceManager(), payload.type(), payload.data(),
-      payload.size(), payload.mem_h(), false);
-    dltensor_capsule =
-      TensorMetaToDlpack(std::move(meta), std::move(non_owning_buffer));
-  } else if constexpr (std::is_same_v<PayloadT, ucxx::UcxBufferVec>) {
-    const auto& buffers = payload.buffers();
-    if (flat_tensor_idx >= buffers.size()) {
-      throw std::runtime_error("Tensor index out of range in UcxBufferVec");
-    }
-
-    const auto& buffer = buffers[flat_tensor_idx];
-    ucxx::UcxBuffer non_owning_buffer(
-      self.GetMemoryResourceManager(), payload.type(), buffer.data, buffer.size,
-      payload.mem_h(), false);
-
-    dltensor_capsule =
-      TensorMetaToDlpack(std::move(meta), std::move(non_owning_buffer));
-  } else {
-    throw std::runtime_error(
-      "TensorMeta parameter requires UcxBuffer or UcxBufferVec payload");
-  }
-
-  // Use saved from_dlpack_fn method to convert to user-expected type
   if (tensor_param_idx < tensor_param_from_dlpack.size()) {
     const auto& from_dlpack_ref = tensor_param_from_dlpack[tensor_param_idx];
     if (from_dlpack_ref) {
       nb::object from_dlpack_fn = from_dlpack_ref.get();
       if (!from_dlpack_fn.is_none()) {
-        // Call type.from_dlpack_fn(dltensor_capsule) to get the correct type
         return from_dlpack_fn(dltensor_capsule);
       }
     }
   }
 
-  // Fallback: return raw dltensor capsule if no from_dlpack_fn is available
   return dltensor_capsule;
 }
 
 template <typename PayloadT>
 nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython(
-  data::vector<rpc::ParamMeta>& params, const PayloadT& payload) const {
+  data::vector<rpc::ParamMeta>& params, PayloadT& payload) const {
   nb::list py_args;
 
   const size_t num_params = param_types.size();
@@ -207,6 +167,18 @@ nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython(
   size_t tensor_param_idx = 0;
   size_t non_tensor_idx = 0;
 
+  std::vector<ucxx::UcxBuffer> extracted_buffers;
+  if constexpr (std::is_same_v<PayloadT, ucxx::UcxBufferVec>) {
+    if (payload.size() > 0) {
+      // By calling ExtractBuffers(), we take ownership of the individual
+      // UcxBuffer instances. This is crucial for avoiding shared lifetime
+      // constraints: each resulting DLPack capsule effectively owns its
+      // independent underlying component, transferring memory management
+      // natively to the Python Garbage Collector.
+      extracted_buffers = std::move(payload).ExtractBuffers();
+    }
+  }
+
   for (size_t i = 0; i < num_params; ++i) {
     const auto& enc = encoded_lookup[i];
     if (enc == NL::NESTED_TENSOR_LIST) {
@@ -230,12 +202,23 @@ nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython(
             throw std::runtime_error(
               "Not enough tensors for nested tensor list");
           }
-          auto py_dlpack = ConvertSingleParamToPython(
-            flat_tensor_idx, tensor_param_idx,
-            std::move(const_cast<rpc::utils::TensorMeta&>(
-              (*tensor_meta_vec_ptr)[flat_tensor_idx])),
-            payload);
-          inner.append(std::move(py_dlpack));
+          if constexpr (std::is_same_v<PayloadT, ucxx::UcxBuffer>) {
+            auto py_dlpack = ConvertSingleParamToPython(
+              tensor_param_idx,
+              std::move(const_cast<rpc::utils::TensorMeta&>(
+                (*tensor_meta_vec_ptr)[flat_tensor_idx])),
+              std::move(payload));
+            inner.append(std::move(py_dlpack));
+          } else if constexpr (std::is_same_v<PayloadT, ucxx::UcxBufferVec>) {
+            auto py_dlpack = ConvertSingleParamToPython(
+              tensor_param_idx,
+              std::move(const_cast<rpc::utils::TensorMeta&>(
+                (*tensor_meta_vec_ptr)[flat_tensor_idx])),
+              std::move(extracted_buffers[flat_tensor_idx]));
+            inner.append(std::move(py_dlpack));
+          } else {
+            throw std::runtime_error("Unexpected payload type for tensor");
+          }
           ++flat_tensor_idx;
         }
         outer.append(std::move(inner));
@@ -264,20 +247,42 @@ nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython(
       // next tensor from the shared stream sequentially.
       if (
         tensor_meta_vec_ptr && flat_tensor_idx < tensor_meta_vec_ptr->size()) {
-        auto py_dlpack = ConvertSingleParamToPython(
-          flat_tensor_idx, tensor_param_idx,
-          std::move(const_cast<rpc::utils::TensorMeta&>(
-            (*tensor_meta_vec_ptr)[flat_tensor_idx])),
-          payload);
-        py_args.append(py_dlpack);
+        if constexpr (std::is_same_v<PayloadT, ucxx::UcxBuffer>) {
+          auto py_dlpack = ConvertSingleParamToPython(
+            tensor_param_idx,
+            std::move(const_cast<rpc::utils::TensorMeta&>(
+              (*tensor_meta_vec_ptr)[flat_tensor_idx])),
+            std::move(payload));
+          py_args.append(std::move(py_dlpack));
+        } else if constexpr (std::is_same_v<PayloadT, ucxx::UcxBufferVec>) {
+          auto py_dlpack = ConvertSingleParamToPython(
+            tensor_param_idx,
+            std::move(const_cast<rpc::utils::TensorMeta&>(
+              (*tensor_meta_vec_ptr)[flat_tensor_idx])),
+            std::move(extracted_buffers[flat_tensor_idx]));
+          py_args.append(std::move(py_dlpack));
+        } else {
+          throw std::runtime_error("Unexpected payload type for tensor");
+        }
         ++flat_tensor_idx;
       } else if (single_tensor_meta_ptr && flat_tensor_idx == 0) {
-        auto py_dlpack = ConvertSingleParamToPython(
-          flat_tensor_idx, tensor_param_idx,
-          std::move(
-            const_cast<rpc::utils::TensorMeta&>(*single_tensor_meta_ptr)),
-          payload);
-        py_args.append(py_dlpack);
+        if constexpr (std::is_same_v<PayloadT, ucxx::UcxBuffer>) {
+          auto py_dlpack = ConvertSingleParamToPython(
+            tensor_param_idx,
+            std::move(
+              const_cast<rpc::utils::TensorMeta&>(*single_tensor_meta_ptr)),
+            std::move(payload));
+          py_args.append(std::move(py_dlpack));
+        } else if constexpr (std::is_same_v<PayloadT, ucxx::UcxBufferVec>) {
+          auto py_dlpack = ConvertSingleParamToPython(
+            tensor_param_idx,
+            std::move(
+              const_cast<rpc::utils::TensorMeta&>(*single_tensor_meta_ptr)),
+            std::move(extracted_buffers[flat_tensor_idx]));
+          py_args.append(std::move(py_dlpack));
+        } else {
+          throw std::runtime_error("Unexpected payload type for tensor");
+        }
         ++flat_tensor_idx;
       } else {
         throw std::runtime_error(
@@ -290,12 +295,23 @@ nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython(
       nb::list tensor_list;
       if (tensor_meta_vec_ptr) {
         while (flat_tensor_idx < tensor_meta_vec_ptr->size()) {
-          auto py_dlpack = ConvertSingleParamToPython(
-            flat_tensor_idx, tensor_param_idx,
-            std::move(const_cast<rpc::utils::TensorMeta&>(
-              (*tensor_meta_vec_ptr)[flat_tensor_idx])),
-            payload);
-          tensor_list.append(std::move(py_dlpack));
+          if constexpr (std::is_same_v<PayloadT, ucxx::UcxBuffer>) {
+            auto py_dlpack = ConvertSingleParamToPython(
+              tensor_param_idx,
+              std::move(const_cast<rpc::utils::TensorMeta&>(
+                (*tensor_meta_vec_ptr)[flat_tensor_idx])),
+              std::move(payload));
+            tensor_list.append(std::move(py_dlpack));
+          } else if constexpr (std::is_same_v<PayloadT, ucxx::UcxBufferVec>) {
+            auto py_dlpack = ConvertSingleParamToPython(
+              tensor_param_idx,
+              std::move(const_cast<rpc::utils::TensorMeta&>(
+                (*tensor_meta_vec_ptr)[flat_tensor_idx])),
+              std::move(extracted_buffers[flat_tensor_idx]));
+            tensor_list.append(std::move(py_dlpack));
+          } else {
+            throw std::runtime_error("Unexpected payload type for tensor");
+          }
           ++flat_tensor_idx;
         }
       }
@@ -598,26 +614,19 @@ PythonAsyncFunctionWrapper::FunctionImpl(
         [this, owned_params = std::move(owned_params),
          owned_payload = std::move(owned_payload), &receiver]() mutable {
           try {
-            // Use non-const refs to allow moving TensorMeta for zero-copy
             auto& params = owned_params;
-            const auto& payload = owned_payload;
-            auto py_args = ConvertParamsToPython(params, payload);
-
             nb::object py_coro;
+
             if (!tensor_param_indices.empty()) {
-              // Normal mode: tensor params are already parsed and in py_args
-              // via ConvertParamsToPython which uses
-              // ConvertSingleParamToPython
+              auto py_args = ConvertParamsToPython(params, owned_payload);
               py_coro = this->py_callable(*py_args);
             } else {
-              // Raw mode (register_function_raw): no tensor params parsed,
-              // pass the payload directly as UcxBuffer/UcxBufferVec
+              auto py_args = ConvertParamsToPython(params, owned_payload);
               if constexpr (std::is_same_v<PayloadT, std::monostate>) {
                 py_coro = this->py_callable(*py_args);
               } else {
-                // Pass UcxBuffer or UcxBufferVec directly - they are already
-                // registered with nanobind in bindings_types.cpp
-                py_coro = this->py_callable(*py_args, nb::cast(payload));
+                py_coro = this->py_callable(
+                  *py_args, nb::cast(std::move(owned_payload)));
               }
             }
 
@@ -626,19 +635,9 @@ PythonAsyncFunctionWrapper::FunctionImpl(
             nb::object future = asyncio.attr("ensure_future")(task);
 
             auto py_callback = CreatePythonResultCallback(receiver);
-
-            // CRITICAL FIX: Use shared_ptr to extend payload lifetime until
-            // the Python async task completes. Without this, the payload
-            // would be destroyed when the TaskFacade lambda exits, but the
-            // Python task may not have executed yet. We use shared_ptr
-            // because nanobind::cpp_function requires a const callable, and
-            // we need to move the payload into shared ownership.
-            auto payload_keeper =
-              std::make_shared<PayloadT>(std::move(owned_payload));
-
-            future.attr("add_done_callback")(nb::cpp_function(
-              [callback = std::move(py_callback),
-               payload_keeper](nb::object fut) { callback(fut); }));
+            future.attr("add_done_callback")(
+              nb::cpp_function([callback = std::move(py_callback)](
+                                 nb::object fut) { callback(fut); }));
           } catch (const nb::python_error& e) {
             receiver.set_error(std::make_exception_ptr(std::runtime_error(
               "Failed to call Python async function: "
@@ -651,20 +650,12 @@ PythonAsyncFunctionWrapper::FunctionImpl(
 }
 
 // Explicit template instantiations
-template nb::object
-PythonAsyncFunctionWrapper::ConvertSingleParamToPython<ucxx::UcxBuffer>(
-  size_t, size_t, rpc::utils::TensorMeta&&, const ucxx::UcxBuffer&) const;
-template nb::object
-PythonAsyncFunctionWrapper::ConvertSingleParamToPython<ucxx::UcxBufferVec>(
-  size_t, size_t, rpc::utils::TensorMeta&&, const ucxx::UcxBufferVec&) const;
-
 template nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython<
-  std::monostate>(data::vector<rpc::ParamMeta>&, const std::monostate&) const;
+  std::monostate>(data::vector<rpc::ParamMeta>&, std::monostate&) const;
 template nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython<
-  ucxx::UcxBuffer>(data::vector<rpc::ParamMeta>&, const ucxx::UcxBuffer&) const;
-template nb::list
-PythonAsyncFunctionWrapper::ConvertParamsToPython<ucxx::UcxBufferVec>(
-  data::vector<rpc::ParamMeta>&, const ucxx::UcxBufferVec&) const;
+  ucxx::UcxBuffer>(data::vector<rpc::ParamMeta>&, ucxx::UcxBuffer&) const;
+template nb::list PythonAsyncFunctionWrapper::ConvertParamsToPython<
+  ucxx::UcxBufferVec>(data::vector<rpc::ParamMeta>&, ucxx::UcxBufferVec&) const;
 
 template nb::object PythonAsyncFunctionWrapper::ConvertPayloadToPython<
   std::monostate>(std::monostate&&) const;

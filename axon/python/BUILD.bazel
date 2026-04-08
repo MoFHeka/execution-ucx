@@ -569,7 +569,7 @@ genrule(
 )
 
 # Python wrapper library that exposes the C++ extension module
-# This creates a py_library that can be imported as 'axon_runtime'
+# This creates a py_library that can be imported as 'axon'
 py_library(
     name = "axon_python",
     srcs = [
