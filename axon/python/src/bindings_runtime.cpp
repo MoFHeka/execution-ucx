@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/string_view.h>
 #include <nanobind/stl/vector.h>
@@ -33,6 +34,7 @@ limitations under the License.
 #include <unifex/upon_error.hpp>
 
 #include "axon/axon_runtime.hpp"
+#include "axon/python/src/bindings_memory_resource.hpp"
 #include "axon/python/src/bindings_runtime_helpers.hpp"
 #include "axon/python/src/bindings_runtime_wrapper.hpp"
 #include "axon/python/src/dlpack_helpers.hpp"
@@ -42,6 +44,7 @@ limitations under the License.
 #include "axon/python/src/python_wake_manager.hpp"
 
 #include "ucx_context/ucx_device_context.hpp"
+#include "ucx_context/ucx_memory_resource.hpp"
 
 #if CUDA_ENABLED
 #include <cuda.h>
@@ -99,7 +102,8 @@ void RegisterRuntime(nb::module_& m) {
     "__init__",
     [](
       axon::AxonRuntime* self, const std::string& worker_name,
-      size_t thread_pool_size, nb::object timeout_obj, nb::object device_obj) {
+      size_t thread_pool_size, nb::object timeout_obj, nb::object device_obj,
+      nb::object memory_manager_obj) {
       std::unique_ptr<ucxx::UcxAutoDeviceContext> device_context = nullptr;
 
       if (!device_obj.is_none()) {
@@ -155,14 +159,30 @@ void RegisterRuntime(nb::module_& m) {
         }
       }
 
-      new (self) axon::AxonRuntime(
-        worker_name, thread_pool_size, python::ConvertTimeout(timeout_obj),
-        std::move(device_context));
+      if (!memory_manager_obj.is_none()) {
+        auto* raw =
+          nb::cast<ucxx::UcxMemoryResourceManager*>(memory_manager_obj);
+        nb::object kept_alive = memory_manager_obj;
+        auto mr = std::shared_ptr<ucxx::UcxMemoryResourceManager>(
+          raw, [kept_alive = std::move(kept_alive)](
+                 ucxx::UcxMemoryResourceManager*) mutable {
+            nb::gil_scoped_acquire gil;
+            kept_alive = nb::object{};
+          });
+        new (self) axon::AxonRuntime(
+          std::move(mr), worker_name, thread_pool_size,
+          python::ConvertTimeout(timeout_obj), std::move(device_context));
+      } else {
+        new (self) axon::AxonRuntime(
+          worker_name, thread_pool_size, python::ConvertTimeout(timeout_obj),
+          std::move(device_context));
+      }
     },
     nb::arg("worker_name"),
     nb::arg("thread_pool_size") =
       (std::thread::hardware_concurrency() < 16 ? 4 : 16),
-    nb::arg("timeout") = nb::none(), nb::arg("device") = nb::none());
+    nb::arg("timeout") = nb::none(), nb::arg("device") = nb::none(),
+    nb::arg("resource_manager") = nb::none());
 
   cls.def("__del__", [](axon::AxonRuntime& self) {
     nb::gil_scoped_release release;
