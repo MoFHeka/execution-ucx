@@ -13,10 +13,14 @@ build --flag_alias=cuda_compiler=@rules_cuda//cuda:compiler
 build:debug --compilation_mode=dbg
 build:debug --copt=-g
 build:debug --copt=-O0
-# build:debug --copt=-fsanitize=address
-# build:debug --linkopt=-fsanitize=address
 build:debug --strip=never
 build:debug --define=DEBUG=1
+
+# AddressSanitizer build settings
+build:asan --config=debug
+build:asan --copt=-fsanitize=address
+build:asan --copt=-fno-omit-frame-pointer
+build:asan --linkopt=-fsanitize=address
 
 # Release build settings
 build:release --compilation_mode=opt

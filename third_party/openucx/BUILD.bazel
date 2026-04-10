@@ -58,6 +58,9 @@ configure_make(
         "-Wno-error",
         "-fPIC",  # Add position-independent code flag for shared library linking
     ],
+    env = {
+        "LDFLAGS": "-lpthread",
+    },
     lib_source = "@ucx//:all_srcs",
     out_bin_dir = "bin",
     out_binaries = [
