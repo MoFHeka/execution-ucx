@@ -82,5 +82,50 @@ TEST_F(UcxBufferTest, ThrowsOnSizeMismatch) {
   EXPECT_THROW(std::move(buffer).to_buffer_vec(sizes), std::length_error);
 }
 
+TEST_F(UcxBufferTest, MoveWithOwnBufferTruePreservesReleaseCallback) {
+  int release_count = 0;
+  auto* external = new uint8_t[16];
+
+  {
+    UcxBuffer buffer(
+      *mr_, ucx_memory_type::HOST, external, 16, nullptr, true,
+      [&release_count](void* ptr) {
+        ++release_count;
+        delete[] static_cast<uint8_t*>(ptr);
+      });
+
+    auto moved = UcxBuffer(std::move(buffer), true);
+    EXPECT_EQ(buffer.data(), nullptr);
+    EXPECT_FALSE(buffer.own_buffer());
+    EXPECT_EQ(moved.data(), external);
+    EXPECT_TRUE(moved.own_buffer());
+  }
+
+  EXPECT_EQ(release_count, 1);
+}
+
+TEST_F(UcxBufferTest, MoveWithOwnBufferFalseSuppressesReleaseCallback) {
+  int release_count = 0;
+  auto* external = new uint8_t[16];
+
+  {
+    UcxBuffer buffer(
+      *mr_, ucx_memory_type::HOST, external, 16, nullptr, true,
+      [&release_count](void* ptr) {
+        ++release_count;
+        delete[] static_cast<uint8_t*>(ptr);
+      });
+
+    auto moved = UcxBuffer(std::move(buffer), false);
+    EXPECT_EQ(buffer.data(), nullptr);
+    EXPECT_FALSE(buffer.own_buffer());
+    EXPECT_EQ(moved.data(), external);
+    EXPECT_FALSE(moved.own_buffer());
+  }
+
+  EXPECT_EQ(release_count, 0);
+  delete[] external;
+}
+
 }  // namespace ucxx
 }  // namespace eux

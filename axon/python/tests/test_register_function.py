@@ -127,7 +127,9 @@ def test_register_function_invalid_untyped_list():
         return 1
 
     with create_server("test_worker_invalid_list") as runtime:
-        with pytest.raises(TypeError, match="Unsupported or missing type annotation"):
+        with pytest.raises(
+            TypeError, match="List without type argument is not supported"
+        ):
             runtime.register_function(
                 callable=invalid_list,
                 function_id=7,
@@ -200,7 +202,7 @@ def test_register_function_invalid_list_list_str():
         return 1
 
     with create_server("test_worker_nested_str") as runtime:
-        with pytest.raises(TypeError, match="Unsupported or missing type annotation"):
+        with pytest.raises(TypeError, match="Unsupported inner element type"):
             runtime.register_function(
                 callable=nested_str_func,
                 function_id=203,
@@ -228,7 +230,9 @@ def test_register_function_invalid_list_list_untyped():
         return 1
 
     with create_server("test_worker_nested_untyped") as runtime:
-        with pytest.raises(TypeError, match="Unsupported or missing type annotation"):
+        with pytest.raises(
+            TypeError, match="requires explicit element type annotation"
+        ):
             runtime.register_function(
                 callable=untyped_nested,
                 function_id=205,

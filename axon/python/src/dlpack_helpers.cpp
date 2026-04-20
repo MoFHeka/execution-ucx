@@ -405,7 +405,7 @@ struct TensorDlpackContext {
 
 nb::object TensorMetaToDlpack(
   rpc::utils::TensorMeta&& meta, ucxx::UcxBuffer&& buffer) {
-  auto owned = std::make_shared<ucxx::UcxBuffer>(std::move(buffer), false);
+  auto owned = std::make_shared<ucxx::UcxBuffer>(std::move(buffer), true);
   DLDevice device = UcxMemoryTypeToDlDevice(owned->type());
   auto tensor = std::make_unique<axon::utils::TensorBase>();
   tensor->assign(std::move(meta), owned->data());
