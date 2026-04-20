@@ -13,27 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <nanobind/nanobind.h>
-
-#include "axon/python/src/bindings_enums.hpp"
 #include "axon/python/src/bindings_memory_resource.hpp"
-#include "axon/python/src/bindings_runtime.hpp"
-#include "axon/python/src/bindings_types.hpp"
+
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/shared_ptr.h>
+
+#include "ucx_context/ucx_memory_resource.hpp"
 
 namespace nb = nanobind;
 
-// Forward declarations for bindings
-void RegisterEnums(nb::module_& m);
-void RegisterDefaultResourceManager(nb::module_& m);
-void RegisterTypes(nb::module_& m);
-void RegisterRuntime(nb::module_& m);
+void RegisterDefaultResourceManager(nb::module_& m) {
+  nb::class_<eux::ucxx::UcxMemoryResourceManager>(
+    m, "UcxMemoryResourceManager");
 
-NB_MODULE(axon, m) {
-  m.doc() = "Axon Runtime Python bindings";
-
-  // Register all bindings
-  RegisterEnums(m);
-  RegisterDefaultResourceManager(m);
-  RegisterTypes(m);
-  RegisterRuntime(m);
+  nb::class_<
+    eux::ucxx::DefaultUcxMemoryResourceManager,
+    eux::ucxx::UcxMemoryResourceManager>(m, "DefaultUcxMemoryResourceManager")
+    .def(nb::init<>());
 }
