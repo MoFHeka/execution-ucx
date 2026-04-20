@@ -1,6 +1,8 @@
 import pytest
 import numpy as np
 import asyncio
+import gc
+import weakref
 from typing import List, Tuple
 import test_utils  # noqa: F401
 import axon
@@ -433,12 +435,37 @@ async def test_nested_bool():
 
 
 _stored_input_tensor = None
+_released_input_tensor = None
+_released_input_tensor_ref = None
 
 
 async def _store_input_func(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     global _stored_input_tensor
     _stored_input_tensor = a
     return a + b
+
+
+async def _store_then_release_input_func(a: np.ndarray) -> int:
+    global _released_input_tensor, _released_input_tensor_ref
+
+    _released_input_tensor = a
+    _released_input_tensor_ref = weakref.ref(a)
+    del a
+
+    await asyncio.sleep(0)
+
+    result = int(np.sum(_released_input_tensor))
+    _released_input_tensor = None
+    return result
+
+
+async def _wait_for_object_release(obj_ref, retries: int = 10):
+    for _ in range(retries):
+        if obj_ref is None or obj_ref() is None:
+            return True
+        gc.collect()
+        await asyncio.sleep(0)
+    return obj_ref() is None
 
 
 @pytest.mark.asyncio
@@ -488,6 +515,52 @@ async def test_input_tensor_lifetime_safety():
         np.testing.assert_array_equal(result, a + b)
     finally:
         _stored_input_tensor = None
+        try:
+            client.stop()
+            server.stop()
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_input_tensor_is_released_after_rpc():
+    """Stored server-side tensor references should be released after RPC."""
+    global _released_input_tensor, _released_input_tensor_ref
+    _released_input_tensor = None
+    _released_input_tensor_ref = None
+
+    server = axon.AxonRuntime("test_release_server")
+    server.start()
+    server.register_function(
+        _store_then_release_input_func,
+        201,
+        from_dlpack_fn=np.from_dlpack,
+    )
+
+    client = axon.AxonRuntime("test_release_client")
+    client.start_client()
+    await client.connect_endpoint_async(
+        server.get_local_address(), "test_release_server"
+    )
+
+    try:
+        a = np.array([3.0, 4.0, 5.0, 6.0], dtype=np.float64)
+
+        result = await client.invoke(
+            a,
+            worker_name="test_release_server",
+            session_id=0,
+            function=201,
+            from_dlpack_fn=np.from_dlpack,
+        )
+
+        assert result == int(np.sum(a))
+        assert _released_input_tensor is None
+        assert _released_input_tensor_ref is not None
+        assert await _wait_for_object_release(_released_input_tensor_ref)
+    finally:
+        _released_input_tensor = None
+        _released_input_tensor_ref = None
         try:
             client.stop()
             server.stop()
