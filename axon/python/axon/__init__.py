@@ -84,12 +84,13 @@ def _find_and_load_module():
 
     # Search in current directory and common Bazel output locations
     search_paths = [
-        current_dir,  # axon/ (source location)
+        current_dir,  # axon/ (installed wheel/source location)
+        current_dir.parent.parent.parent / "bazel-bin" / "axon" / "python",
         current_dir.parent.parent.parent
         / "bazel-bin"
         / "axon"
         / "python"
-        / "axon",  # bazel-bin output
+        / "axon",  # legacy bazel-bin output
     ]
 
     # Also check runfiles if running under Bazel
@@ -98,6 +99,7 @@ def _find_and_load_module():
         search_paths.insert(
             0, runfiles_dir / "execution_ucx" / "axon" / "python" / "axon"
         )
+        search_paths.insert(0, runfiles_dir / "execution_ucx" / "axon" / "python")
         search_paths.insert(0, runfiles_dir)
 
     # Try to find the library

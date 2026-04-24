@@ -575,13 +575,13 @@ cc_binary(
     ],
 )
 
-# Create a symlink/copy with the correct name for Python import
-# nanobind expects the module name to match the .so filename
-# Bazel generates libaxon_python_runtime.so, we copy it to axon/axon.so
+# Create a copy with the correct name for Python import.
+# Keep it next to axon_python_runtime so Bazel's generated RUNPATH entries
+# still point at bazel-bin/_solib_k8 when importing from the source tree.
 genrule(
     name = "axon_python_lib",
     srcs = [":axon_python_runtime"],
-    outs = ["axon/axon.so"],
+    outs = ["axon.so"],
     cmd = "cp $(location :axon_python_runtime) $@",
     visibility = ["//visibility:public"],
 )
