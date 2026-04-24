@@ -166,12 +166,14 @@ void RegisterRuntime(nb::module_& m) {
         auto mr = std::shared_ptr<ucxx::UcxMemoryResourceManager>(
           raw, [kept_alive = std::move(kept_alive)](
                  ucxx::UcxMemoryResourceManager*) mutable {
-            if (!Py_IsInitialized()) {
-              kept_alive.release();
-              return;
+            if (Py_IsInitialized()) {
+              nb::gil_scoped_acquire gil;
             }
-            nb::gil_scoped_acquire gil;
-            kept_alive = nb::object{};
+            // Here, when the interpreter is shuted down before
+            // `AxonRuntime.stop` is called, the GIL can't be held any more but
+            // the CPython object model still exist so we simply decrease the
+            // ref count by one.
+            Py_DECREF(kept_alive.ptr());
           });
         new (self) axon::AxonRuntime(
           std::move(mr), worker_name, thread_pool_size,
@@ -333,66 +335,70 @@ void RegisterRuntime(nb::module_& m) {
         self.ConnectEndpointAsync(std::move(ucp_address), worker_name);
 
       // Spawn task on the client async scope
-      self.SpawnClientTask(unifex::on(
-        self.GetTimeContextScheduler(),
-        std::move(sender)
-          | unifex::then(
-            [future_ptr, &wake_manager](
-              std::expected<uint64_t, axon::errors::AxonErrorContext>
-                result) mutable {
-              if (result.has_value()) {
-                wake_manager.Enqueue(pro::make_proxy<python::TaskFacade>(
-                  [future_ptr, value = result.value()]() mutable {
-                    nb::object future = nb::steal<nb::object>(future_ptr);
-                    future.attr("set_result")(nb::cast(value));
-                  }));
-              } else {
-                const auto& error_ctx = result.error();
-                std::string error_msg = python::BuildErrorMessageFromContext(
-                  error_ctx, "Connection failed");
-                wake_manager.Enqueue(pro::make_proxy<python::TaskFacade>(
-                  [future_ptr, error_msg = std::move(error_msg)]() mutable {
-                    nb::object future = nb::steal<nb::object>(future_ptr);
-                    python::SetFutureException(future, error_msg);
-                  }));
-              }
-            })
-          | unifex::upon_error([future_ptr, &wake_manager](auto&& error) {
-              using ErrorType = std::decay_t<decltype(error)>;
-              constexpr bool is_axon_error_context =
-                std::is_same_v<ErrorType, axon::errors::AxonErrorContext>;
-              constexpr bool is_exception_ptr =
-                std::is_same_v<ErrorType, std::exception_ptr>;
-
-              std::string error_msg = "Unknown error in connection";
-
-              if constexpr (is_axon_error_context) {
-                error_msg = python::BuildErrorMessageFromContext(
-                  error, "Connection failed");
-              } else if constexpr (is_exception_ptr) {
-                try {
-                  std::rethrow_exception(error);
-                } catch (const axon::errors::AxonErrorException& e) {
-                  error_msg = python::BuildErrorMessageFromContext(
-                    e.context(), "Connection failed");
-                } catch (const rpc::RpcException& e) {
-                  std::string_view error_msg_view = e.what();
-                  if (!error_msg_view.empty()) {
-                    error_msg = error_msg_view;
-                  } else {
-                    error_msg = "RPC error: " + e.code().message();
-                  }
-                } catch (const std::exception& e) {
-                  error_msg = e.what();
+      self.SpawnClientTask(
+        unifex::on(
+          self.GetTimeContextScheduler(),
+          std::move(sender)
+            | unifex::then(
+              [future_ptr, &wake_manager](
+                std::expected<uint64_t, axon::errors::AxonErrorContext>
+                  result) mutable {
+                if (result.has_value()) {
+                  wake_manager.Enqueue(
+                    pro::make_proxy<python::TaskFacade>(
+                      [future_ptr, value = result.value()]() mutable {
+                        nb::object future = nb::steal<nb::object>(future_ptr);
+                        future.attr("set_result")(nb::cast(value));
+                      }));
+                } else {
+                  const auto& error_ctx = result.error();
+                  std::string error_msg = python::BuildErrorMessageFromContext(
+                    error_ctx, "Connection failed");
+                  wake_manager.Enqueue(
+                    pro::make_proxy<python::TaskFacade>(
+                      [future_ptr, error_msg = std::move(error_msg)]() mutable {
+                        nb::object future = nb::steal<nb::object>(future_ptr);
+                        python::SetFutureException(future, error_msg);
+                      }));
                 }
-              }
+              })
+            | unifex::upon_error([future_ptr, &wake_manager](auto&& error) {
+                using ErrorType = std::decay_t<decltype(error)>;
+                constexpr bool is_axon_error_context =
+                  std::is_same_v<ErrorType, axon::errors::AxonErrorContext>;
+                constexpr bool is_exception_ptr =
+                  std::is_same_v<ErrorType, std::exception_ptr>;
 
-              wake_manager.Enqueue(pro::make_proxy<python::TaskFacade>(
-                [future_ptr, error_msg = std::move(error_msg)]() mutable {
-                  nb::object future = nb::steal<nb::object>(future_ptr);
-                  python::SetFutureException(future, error_msg);
-                }));
-            })));
+                std::string error_msg = "Unknown error in connection";
+
+                if constexpr (is_axon_error_context) {
+                  error_msg = python::BuildErrorMessageFromContext(
+                    error, "Connection failed");
+                } else if constexpr (is_exception_ptr) {
+                  try {
+                    std::rethrow_exception(error);
+                  } catch (const axon::errors::AxonErrorException& e) {
+                    error_msg = python::BuildErrorMessageFromContext(
+                      e.context(), "Connection failed");
+                  } catch (const rpc::RpcException& e) {
+                    std::string_view error_msg_view = e.what();
+                    if (!error_msg_view.empty()) {
+                      error_msg = error_msg_view;
+                    } else {
+                      error_msg = "RPC error: " + e.code().message();
+                    }
+                  } catch (const std::exception& e) {
+                    error_msg = e.what();
+                  }
+                }
+
+                wake_manager.Enqueue(
+                  pro::make_proxy<python::TaskFacade>(
+                    [future_ptr, error_msg = std::move(error_msg)]() mutable {
+                      nb::object future = nb::steal<nb::object>(future_ptr);
+                      python::SetFutureException(future, error_msg);
+                    }));
+              })));
       return future;
     },
     nb::arg("ucp_address"), nb::arg("worker_name"));
@@ -457,14 +463,15 @@ void RegisterRuntime(nb::module_& m) {
       if (
         !memory_policy_factory.is_none() && !tensor_param_indices.empty()
         && from_dlpack_fn.is_none()) {
-        throw std::runtime_error(std::format(
-          "Function '{}' has tensor parameters and custom memory_policy is "
-          "set, but from_dlpack_fn is not provided. "
-          "from_dlpack_fn is required to handle UCX eager path where data "
-          "arrives pre-allocated in host memory and custom_memory_policy "
-          "is not invoked. Please provide from_dlpack_fn (e.g., "
-          "numpy.from_dlpack, torch.from_dlpack, jax.dlpack.from_dlpack).",
-          function_name));
+        throw std::runtime_error(
+          std::format(
+            "Function '{}' has tensor parameters and custom memory_policy is "
+            "set, but from_dlpack_fn is not provided. "
+            "from_dlpack_fn is required to handle UCX eager path where data "
+            "arrives pre-allocated in host memory and custom_memory_policy "
+            "is not invoked. Please provide from_dlpack_fn (e.g., "
+            "numpy.from_dlpack, torch.from_dlpack, jax.dlpack.from_dlpack).",
+            function_name));
       }
 
       // Build from_dlpack_fn vectors if user provided one
@@ -749,14 +756,15 @@ void RegisterRuntime(nb::module_& m) {
       if (
         !memory_policy_factory.is_none()
         && !sig_info.tensor_param_indices.empty() && from_dlpack_fn.is_none()) {
-        throw std::runtime_error(std::format(
-          "Function '{}' has tensor parameters and custom memory_policy is "
-          "set, but from_dlpack_fn is not provided. "
-          "from_dlpack_fn is required to handle UCX eager path where data "
-          "arrives pre-allocated in host memory and custom_memory_policy "
-          "is not invoked. Please provide from_dlpack_fn (e.g., "
-          "numpy.from_dlpack, torch.from_dlpack, jax.dlpack.from_dlpack).",
-          function_name));
+        throw std::runtime_error(
+          std::format(
+            "Function '{}' has tensor parameters and custom memory_policy is "
+            "set, but from_dlpack_fn is not provided. "
+            "from_dlpack_fn is required to handle UCX eager path where data "
+            "arrives pre-allocated in host memory and custom_memory_policy "
+            "is not invoked. Please provide from_dlpack_fn (e.g., "
+            "numpy.from_dlpack, torch.from_dlpack, jax.dlpack.from_dlpack).",
+            function_name));
       }
 
       // Override from_dlpack_fn callables if user provided one
@@ -880,9 +888,10 @@ void RegisterRuntime(nb::module_& m) {
            result_handler = std::move(result_handler)](auto&& payload) mutable {
             rpc::RpcRequestHeader& header_ref =
               nb::cast<rpc::RpcRequestHeader&>(request_header_obj);
-            self.SpawnClientTask(python::InvokeRpcWithCustomMemory(
-              self, worker_name, std::move(header_ref), std::move(payload),
-              memory_policy_factory, std::move(result_handler)));
+            self.SpawnClientTask(
+              python::InvokeRpcWithCustomMemory(
+                self, worker_name, std::move(header_ref), std::move(payload),
+                memory_policy_factory, std::move(result_handler)));
           };
         dispatch_rpc(std::move(handler));
       } else {
@@ -891,9 +900,10 @@ void RegisterRuntime(nb::module_& m) {
                           std::move(result_handler)](auto&& payload) mutable {
           rpc::RpcRequestHeader& header_ref =
             nb::cast<rpc::RpcRequestHeader&>(request_header_obj);
-          self.SpawnClientTask(python::InvokeRpcWithHostPolicy(
-            self, worker_name, std::move(header_ref), std::move(payload),
-            std::move(result_handler)));
+          self.SpawnClientTask(
+            python::InvokeRpcWithHostPolicy(
+              self, worker_name, std::move(header_ref), std::move(payload),
+              std::move(result_handler)));
         };
         dispatch_rpc(std::move(handler));
       }
@@ -969,37 +979,44 @@ void RegisterRuntime(nb::module_& m) {
       // Dispatch based on tensor count
       if (ctx.tensor_count() == 0) {
         if (use_custom_memory) {
-          self.SpawnClientTask(python::InvokeRpcWithCustomMemory(
-            self, worker_name, std::move(request_header), std::monostate{},
-            memory_policy_factory, std::move(result_handler)));
+          self.SpawnClientTask(
+            python::InvokeRpcWithCustomMemory(
+              self, worker_name, std::move(request_header), std::monostate{},
+              memory_policy_factory, std::move(result_handler)));
         } else {
-          self.SpawnClientTask(python::InvokeRpcWithHostPolicy(
-            self, worker_name, std::move(request_header), std::monostate{},
-            std::move(result_handler)));
+          self.SpawnClientTask(
+            python::InvokeRpcWithHostPolicy(
+              self, worker_name, std::move(request_header), std::monostate{},
+              std::move(result_handler)));
         }
       } else if (ctx.tensor_count() == 1) {
         // Use cached data to create buffer (no repeated ExtractDlpackTensor)
         ucxx::UcxBuffer buffer = ctx.to_ucx_buffer(mr);
         if (use_custom_memory) {
-          self.SpawnClientTask(python::InvokeRpcWithCustomMemory(
-            self, worker_name, std::move(request_header), std::move(buffer),
-            memory_policy_factory, std::move(result_handler)));
+          self.SpawnClientTask(
+            python::InvokeRpcWithCustomMemory(
+              self, worker_name, std::move(request_header), std::move(buffer),
+              memory_policy_factory, std::move(result_handler)));
         } else {
-          self.SpawnClientTask(python::InvokeRpcWithHostPolicy(
-            self, worker_name, std::move(request_header), std::move(buffer),
-            std::move(result_handler)));
+          self.SpawnClientTask(
+            python::InvokeRpcWithHostPolicy(
+              self, worker_name, std::move(request_header), std::move(buffer),
+              std::move(result_handler)));
         }
       } else {
         // Vector path
         ucxx::UcxBufferVec buffer_vec = ctx.to_ucx_buffer_vec(mr);
         if (use_custom_memory) {
-          self.SpawnClientTask(python::InvokeRpcWithCustomMemory(
-            self, worker_name, std::move(request_header), std::move(buffer_vec),
-            memory_policy_factory, std::move(result_handler)));
+          self.SpawnClientTask(
+            python::InvokeRpcWithCustomMemory(
+              self, worker_name, std::move(request_header),
+              std::move(buffer_vec), memory_policy_factory,
+              std::move(result_handler)));
         } else {
-          self.SpawnClientTask(python::InvokeRpcWithHostPolicy(
-            self, worker_name, std::move(request_header), std::move(buffer_vec),
-            std::move(result_handler)));
+          self.SpawnClientTask(
+            python::InvokeRpcWithHostPolicy(
+              self, worker_name, std::move(request_header),
+              std::move(buffer_vec), std::move(result_handler)));
         }
       }
 

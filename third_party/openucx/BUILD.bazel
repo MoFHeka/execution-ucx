@@ -8,6 +8,44 @@ load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
 
 package(default_visibility = ["//visibility:public"])
 
+config_setting(
+    name = "with_ib",
+    values = {
+        "define": "ucx_with_ib=true",
+    },
+)
+
+IB_CONFIGURE_OPTIONS = [
+    "--with-rc",
+    "--with-ud",
+    "--with-dc",
+    "--with-ib-hw-tm",
+    "--with-dm",
+    "--with-mlx5=guess",
+    # "--with-verbs=guess",  # Seems OpenFabrics verbs not compatible with mlx5?
+    "--with-rdmacm=guess",
+]
+
+NO_IB_CONFIGURE_OPTIONS = [
+    "--without-verbs",
+    "--without-mlx5",
+    "--without-rdmacm",
+]
+
+IB_SHARED_LIBS = [
+    "libuct_ib.so",
+    "libuct_ib.so.0",
+    "libuct_ib.so.0.0.0",
+    "libuct_ib_mlx5.so",
+    "libuct_ib_mlx5.so.0",
+    "libuct_ib_mlx5.so.0.0.0",
+]
+
+IB_STATIC_LIBS = [
+    "libuct_ib.a",
+    "libuct_ib_mlx5.a",
+]
+
 filegroup(
     name = "all_srcs",
     srcs = glob(["**"]),
@@ -31,28 +69,22 @@ configure_make(
         "--enable-compiler-opt",
         "--enable-optimizations",
         "--enable-cma",
-        "--with-rc",
-        "--with-ud",
-        "--with-dc",
-        "--with-ib-hw-tm",
-        "--with-dm",
         "--enable-tuning",
         "--with-fuse3=guess",
         "--with-mad=guess",
         "--with-gdrcopy=guess",
-        "--with-mlx5=guess",
-        # "--with-verbs=guess",  # Seems OpenFabrics verbs not compatible with mlx5?
-        "--with-rdmacm=guess",
         "--with-knem=guess",
         "--with-xpmem=guess",
         "--with-java=no",
         "--with-go=no",
     ] + select({
+        ":with_ib": IB_CONFIGURE_OPTIONS,
+        "//conditions:default": NO_IB_CONFIGURE_OPTIONS,
+    }) + select({
         "@rules_cuda//cuda:is_enabled": [
             "--with-cuda",
         ],
-        "//conditions:default": [
-        ],
+        "//conditions:default": [],
     }),
     copts = [
         "-Wno-error",
@@ -89,13 +121,10 @@ configure_make(
         "libuct_cma.so",
         "libuct_cma.so.0",
         "libuct_cma.so.0.0.0",
-        "libuct_ib.so",
-        "libuct_ib.so.0",
-        "libuct_ib.so.0.0.0",
-        "libuct_ib_mlx5.so",
-        "libuct_ib_mlx5.so.0",
-        "libuct_ib_mlx5.so.0.0.0",
     ] + select({
+        ":with_ib": IB_SHARED_LIBS,
+        "//conditions:default": [],
+    }) + select({
         "@rules_cuda//cuda:is_enabled": [
             # ucx directory prefix has been removed
             "libucm_cuda.so",
@@ -105,8 +134,7 @@ configure_make(
             "libuct_cuda.so.0",
             "libuct_cuda.so.0.0.0",
         ],
-        "//conditions:default": [
-        ],
+        "//conditions:default": [],
     }),
     out_static_libs = [
         "libucm.a",
@@ -116,23 +144,22 @@ configure_make(
         "libuct.a",
         # ucx directory prefix has been removed
         "libuct_cma.a",
-        "libuct_ib.a",
-        "libuct_ib_mlx5.a",
     ] + select({
+        ":with_ib": IB_STATIC_LIBS,
+        "//conditions:default": [],
+    }) + select({
         "@rules_cuda//cuda:is_enabled": [
             "libucm_cuda.a",
             "libuct_cuda.a",
         ],
-        "//conditions:default": [
-        ],
+        "//conditions:default": [],
     }),
     visibility = ["//visibility:public"],
     deps = select({
         "@rules_cuda//cuda:is_enabled": [
             "@rules_cuda//cuda:runtime",
         ],
-        "//conditions:default": [
-        ],
+        "//conditions:default": [],
     }),
 )
 
