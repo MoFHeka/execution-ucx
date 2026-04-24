@@ -127,7 +127,7 @@ void HandleRpcSuccessResult(
 void HandleRpcDone(SharedPyObject future, PythonWakeManager& manager);
 
 // Create error handler for RPC invocation results
-struct CreateRpcErrorHandler {
+struct __attribute__((visibility("hidden"))) CreateRpcErrorHandler {
   SharedPyObject future_;
   PythonWakeManager& manager_;
   mutable bool error_handled_{false};
@@ -169,7 +169,7 @@ struct CreateRpcErrorHandler {
 };
 
 // Create result handler for RPC invocation
-struct CreateRpcResultHandler {
+struct __attribute__((visibility("hidden"))) CreateRpcResultHandler {
   SharedPyObject future_;
   PythonWakeManager& manager_;
   SharedPyObject from_dlpack_;  // GIL-safe wrapper for from_dlpack_fn callable
@@ -333,7 +333,7 @@ inline ArgKind ClassifyArg(const nb::object& obj) {
 
 // Caches DLManagedTensor* and owner to avoid repeated
 // ExtractDlpackTensor calls when both TensorMeta and UcxBuffer are needed.
-struct InvokeContext {
+struct __attribute__((visibility("hidden"))) InvokeContext {
   std::vector<nb::object> tensor_objs;
   std::vector<rpc::utils::TensorMeta> tensor_metas;
   std::vector<DLManagedTensor*> dlm_ptrs;  // Cached DLManagedTensor pointers

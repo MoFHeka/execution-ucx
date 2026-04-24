@@ -49,7 +49,7 @@ ucx_deps = use_extension("//third_party/openucx:extensions.bzl", "openucx_depend
 # ucx_deps.ucx_library(name = "ucx", ucx_path = "/opt/nvidia/hpc_sdk/Linux_x86_64/2024/comm_libs/12.5/hpcx/latest/ucx/")  # A local UCX path
 ucx_deps.ucx_git(
     name = "ucx",
-    tag = "v1.18.1",
+    tag = "v1.20.0",
 )
 use_repo(ucx_deps, "ucx")
 

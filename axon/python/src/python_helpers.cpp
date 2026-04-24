@@ -174,7 +174,7 @@ static bool IsTensorType(nb::object type) {
               != std::string::npos;
 }
 
-struct AnnotationTypeInfo {
+struct __attribute__((visibility("hidden"))) AnnotationTypeInfo {
   rpc::ParamType param_type;
   std::optional<FunctionSignatureInfo::EncodedElementType> encoded_element_type;
   nb::object nested_tensor_type;

@@ -2,6 +2,7 @@
 build --cxxopt=-std=c++23
 # GNU17 For C Project
 build --conlyopt=-std=gnu17
+build --host_conlyopt=-std=gnu17
 
 # Convenient flag shortcuts.
 build --flag_alias=cuda_archs=@rules_cuda//cuda:archs

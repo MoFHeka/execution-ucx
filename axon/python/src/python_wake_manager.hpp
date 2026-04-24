@@ -60,7 +60,7 @@ struct TaskFacade : pro::facade_builder  //
  * triggered). Python can wait on the eventfd (e.g., with io_uring) and call
  * ProcessQueue to execute all pending tasks with the GIL held.
  */
-class PythonWakeManager {
+class __attribute__((visibility("hidden"))) PythonWakeManager {
  public:
   using Scheduler = decltype(std::declval<unifex::timed_single_thread_context>()
                                .get_scheduler());
