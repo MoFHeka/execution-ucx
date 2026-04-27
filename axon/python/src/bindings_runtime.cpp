@@ -166,12 +166,16 @@ void RegisterRuntime(nb::module_& m) {
         auto mr = std::shared_ptr<ucxx::UcxMemoryResourceManager>(
           raw, [kept_alive = std::move(kept_alive)](
                  ucxx::UcxMemoryResourceManager*) mutable {
-            if (!Py_IsInitialized()) {
-              kept_alive.release();
-              return;
+            if (Py_IsInitialized()) {
+              nb::gil_scoped_acquire gil;
+              kept_alive = nb::object{};
+            } else {
+              // Here, when the interpreter is shut down before
+              // `AxonRuntime.stop` is called, the GIL can't be held any more
+              // but the CPython object model still exists so we simply decrease
+              // the ref count by one.
+              Py_XDECREF(kept_alive.release());
             }
-            nb::gil_scoped_acquire gil;
-            kept_alive = nb::object{};
           });
         new (self) axon::AxonRuntime(
           std::move(mr), worker_name, thread_pool_size,

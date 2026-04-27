@@ -60,7 +60,7 @@ using TensorMetaVec = rpc::TensorMetaVec;
 // - Minimal overhead: Only creates a small Python object
 // - No locks: Uses atomic flag for thread-safe consumption check
 // - Compatible with all DLPack-compliant frameworks
-class DLPackCapsuleWrapper {
+class __attribute__((visibility("hidden"))) DLPackCapsuleWrapper {
  public:
   DLPackCapsuleWrapper(nb::object capsule, DLDevice device)
     : capsule_(std::move(capsule)), device_(device), consumed_(false) {}
