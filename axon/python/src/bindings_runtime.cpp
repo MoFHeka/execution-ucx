@@ -174,8 +174,7 @@ void RegisterRuntime(nb::module_& m) {
               // `AxonRuntime.stop` is called, the GIL can't be held any more
               // but the CPython object model still exists so we simply decrease
               // the ref count by one.
-              Py_XDECREF(kept_alive.ptr());
-              kept_alive.release();
+              Py_XDECREF(kept_alive.release());
             }
           });
         new (self) axon::AxonRuntime(
