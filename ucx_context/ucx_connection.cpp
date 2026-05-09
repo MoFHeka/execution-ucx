@@ -352,8 +352,7 @@ static inline void init_am_recv_params(
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_data(
   const void* header, size_t header_length, const void* buffer, size_t length,
-  ucp_mem_h memh, ucs_memory_type_t memory_type,
-  std::unique_ptr<UcxCallback> callback) {
+  ucp_mem_h memh, ucs_memory_type_t memory_type, UcxCallback* callback) {
   if (ep_ == nullptr) {
     (*callback)(UCS_ERR_CANCELED);
     return std::make_tuple(UCS_ERR_CANCELED, nullptr);
@@ -369,12 +368,12 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_data(
   ucs_status_ptr_t sptr = ucp_am_send_nbx(
     ep_, DEFAULT_AM_MSG_ID, header, header_length, buffer, length, &param);
   return process_request(
-    "ucp_am_send_nbx", sptr, std::move(callback), UcxRequestType::Send);
+    "ucp_am_send_nbx", sptr, callback, UcxRequestType::Send);
 }
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_data(
   void* buffer, size_t length, ucp_mem_h memh, const UcxAmDesc&& data_desc,
-  ucs_memory_type_t memory_type, std::unique_ptr<UcxCallback> callback) {
+  ucs_memory_type_t memory_type, UcxCallback* callback) {
   assert(ep_ != nullptr);
 
   if (__builtin_expect(!ucx_am_is_rndv(data_desc), false)) {
@@ -393,13 +392,13 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_data(
   ucs_status_ptr_t sptr =
     ucp_am_recv_data_nbx(worker_, data_desc.desc, buffer, length, &param);
   return process_request(
-    "ucp_am_recv_data_nbx", sptr, std::move(callback), UcxRequestType::Recv);
+    "ucp_am_recv_data_nbx", sptr, callback, UcxRequestType::Recv);
 }
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_iov_data(
   const void* header, size_t header_length, const ucp_dt_iov_t* iov_base,
   size_t iov_count, ucp_mem_h memh, ucs_memory_type_t memory_type,
-  std::unique_ptr<UcxCallback> callback) {
+  UcxCallback* callback) {
   if (ep_ == nullptr) {
     (*callback)(UCS_ERR_CANCELED);
     return std::make_tuple(UCS_ERR_CANCELED, nullptr);
@@ -419,13 +418,13 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_iov_data(
   ucs_status_ptr_t sptr = ucp_am_send_nbx(
     ep_, IOVEC_AM_MSG_ID, header, header_length, iov_base, iov_count, &param);
   return process_request(
-    "ucp_am_send_nbx_iov", sptr, std::move(callback), UcxRequestType::Send);
+    "ucp_am_send_nbx_iov", sptr, callback, UcxRequestType::Send);
 }
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_iov_data(
   ucp_dt_iov_t* iov_base, size_t iov_count, ucp_mem_h memh,
   const UcxAmDesc&& data_desc, ucs_memory_type_t memory_type,
-  std::unique_ptr<UcxCallback> callback) {
+  UcxCallback* callback) {
   assert(ep_ != nullptr);
 
   if (__builtin_expect(!ucx_am_is_rndv(data_desc), false)) {
@@ -444,8 +443,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_iov_data(
   ucs_status_ptr_t sptr =
     ucp_am_recv_data_nbx(worker_, data_desc.desc, iov_base, iov_count, &param);
   return process_request(
-    "ucp_am_recv_data_nbx_iov", sptr, std::move(callback),
-    UcxRequestType::Recv);
+    "ucp_am_recv_data_nbx_iov", sptr, callback, UcxRequestType::Recv);
 }
 
 void UcxConnection::cancel_request(UcxRequest* request) {
@@ -648,8 +646,8 @@ void UcxConnection::ep_close(enum ucp_ep_close_mode mode) {
 }
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::process_request(
-  std::string_view what, ucs_status_ptr_t ptr_status,
-  std::unique_ptr<UcxCallback> callback, UcxRequestType type) {
+  std::string_view what, ucs_status_ptr_t ptr_status, UcxCallback* callback,
+  UcxRequestType type) {
   ucs_status_t status = UCS_OK;
 
   if (ptr_status == nullptr) {
@@ -671,7 +669,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::process_request(
       request_release(r);
       r = nullptr;
     } else {
-      r->callback = std::move(callback);
+      r->callback = callback;
       r->conn = std::ref(*this);
       r->type = type;
       r->what = what;

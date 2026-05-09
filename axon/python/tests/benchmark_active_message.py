@@ -86,6 +86,42 @@ async def measure_latency(
     return samples
 
 
+async def measure_throughput(
+    client: axon.AxonRuntime,
+    tensor: np.ndarray,
+    warmup: int,
+    iterations: int,
+    concurrency: int = 200,
+) -> float:
+    """Returns total QPS for highly concurrent requests to expose allocator contention."""
+    invoke_kwargs = dict(
+        worker_name="bench_server",
+        session_id=0,
+        function=0,
+        from_dlpack_fn=np.from_dlpack,
+    )
+
+    # Warmup
+    for _ in range(warmup):
+        await client.invoke(tensor, **invoke_kwargs)
+
+    t0 = time.perf_counter()
+
+    # Fire off many concurrent requests
+    tasks = []
+    for _ in range(iterations):
+        tasks.append(client.invoke(tensor, **invoke_kwargs))
+        if len(tasks) >= concurrency:
+            await asyncio.gather(*tasks)
+            tasks.clear()
+
+    if tasks:
+        await asyncio.gather(*tasks)
+
+    total_time = time.perf_counter() - t0
+    return iterations / total_time
+
+
 def report(label: str, size_bytes: int, samples: list[float]) -> None:
     n = len(samples)
     mean = statistics.mean(samples)
@@ -104,7 +140,20 @@ def report(label: str, size_bytes: int, samples: list[float]) -> None:
         f"mean={mean:6.3f} ms  "
         f"p50={median:6.3f} ms  "
         f"p99={p99:6.3f} ms  "
-        f"QPS={qps:7.1f}"
+        f"Seq QPS={qps:7.1f}"
+    )
+
+
+def report_throughput(label: str, size_bytes: int, qps: float) -> None:
+    if size_bytes >= 1024:
+        size_str = f"{size_bytes // 1024:>4d} KiB"
+    else:
+        size_str = f"{size_bytes:>4d}   B"
+
+    print(
+        f"  {label:<26s}  "
+        f"size={size_str}  "
+        f"Concurrent QPS={qps:7.1f} (High Contention)"
     )
 
 
@@ -134,13 +183,18 @@ async def run_benchmark() -> None:
 
     async with BenchmarkContext() as client:
         for label, size in PAYLOADS:
-            print(f"Preparing payload for {label}...")
+            print(f"\n--- Testing {label} ---")
             tensor = np.zeros(size, dtype=np.uint8)
-            print(f"Calling measure_latency for {label}...")
+
+            # Sequential latency test
             samples = await measure_latency(client, tensor, WARMUP, ITERATIONS)
-            print(f"measure_latency returned for {label}...")
             report(label, size, samples)
-            print(f"Reported for {label}...")
+
+            # Concurrent throughput test
+            # Increase iterations for throughput to get a stable measure
+            throughput_iters = 1000
+            qps = await measure_throughput(client, tensor, WARMUP, throughput_iters)
+            report_throughput(label, size, qps)
 
     print()
 

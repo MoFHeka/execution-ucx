@@ -1216,7 +1216,7 @@ class ucx_am_context::recv_sender {
               data_.buffer.data =
                 mr_.get().allocate(data_.buffer_type, amDesc.data_length);
             }
-            auto am_recv_cb = std::make_unique<CqeEntryCallback>(
+            cqe_cb_.emplace(
               op_, &(this->context_), [](void* context_ptr) -> ucx_am_cqe& {
                 return reinterpret_cast<ucx_am_context*>(context_ptr)
                   ->get_completion_queue_entry();
@@ -1225,7 +1225,7 @@ class ucx_am_context::recv_sender {
             std::tie(this->result_, request_) = conn.get().recv_am_data(
               data_.buffer.data, amDesc.data_length, impl_memh_,
               std::move(amDesc), mem_type_map(data_.buffer_type),
-              std::move(am_recv_cb));
+              &cqe_cb_.value());
           } else {
             // Handle eager protocol
             if (amDesc.recv_attr & UCP_AM_RECV_ATTR_FLAG_DATA) {
@@ -1456,6 +1456,7 @@ class ucx_am_context::recv_sender {
       stopCallback_;
     bool stopCallbackConstructed_ = false;
     std::atomic_char refCount_{1};
+    std::optional<CqeEntryCallback> cqe_cb_;
     cancel_operation cop_{*this};
   };
 
@@ -1592,7 +1593,7 @@ class ucx_am_context::recv_buffer_sender_t {
           this->execute_ = &operation::on_read_complete;
 
           if (UcxConnection::ucx_am_is_rndv(amDesc)) {
-            auto am_recv_cb = std::make_unique<CqeEntryCallback>(
+            cqe_cb_.emplace(
               op_, &(this->context_), [](void* context_ptr) -> ucx_am_cqe& {
                 return reinterpret_cast<ucx_am_context*>(context_ptr)
                   ->get_completion_queue_entry();
@@ -1625,7 +1626,7 @@ class ucx_am_context::recv_buffer_sender_t {
                 reinterpret_cast<ucp_mem_h>(buffer_own_.mem_h());
               std::tie(this->result_, request_) = conn.get().recv_am_data(
                 buffer->data, amDesc.data_length, impl_memh_, std::move(amDesc),
-                mem_type_map(buffer_own_.type()), std::move(am_recv_cb));
+                mem_type_map(buffer_own_.type()), &cqe_cb_.value());
             } else if constexpr (is_vec) {
               auto& buffer_vec = buffer_own_;
               auto impl_memh_ = reinterpret_cast<ucp_mem_h>(buffer_vec.mem_h());
@@ -1634,7 +1635,7 @@ class ucx_am_context::recv_buffer_sender_t {
               std::tie(this->result_, request_) = conn.get().recv_am_iov_data(
                 buffer_vec_data, buffer_vec.size(), impl_memh_,
                 std::move(amDesc), mem_type_map(buffer_vec.type()),
-                std::move(am_recv_cb));
+                &cqe_cb_.value());
             } else {
               UNIFEX_ASSERT(false && "recv_buffer_sender not implemented");
               UCX_CTX_ERROR << "recv_buffer_sender not implemented"
@@ -1783,6 +1784,7 @@ class ucx_am_context::recv_buffer_sender_t {
       stopCallback_;
     bool stopCallbackConstructed_ = false;
     std::atomic_char refCount_{1};
+    std::optional<CqeEntryCallback> cqe_cb_;
     cancel_operation cop_{*this};
   };
 
@@ -2335,28 +2337,29 @@ class ucx_am_context::send_sender_t {
           return true;
         }
         auto& conn_ref = conn_.value().get();
-        std::unique_ptr<UcxCallback> am_send_cb;
+        UcxCallback* am_send_cb = nullptr;
         bool use_rndv = true;
         if constexpr (std::is_same_v<payload_view_t, ucx_am_data>) {
           use_rndv = conn_ref.should_use_zcopy(data_.buffer.size);
         }
         if (use_rndv) {
-          am_send_cb = std::move(std::make_unique<CqeEntryCallback>(
+          cqe_cb_.emplace(
             op_, reinterpret_cast<void*>(&(this->context_)),
             [](void* context_ptr) -> ucx_am_cqe& {
               return reinterpret_cast<ucx_am_context*>(context_ptr)
                 ->get_completion_queue_entry();
-            }));
+            });
+          am_send_cb = &cqe_cb_.value();
         } else {
           // TODO(He Jia): pendingIOQueue_ is faster than CQE
-          am_send_cb = std::move(std::make_unique<DirectEntryCallback>(
-            this, [](ucs_status_t status, void* op) {
-              auto this_ = reinterpret_cast<operation*>(op);
-              this_->result_ = status;
-              // Schedule the completion to the pending IO queue front
-              --this_->context_.sqUnflushedCount_;
-              this_->context_.reschedule_pending_io(this_);
-            }));
+          direct_cb_.emplace(this, [](ucs_status_t status, void* op) {
+            auto this_ = reinterpret_cast<operation*>(op);
+            this_->result_ = status;
+            // Schedule the completion to the pending IO queue front
+            --this_->context_.sqUnflushedCount_;
+            this_->context_.reschedule_pending_io(this_);
+          });
+          am_send_cb = &direct_cb_.value();
         }
         // Prepare buffer
         auto impl_memh_ = reinterpret_cast<ucp_mem_h>(data_.mem_h);
@@ -2365,14 +2368,14 @@ class ucx_am_context::send_sender_t {
           std::tie(this->result_, this->request_) = conn_ref.send_am_data(
             data_.header.data, data_.header.size, data_.buffer.data,
             data_.buffer.size, impl_memh_, mem_type_map(data_.buffer_type),
-            std::move(am_send_cb));
+            am_send_cb);
         } else if constexpr (std::is_same_v<payload_view_t, ucx_am_iovec>) {
           static_assert(sizeof(ucp_dt_iov_t) == sizeof(data_.buffer_vec[0]));
           std::tie(this->result_, this->request_) = conn_ref.send_am_iov_data(
             data_.header.data, data_.header.size,
             reinterpret_cast<ucp_dt_iov_t*>(data_.buffer_vec),
             data_.buffer_count, impl_memh_, mem_type_map(data_.buffer_type),
-            std::move(am_send_cb));
+            am_send_cb);
         } else {
           static_assert(
             payload_always_false::value,
@@ -2504,6 +2507,8 @@ class ucx_am_context::send_sender_t {
       stopCallback_;
     bool stopCallbackConstructed_ = false;
     std::atomic_char refCount_{1};
+    std::optional<CqeEntryCallback> cqe_cb_;
+    std::optional<DirectEntryCallback> direct_cb_;
     cancel_operation cop_{*this};
   };
 

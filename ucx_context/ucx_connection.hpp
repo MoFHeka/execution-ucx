@@ -165,7 +165,7 @@ struct UcxRequest {
     pos.next = nullptr;
     pos.prev = nullptr;
   }
-  std::unique_ptr<UcxCallback> callback = std::unique_ptr<UcxCallback>(nullptr);
+  UcxCallback* callback = nullptr;
   std::optional<std::reference_wrapper<UcxConnection>> conn = std::nullopt;
   ucs_status_t status = UCS_INPROGRESS;
   std::uintptr_t conn_id = std::uintptr_t(nullptr);
@@ -280,7 +280,7 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
   std::tuple<ucs_status_t, UcxRequest*> send_am_data(
     const void* header, size_t header_length, const void* buffer, size_t length,
     ucp_mem_h memh, ucs_memory_type_t memory_type,
-    std::unique_ptr<UcxCallback> callback = EmptyCallback::get_unique());
+    UcxCallback* callback = EmptyCallback::get());
 
   /**
    * @brief Receives active message data
@@ -296,7 +296,7 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
   std::tuple<ucs_status_t, UcxRequest*> recv_am_data(
     void* buffer, size_t length, ucp_mem_h memh, const UcxAmDesc&& data_desc,
     ucs_memory_type_t memory_type,
-    std::unique_ptr<UcxCallback> callback = EmptyCallback::get_unique());
+    UcxCallback* callback = EmptyCallback::get());
 
   /**
    * @brief Sends active message data using scatter-gather I/O
@@ -313,7 +313,7 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
   std::tuple<ucs_status_t, UcxRequest*> send_am_iov_data(
     const void* header, size_t header_length, const ucp_dt_iov_t* iov_base,
     size_t iov_count, ucp_mem_h memh, ucs_memory_type_t memory_type,
-    std::unique_ptr<UcxCallback> callback = EmptyCallback::get_unique());
+    UcxCallback* callback = EmptyCallback::get());
 
   /**
    * @brief Receives active message data using scatter-gather I/O
@@ -332,7 +332,7 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
   std::tuple<ucs_status_t, UcxRequest*> recv_am_iov_data(
     ucp_dt_iov_t* iov_base, size_t iov_count, ucp_mem_h memh,
     const UcxAmDesc&& data_desc, ucs_memory_type_t memory_type,
-    std::unique_ptr<UcxCallback> callback = EmptyCallback::get_unique());
+    UcxCallback* callback = EmptyCallback::get());
 
   /**
    * @brief Cancels a specific request
@@ -531,8 +531,7 @@ class UcxConnection : public std::enable_shared_from_this<UcxConnection> {
   void ep_close(enum ucp_ep_close_mode mode);
 
   std::tuple<ucs_status_t, UcxRequest*> process_request(
-    std::string_view what, ucs_status_ptr_t ptr_status,
-    std::unique_ptr<UcxCallback> callback,
+    std::string_view what, ucs_status_ptr_t ptr_status, UcxCallback* callback,
     UcxRequestType type = UcxRequestType::Unknown);
 
   static void invoke_callback(
