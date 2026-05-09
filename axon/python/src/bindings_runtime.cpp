@@ -171,10 +171,24 @@ void RegisterRuntime(nb::module_& m) {
               kept_alive = nb::object{};
             } else {
               // Here, when the interpreter is shut down before
-              // `AxonRuntime.stop` is called, the GIL can't be held any more
-              // but the CPython object model still exists so we simply decrease
-              // the ref count by one.
-              Py_XDECREF(kept_alive.release());
+              // Acquire the GIL before releasing the Python object to prevent
+              // segfaults if this hook is executed on a background thread or
+              // during shutdown.
+              bool is_finalizing = false;
+#if PY_VERSION_HEX >= 0x030d0000
+              is_finalizing = Py_IsFinalizing();
+#else
+              is_finalizing = _Py_IsFinalizing();
+#endif
+              if (!is_finalizing) {
+                nb::gil_scoped_acquire acquire;
+                kept_alive.reset();
+              } else {
+                // If Python is finalizing, it's not safe to acquire GIL or
+                // decref. Just leak the reference (OS will clean up memory) by
+                // moving it to a heap allocated object that is never deleted.
+                new nb::object(std::move(kept_alive));
+              }
             }
           });
         new (self) axon::AxonRuntime(
