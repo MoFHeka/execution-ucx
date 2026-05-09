@@ -2,7 +2,7 @@
 
 load("@python_deps//:requirements.bzl", "requirement")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
-load("@rules_python//python:defs.bzl", "py_library")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 load("//axon:build_defs/utils_libs.bzl", "SUPPORTED_CPP_STANDARDS", "axon_utils_config_settings")
 load("//axon/python:tests.bzl", "axon_pytest_test")
 load("//axon/python:wheel.bzl", "axon_python_wheel", "copy_to_dir")
@@ -759,6 +759,24 @@ test_suite(
         ":test_signature_based_rpc",
         ":test_simplified_register",
         ":test_types_enums",
+    ],
+)
+
+# Axon python bindings performance benchmark – run manually, not part of CI test suite.
+# Usage: bazel run //axon/python:benchmark_active_message
+py_binary(
+    name = "benchmark_active_message",
+    srcs = ["tests/benchmark_active_message.py"],
+    data = [
+        "//axon/python:axon_python_lib",
+    ],
+    main = "tests/benchmark_active_message.py",
+    python_version = "PY3",
+    deps = [
+        "//axon/python:axon_python",
+        "//axon/python:conftest",
+        "//axon/python:test_utils_lib",
+        requirement("numpy"),
     ],
 )
 

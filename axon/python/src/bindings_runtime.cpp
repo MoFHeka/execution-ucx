@@ -857,8 +857,9 @@ void RegisterRuntime(nb::module_& m) {
       }
 
       // Create result handler
-      auto result_handler =
-        python::CreateRpcResultHandler(future, python::GetPythonWakeManager());
+      auto result_handler = python::CreateRpcResultHandler(
+        self.GetMemoryResourceManagerShared(), future,
+        python::GetPythonWakeManager());
 
       // Determine if using custom memory policy
       bool use_custom_memory = !memory_policy_factory.is_none();
@@ -982,7 +983,8 @@ void RegisterRuntime(nb::module_& m) {
       auto mr = self.GetMemoryResourceManager();
       bool use_custom_memory = !memory_policy_factory.is_none();
       auto result_handler = python::CreateRpcResultHandler(
-        future, python::GetPythonWakeManager(), std::move(from_dlpack_fn));
+        self.GetMemoryResourceManagerShared(), future,
+        python::GetPythonWakeManager(), std::move(from_dlpack_fn));
 
       // Dispatch based on tensor count
       if (ctx.tensor_count() == 0) {

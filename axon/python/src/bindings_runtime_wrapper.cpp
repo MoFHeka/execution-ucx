@@ -80,8 +80,8 @@ nb::object PythonAsyncFunctionWrapper::ConvertSingleParamToPython(
     return cached_obj;
   }
 
-  nb::object dltensor_capsule =
-    TensorMetaToDlpack(std::move(meta), std::move(buffer));
+  nb::object dltensor_capsule = TensorMetaToDlpack(
+    self.GetMemoryResourceManagerShared(), std::move(meta), std::move(buffer));
 
   if (tensor_param_idx < tensor_param_from_dlpack.size()) {
     const auto& from_dlpack_ref = tensor_param_from_dlpack[tensor_param_idx];

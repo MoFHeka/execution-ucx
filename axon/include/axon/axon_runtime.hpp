@@ -346,6 +346,9 @@ class AxonRuntime {
   std::reference_wrapper<ucxx::UcxMemoryResourceManager>
   GetMemoryResourceManager() const;
 
+  std::shared_ptr<ucxx::UcxMemoryResourceManager>
+  GetMemoryResourceManagerShared() const;
+
   // --- Accessors ---
   AxonWorker& GetWorker() { return *worker_; }
   const AxonWorker& GetWorker() const { return *worker_; }

@@ -598,6 +598,7 @@ nb::dict HeaderToDict(const rpc::RpcResponseHeader& header) {
 // ConvertTensorResult implementations
 
 nb::object ConvertTensorResult(
+  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr,
   const rpc::ParamMeta& param, ucxx::UcxBuffer&& buffer,
   const nb::object& from_dlpack_fn) {
   auto meta = cista::get<rpc::utils::TensorMeta>(param.value);
@@ -609,7 +610,7 @@ nb::object ConvertTensorResult(
     return custom_obj;
   }
 
-  auto result = TensorMetaToDlpack(std::move(meta), std::move(buffer));
+  auto result = TensorMetaToDlpack(mr, std::move(meta), std::move(buffer));
   if (!from_dlpack_fn.is_none()) {
     return from_dlpack_fn(result);
   }
@@ -617,6 +618,7 @@ nb::object ConvertTensorResult(
 }
 
 nb::object ConvertTensorResult(
+  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr,
   const rpc::ParamMeta& param, ucxx::UcxBufferVec&& buffer_vec,
   const nb::object& from_dlpack_fn) {
   auto meta_vec = cista::get<rpc::TensorMetaVec>(param.value);
@@ -654,7 +656,7 @@ nb::object ConvertTensorResult(
   }
 
   auto tensors =
-    TensorMetaVecToDlpack(std::move(meta_vec), std::move(buffer_vec));
+    TensorMetaVecToDlpack(mr, std::move(meta_vec), std::move(buffer_vec));
   if (!from_dlpack_fn.is_none()) {
     nb::list result;
     for (const auto& tensor : tensors) {

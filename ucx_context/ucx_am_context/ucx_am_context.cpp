@@ -159,6 +159,8 @@ ucx_am_context::ucx_am_context(
 
 ucx_am_context::~ucx_am_context() {
   destroy_connections();
+  destroy_listener();
+  destroy_worker();
 
   if (ucpContext_ && !isUcpContextExternal_) {
     ucx_am_context::destroy_ucp_context(ucpContext_);

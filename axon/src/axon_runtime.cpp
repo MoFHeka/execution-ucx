@@ -217,5 +217,10 @@ AxonRuntime::GetMemoryResourceManager() const {
   return worker_->GetMemoryResourceManager();
 }
 
+std::shared_ptr<ucxx::UcxMemoryResourceManager>
+AxonRuntime::GetMemoryResourceManagerShared() const {
+  return mr_;
+}
+
 }  // namespace axon
 }  // namespace eux

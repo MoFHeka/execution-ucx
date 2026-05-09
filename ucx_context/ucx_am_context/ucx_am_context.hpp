@@ -907,9 +907,6 @@ class ucx_am_context {
   // operation into pendingAcptIoQueue_
   std::deque<operation_base*> pendingAcptIoQueue_;
 
-  // UCX connection struct
-  ConnectionManager conn_manager_;
-
   ////////
   // Data that does not change once initialised.
 
@@ -965,6 +962,10 @@ class ucx_am_context {
 
   // Queue of operations enqueued by remote threads.
   atomic_intrusive_queue<operation_base, &operation_base::next_> remoteQueue_;
+
+  // UCX connection struct (Declared at the end so it is destroyed BEFORE queues
+  // to prevent use-after-free)
+  ConnectionManager conn_manager_;
 };
 
 template <typename StopToken>

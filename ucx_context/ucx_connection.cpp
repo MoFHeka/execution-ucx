@@ -100,8 +100,8 @@ bool is_rdma_transport_available(ucp_ep_h ep) {
   for (unsigned j = 0; j < attr.transports.num_entries; ++j) {
     for (unsigned i = 0;
          i < sizeof(rdma_transports) / sizeof(rdma_transports[0]); ++i) {
-      if (
-        strstr(attr.transports.entries[j].transport_name, rdma_transports[i])) {
+      if (strstr(
+            attr.transports.entries[j].transport_name, rdma_transports[i])) {
         return true;
       }
     }

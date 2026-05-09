@@ -396,14 +396,17 @@ ucxx::UcxBufferVec DlpackToUcxBufferVec(
 
 struct TensorDlpackContext {
   std::unique_ptr<axon::utils::TensorBase> tensor;
+  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr;
   std::shared_ptr<void> data_keeper;
 
   TensorDlpackContext(
-    std::unique_ptr<axon::utils::TensorBase> t, std::shared_ptr<void> keeper)
-    : tensor(std::move(t)), data_keeper(std::move(keeper)) {}
+    std::unique_ptr<axon::utils::TensorBase> t, std::shared_ptr<void> keeper,
+    std::shared_ptr<ucxx::UcxMemoryResourceManager> m)
+    : tensor(std::move(t)), mr(std::move(m)), data_keeper(std::move(keeper)) {}
 };
 
 nb::object TensorMetaToDlpack(
+  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr,
   rpc::utils::TensorMeta&& meta, ucxx::UcxBuffer&& buffer) {
   auto owned = std::make_shared<ucxx::UcxBuffer>(std::move(buffer), true);
   DLDevice device = UcxMemoryTypeToDlDevice(owned->type());
@@ -420,7 +423,8 @@ nb::object TensorMetaToDlpack(
   dlm_tensor->dl_tensor.strides = tensor->strides;
   dlm_tensor->dl_tensor.byte_offset = tensor->byte_offset;
   dlm_tensor->manager_ctx = new TensorDlpackContext(
-    std::move(tensor), std::static_pointer_cast<void>(std::move(owned)));
+    std::move(tensor), std::static_pointer_cast<void>(std::move(owned)),
+    std::move(mr));
   dlm_tensor->deleter = [](DLManagedTensor* self) {
     delete static_cast<TensorDlpackContext*>(self->manager_ctx);
     delete self;
@@ -432,6 +436,7 @@ nb::object TensorMetaToDlpack(
 }
 
 nb::list TensorMetaVecToDlpack(
+  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr,
   cista::offset::vector<rpc::utils::TensorMeta>&& meta_vec,
   ucxx::UcxBufferVec&& buffer_vec) {
   if (meta_vec.size() != buffer_vec.size()) {
@@ -459,7 +464,7 @@ nb::list TensorMetaVecToDlpack(
       dlm_tensor->dl_tensor.strides = tensor->strides;
       dlm_tensor->dl_tensor.byte_offset = tensor->byte_offset;
       dlm_tensor->manager_ctx =
-        new TensorDlpackContext(std::move(tensor), shared_buffer_vec);
+        new TensorDlpackContext(std::move(tensor), shared_buffer_vec, mr);
       dlm_tensor->deleter = [](DLManagedTensor* self) {
         delete static_cast<TensorDlpackContext*>(self->manager_ctx);
         delete self;
@@ -473,7 +478,7 @@ nb::list TensorMetaVecToDlpack(
     auto bufs = std::move(buffer_vec).ExtractBuffers();
     for (size_t i = 0; i < meta_vec.size(); ++i) {
       result.append(
-        TensorMetaToDlpack(std::move(meta_vec[i]), std::move(bufs[i])));
+        TensorMetaToDlpack(mr, std::move(meta_vec[i]), std::move(bufs[i])));
     }
   }
   return result;
