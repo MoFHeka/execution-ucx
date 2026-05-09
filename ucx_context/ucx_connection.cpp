@@ -100,8 +100,8 @@ bool is_rdma_transport_available(ucp_ep_h ep) {
   for (unsigned j = 0; j < attr.transports.num_entries; ++j) {
     for (unsigned i = 0;
          i < sizeof(rdma_transports) / sizeof(rdma_transports[0]); ++i) {
-      if (strstr(
-            attr.transports.entries[j].transport_name, rdma_transports[i])) {
+      if (
+        strstr(attr.transports.entries[j].transport_name, rdma_transports[i])) {
         return true;
       }
     }
@@ -368,7 +368,6 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_data(
 
   ucs_status_ptr_t sptr = ucp_am_send_nbx(
     ep_, DEFAULT_AM_MSG_ID, header, header_length, buffer, length, &param);
-  ucp_worker_progress(worker_);
   return process_request(
     "ucp_am_send_nbx", sptr, std::move(callback), UcxRequestType::Send);
 }
@@ -393,7 +392,6 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_data(
 
   ucs_status_ptr_t sptr =
     ucp_am_recv_data_nbx(worker_, data_desc.desc, buffer, length, &param);
-  ucp_worker_progress(worker_);
   return process_request(
     "ucp_am_recv_data_nbx", sptr, std::move(callback), UcxRequestType::Recv);
 }
@@ -420,7 +418,6 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_iov_data(
 
   ucs_status_ptr_t sptr = ucp_am_send_nbx(
     ep_, IOVEC_AM_MSG_ID, header, header_length, iov_base, iov_count, &param);
-  ucp_worker_progress(worker_);
   return process_request(
     "ucp_am_send_nbx_iov", sptr, std::move(callback), UcxRequestType::Send);
 }
@@ -446,7 +443,6 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_iov_data(
 
   ucs_status_ptr_t sptr =
     ucp_am_recv_data_nbx(worker_, data_desc.desc, iov_base, iov_count, &param);
-  ucp_worker_progress(worker_);
   return process_request(
     "ucp_am_recv_data_nbx_iov", sptr, std::move(callback),
     UcxRequestType::Recv);
