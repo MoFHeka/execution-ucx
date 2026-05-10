@@ -80,7 +80,7 @@ std::string ExtractErrorMessageFromResponseHeader(
 // Helper function to handle RPC success result
 template <typename PayloadT>
 void HandleRpcSuccessResult(
-  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr,
+  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
   SharedPyObject future_guard, PythonWakeManager& manager,
   std::unique_ptr<
     const rpc::RpcResponseHeader, rpc::UcxDataDeleter<ucxx::UcxHeader>>
@@ -601,24 +601,24 @@ std::chrono::milliseconds ConvertTimeout(nb::object timeout_obj);
 
 // HandleRpcSuccessResult instantiations
 extern template void HandleRpcSuccessResult<ucxx::UcxBuffer>(
-  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr, SharedPyObject future,
-  PythonWakeManager& manager,
+  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
+  SharedPyObject future, PythonWakeManager& manager,
   std::unique_ptr<
     const rpc::RpcResponseHeader, rpc::UcxDataDeleter<ucxx::UcxHeader>>
     response_header,
   ucxx::UcxBuffer&& returned_payload, SharedPyObject from_dlpack_fn);
 
 extern template void HandleRpcSuccessResult<ucxx::UcxBufferVec>(
-  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr, SharedPyObject future,
-  PythonWakeManager& manager,
+  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
+  SharedPyObject future, PythonWakeManager& manager,
   std::unique_ptr<
     const rpc::RpcResponseHeader, rpc::UcxDataDeleter<ucxx::UcxHeader>>
     response_header,
   ucxx::UcxBufferVec&& returned_payload, SharedPyObject from_dlpack_fn);
 
 extern template void HandleRpcSuccessResult<rpc::PayloadVariant>(
-  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr, SharedPyObject future,
-  PythonWakeManager& manager,
+  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
+  SharedPyObject future, PythonWakeManager& manager,
   std::unique_ptr<
     const rpc::RpcResponseHeader, rpc::UcxDataDeleter<ucxx::UcxHeader>>
     response_header,

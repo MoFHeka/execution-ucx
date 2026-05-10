@@ -12,13 +12,29 @@ Run via Bazel:
 """
 
 import asyncio
+import argparse
+import os
+import re
 import statistics
+import subprocess
+import sys
 import time
 
 import numpy as np
 import test_utils  # noqa: F401 – sets up sys.path for axon module
 
 import axon
+
+INLINE_COROUTINE_ENV = "AXON_PYTHON_INLINE_COROUTINE_COMPLETION"
+DIRECT_FUTURE_ENV = "AXON_PYTHON_DIRECT_FUTURE_COMPLETION"
+BENCHMARK_CHILD_ENV = "AXON_BENCHMARK_ACTIVE_MESSAGE_CHILD"
+
+ABLATION_MODES = [
+    ("baseline", "0", "0"),
+    ("direct-future-only", "0", "1"),
+    ("inline-coroutine-only", "1", "0"),
+    ("combined", "1", "1"),
+]
 
 # ---------------------------------------------------------------------------
 # RPC handler
@@ -157,6 +173,100 @@ def report_throughput(label: str, size_bytes: int, qps: float) -> None:
     )
 
 
+def parse_child_metrics(output: str) -> dict[str, dict[str, float]]:
+    latency_re = re.compile(
+        r"^\s+(?P<label>.+?)\s+size=.*?mean=\s*(?P<mean>[0-9.]+) ms\s+"
+        r"p50=\s*(?P<p50>[0-9.]+) ms\s+p99=\s*(?P<p99>[0-9.]+) ms\s+"
+        r"Seq QPS=\s*(?P<seq_qps>[0-9.]+)",
+        re.MULTILINE,
+    )
+    throughput_re = re.compile(
+        r"^\s+(?P<label>.+?)\s+size=.*?Concurrent QPS=\s*(?P<concurrent_qps>[0-9.]+)",
+        re.MULTILINE,
+    )
+
+    metrics = {
+        m.group("label").strip(): {
+            "mean": float(m.group("mean")),
+            "p50": float(m.group("p50")),
+            "p99": float(m.group("p99")),
+            "seq_qps": float(m.group("seq_qps")),
+        }
+        for m in latency_re.finditer(output)
+    }
+    for m in throughput_re.finditer(output):
+        label = m.group("label").strip()
+        if label not in metrics:
+            raise RuntimeError(f"throughput label missing latency row: {label}")
+        metrics[label]["concurrent_qps"] = float(m.group("concurrent_qps"))
+
+    if len(metrics) != len(PAYLOADS):
+        raise RuntimeError(f"unexpected metric count: {len(metrics)}")
+    return metrics
+
+
+def run_child_mode(mode: str, inline_coroutine: str, direct_future: str) -> str:
+    env = os.environ.copy()
+    env[INLINE_COROUTINE_ENV] = inline_coroutine
+    env[DIRECT_FUTURE_ENV] = direct_future
+    env[BENCHMARK_CHILD_ENV] = "1"
+
+    result = subprocess.run(
+        [sys.executable, __file__, "--child", "--mode", mode],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"benchmark mode {mode} failed with exit code {result.returncode}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+    return result.stdout
+
+
+def report_ablation(results: dict[str, dict[str, dict[str, float]]]) -> None:
+    baseline = results["baseline"]
+    print("=" * 80)
+    print("Ablation Summary")
+    print("=" * 80)
+    for payload_label, _ in PAYLOADS:
+        key = payload_label
+        base_mean = baseline[key]["mean"]
+        base_qps = baseline[key]["concurrent_qps"]
+        print(f"\n--- {payload_label} ---")
+        for mode, metrics_by_payload in results.items():
+            metrics = metrics_by_payload[key]
+            latency_delta = (base_mean - metrics["mean"]) / base_mean * 100.0
+            qps_delta = (metrics["concurrent_qps"] - base_qps) / base_qps * 100.0
+            print(
+                f"  {mode:<24s} "
+                f"mean={metrics['mean']:6.3f} ms "
+                f"latency_delta={latency_delta:7.2f}% "
+                f"concurrent_qps={metrics['concurrent_qps']:7.1f} "
+                f"qps_delta={qps_delta:7.2f}%"
+            )
+
+
+def run_ablation() -> None:
+    results: dict[str, dict[str, dict[str, float]]] = {}
+    for mode, inline_coroutine, direct_future in ABLATION_MODES:
+        print("=" * 80)
+        print(
+            f"Running mode={mode} "
+            f"{INLINE_COROUTINE_ENV}={inline_coroutine} "
+            f"{DIRECT_FUTURE_ENV}={direct_future}"
+        )
+        print("=" * 80)
+        output = run_child_mode(mode, inline_coroutine, direct_future)
+        print(output, end="" if output.endswith("\n") else "\n")
+        results[mode] = parse_child_metrics(output)
+
+    report_ablation(results)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -175,10 +285,14 @@ PAYLOADS = [
 ]
 
 
-async def run_benchmark() -> None:
+async def run_benchmark(mode: str) -> None:
     print("=" * 80)
     print("Axon Python Eager-Path Benchmark")
-    print(f"  warmup={WARMUP}  iterations={ITERATIONS}")
+    print(f"  mode={mode}  warmup={WARMUP}  iterations={ITERATIONS}")
+    print(
+        f"  {INLINE_COROUTINE_ENV}={os.environ.get(INLINE_COROUTINE_ENV, '1')}  "
+        f"{DIRECT_FUTURE_ENV}={os.environ.get(DIRECT_FUTURE_ENV, '1')}"
+    )
     print("=" * 80)
 
     async with BenchmarkContext() as client:
@@ -202,8 +316,17 @@ async def run_benchmark() -> None:
 def main() -> None:
     import faulthandler
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--child", action="store_true")
+    parser.add_argument("--mode", default="manual")
+    args = parser.parse_args()
+
     faulthandler.enable()
-    asyncio.run(run_benchmark())
+    if args.child or os.environ.get(BENCHMARK_CHILD_ENV) == "1":
+        asyncio.run(run_benchmark(args.mode))
+        return
+
+    run_ablation()
 
 
 if __name__ == "__main__":

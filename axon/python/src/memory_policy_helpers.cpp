@@ -158,7 +158,7 @@ axon::RetentionPolicy create_retention_policy(nb::object py_callable) {
 
   auto handler =
     [safe_callable = std::move(safe_callable)](
-      std::shared_ptr<axon::utils::AxonRequest> request,
+      const std::shared_ptr<axon::utils::AxonRequest>& request,
       axon::utils::AxonMessageID message_id) -> axon::LifecycleStatus {
     nb::gil_scoped_acquire acquire;
     nb::object py_callable = safe_callable.get();

@@ -69,12 +69,12 @@ nb::dict HeaderToDict(const rpc::RpcResponseHeader& header);
 
 // Helper functions for tensor conversion (implemented in cpp)
 nb::object ConvertTensorResult(
-  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr,
+  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
   const rpc::ParamMeta& param, ucxx::UcxBuffer&& payload,
   const nb::object& from_dlpack_fn);
 
 nb::object ConvertTensorResult(
-  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr,
+  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
   const rpc::ParamMeta& param, ucxx::UcxBufferVec&& payload,
   const nb::object& from_dlpack_fn);
 
@@ -83,7 +83,7 @@ nb::object ConvertTensorResult(
 // tensors
 template <typename PayloadT = std::monostate>
 nb::tuple ResultsToPythonTuple(
-  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr,
+  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
   const cista::offset::vector<rpc::ParamMeta>& params,
   PayloadT&& payload = std::monostate{},
   const nb::object& from_dlpack_fn = nb::none()) {
@@ -137,7 +137,7 @@ nb::tuple ResultsToPythonTuple(
 
 template <typename PayloadT = std::monostate>
 nb::object ResultsToPython(
-  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr,
+  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
   const cista::offset::vector<rpc::ParamMeta>& params,
   PayloadT&& payload = std::monostate{},
   const nb::object& from_dlpack_fn = nb::none()) {

@@ -406,7 +406,7 @@ struct TensorDlpackContext {
 };
 
 nb::object TensorMetaToDlpack(
-  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr,
+  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
   rpc::utils::TensorMeta&& meta, ucxx::UcxBuffer&& buffer) {
   auto owned = std::make_shared<ucxx::UcxBuffer>(std::move(buffer), true);
   DLDevice device = UcxMemoryTypeToDlDevice(owned->type());
@@ -436,7 +436,7 @@ nb::object TensorMetaToDlpack(
 }
 
 nb::list TensorMetaVecToDlpack(
-  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr,
+  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
   cista::offset::vector<rpc::utils::TensorMeta>&& meta_vec,
   ucxx::UcxBufferVec&& buffer_vec) {
   if (meta_vec.size() != buffer_vec.size()) {

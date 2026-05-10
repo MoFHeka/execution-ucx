@@ -81,7 +81,7 @@ struct StrictHiveScanningPolicy {
   uint32_t target_id;
 
   LifecycleStatus operator()(
-    std::shared_ptr<eux::axon::utils::AxonRequest> /*req*/,
+    const std::shared_ptr<eux::axon::utils::AxonRequest>& /*req*/,
     eux::axon::utils::AxonMessageID /*id*/) {
     if (!storage_ptr) return LifecycleStatus::Error;
 
@@ -118,7 +118,7 @@ struct StrictLatestElementPolicy {
   AxonStorage* storage_ptr;
 
   LifecycleStatus operator()(
-    std::shared_ptr<eux::axon::utils::AxonRequest> req,
+    const std::shared_ptr<eux::axon::utils::AxonRequest>& req,
     eux::axon::utils::AxonMessageID /*id*/) {
     if (!storage_ptr) return LifecycleStatus::Error;
     if (storage_ptr->empty()) {
@@ -158,7 +158,7 @@ struct CalculationPolicy {
   uint32_t threshold;
 
   LifecycleStatus operator()(
-    std::shared_ptr<eux::axon::utils::AxonRequest> req,
+    const std::shared_ptr<eux::axon::utils::AxonRequest>& req,
     eux::axon::utils::AxonMessageID /*id*/) {
     if (!storage_ptr) return LifecycleStatus::Error;
     uint32_t sum = 0;
