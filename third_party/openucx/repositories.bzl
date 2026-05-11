@@ -42,18 +42,6 @@ cc_library(
             new_git_repository,
             name = name,
             remote = "https://github.com/openucx/ucx.git",
-            patch_args = [
-                "-l",
-                "-p1",
-            ],
-            patch_tool = "patch",
-            patches = [
-                # Use a patch to redirect ucx library generation. Before this
-                # patch, ucx will generate modules in lib_dir/*.so and
-                # lib_dir/ucx/*.so, but we want all libraries in one directory
-                # lib_dir/*.so for better compatibility with Bazel.
-                ":remove_libtool_and_directory_prefix.patch",
-            ],
             build_file = ":BUILD.bazel",
             tag = git_tag if git_tag else "",
         )

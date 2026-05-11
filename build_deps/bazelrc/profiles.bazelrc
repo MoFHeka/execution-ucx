@@ -1,0 +1,52 @@
+# ============================================================
+# Build Profiles (Debug / Release)
+# ============================================================
+
+# ------------------------------------------------------------
+# Debug
+# ------------------------------------------------------------
+build:debug --compilation_mode=dbg
+build:debug --copt=-g
+build:debug --copt=-O0
+build:debug --strip=never
+build:debug --define=DEBUG=1
+
+# ------------------------------------------------------------
+# Release (base)
+# ------------------------------------------------------------
+build:release --compilation_mode=opt
+build:release --copt=-O3
+build:release --strip=never
+build:release --define=NDEBUG=1
+
+# Architecture-tuned release
+build:release_native --config=release
+build:release_native --copt=-march=native
+build:release_native --linkopt=-march=native
+
+# ============================================================
+# Compiler × Profile Combinations
+# ============================================================
+
+# GCC release (default compiler + release + native)
+build:release_gcc --config=release_native
+build:release_gcc --copt=-flto
+build:release_gcc --linkopt=-flto
+
+# Clang release
+build:release_clang --config=clang
+build:release_clang --config=release_native
+build:release_clang --features=thin_lto
+
+# ============================================================
+# CUDA × Profile Combinations
+#
+# Note: CUDA is enabled by default (see cuda.bazelrc).
+# These profiles only add release optimizations on top.
+# ============================================================
+
+# CUDA release with GCC host compiler
+build:release_cuda --config=release_gcc
+
+# CUDA release with Clang host compiler
+build:release_cuda_clang --config=release_clang

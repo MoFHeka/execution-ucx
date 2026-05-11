@@ -2,6 +2,7 @@
 Unified Communication X (UCX) is an award winning, optimized production proven-communication framework for modern, high-bandwidth and low-latency networks.
 """
 
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("//third_party/openucx:repositories.bzl", "openucx_repo")
 
 def _find_modules(module_ctx):
@@ -132,6 +133,102 @@ def if_cuda_enabled(if_true, if_false = []):
         A select() expression that evaluates to if_true or if_false based on CUDA availability
     """
     return select({
-        "@rules_cuda//cuda:is_enabled": if_true,
+        "@rules_ml_toolchain//common:is_cuda_enabled": if_true,
         "//conditions:default": if_false,
     })
+
+def _openucx_rdma_deps_impl(module_ctx):
+    http_archive(
+        name = "rdma_core",
+        urls = ["https://github.com/linux-rdma/rdma-core/releases/download/v50.0/rdma-core-50.0.tar.gz"],
+        strip_prefix = "rdma-core-50.0",
+        build_file_content = """
+filegroup(
+    name = "headers",
+    srcs = glob(["libibverbs/**/*.h", "librdmacm/**/*.h", "providers/mlx5/**/*.h", "kernel-headers/**/*.h", "infiniband-diags/**/*.h"]),
+    visibility = ["//visibility:public"],
+)
+""",
+    )
+
+    http_archive(
+        name = "xpmem",
+        urls = ["https://github.com/hpc/xpmem/archive/refs/heads/master.tar.gz"],
+        strip_prefix = "xpmem-master",
+        build_file_content = """
+filegroup(
+    name = "headers",
+    srcs = glob(["include/**/*.h"]),
+    visibility = ["//visibility:public"],
+)
+""",
+    )
+
+    http_archive(
+        name = "numactl",
+        urls = ["https://github.com/numactl/numactl/releases/download/v2.0.18/numactl-2.0.18.tar.gz"],
+        strip_prefix = "numactl-2.0.18",
+        build_file_content = """
+filegroup(
+    name = "headers",
+    srcs = ["numa.h", "numaif.h", "numacompat1.h"],
+    visibility = ["//visibility:public"],
+)
+""",
+    )
+
+    http_archive(
+        name = "gdrcopy",
+        urls = ["https://github.com/NVIDIA/gdrcopy/archive/refs/tags/v2.4.tar.gz"],
+        strip_prefix = "gdrcopy-2.4",
+        build_file_content = """
+filegroup(
+    name = "headers",
+    srcs = glob(["include/**/*.h"]),
+    visibility = ["//visibility:public"],
+)
+""",
+    )
+
+    http_archive(
+        name = "libfuse",
+        urls = ["https://github.com/libfuse/libfuse/releases/download/fuse-3.16.2/fuse-3.16.2.tar.gz"],
+        strip_prefix = "fuse-3.16.2",
+        build_file_content = """
+filegroup(
+    name = "headers",
+    srcs = glob(["include/**/*.h"]),
+    visibility = ["//visibility:public"],
+)
+""",
+    )
+
+    http_archive(
+        name = "knem",
+        urls = ["https://gitlab.inria.fr/knem/knem/-/archive/master/knem-master.tar.gz"],
+        strip_prefix = "knem-master",
+        build_file_content = """
+filegroup(
+    name = "headers",
+    srcs = glob(["common/*.h"]),
+    visibility = ["//visibility:public"],
+)
+""",
+    )
+
+    http_archive(
+        name = "infiniband_diags",
+        urls = ["https://github.com/linux-rdma/rdma-core/releases/download/v48.0/rdma-core-48.0.tar.gz"],
+        strip_prefix = "rdma-core-48.0",
+        build_file_content = """
+filegroup(
+    name = "headers",
+    srcs = glob(["libibmad/*.h", "libibumad/*.h"]),
+    visibility = ["//visibility:public"],
+)
+""",
+    )
+
+openucx_rdma_deps = module_extension(
+    implementation = _openucx_rdma_deps_impl,
+)

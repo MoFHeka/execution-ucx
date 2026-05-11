@@ -461,7 +461,7 @@ cc_library(
         "src/bindings_runtime.hpp",
     ],
     defines = select({
-        "@rules_cuda//cuda:is_enabled": ["CUDA_ENABLED=1"],
+        "@rules_ml_toolchain//common:is_cuda_enabled": ["CUDA_ENABLED=1"],
         "//conditions:default": ["CUDA_ENABLED=0"],
     }),
     target_compatible_with = select(
@@ -484,7 +484,7 @@ cc_library(
         "@nanobind",
         "@unifex",
     ] + select({
-        "@rules_cuda//cuda:is_enabled": [
+        "@rules_ml_toolchain//common:is_cuda_enabled": [
             "@execution-ucx//ucx_context:ucx_cuda_context",
         ],
         "//conditions:default": [],
