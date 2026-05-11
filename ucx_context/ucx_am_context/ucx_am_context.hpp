@@ -3903,7 +3903,8 @@ class ucx_am_context::accept_connection {
     sockaddr_in* addr = new sockaddr_in{
       .sin_family = AF_INET,
       .sin_port = htons(port),
-      .sin_addr = {.s_addr = INADDR_ANY}};
+      .sin_addr = {.s_addr = INADDR_ANY},
+      .sin_zero = {0}};
     socket_ = std::unique_ptr<sockaddr>(reinterpret_cast<sockaddr*>(addr));
     addrlen_ = sizeof(sockaddr_in);
   }

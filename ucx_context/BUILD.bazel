@@ -200,9 +200,6 @@ cc_test(
     srcs = [
         "ucx_am_context/ucx_am_context_test.cpp",
     ],
-    copts = [
-        "-fcoroutines",
-    ],
     defines = select({
         "@rules_ml_toolchain//common:is_cuda_enabled": ["CUDA_ENABLED=1"],
         "//conditions:default": ["CUDA_ENABLED=0"],
@@ -234,9 +231,6 @@ cc_test(
 cc_binary(
     name = "ucx_am_context_perf",
     srcs = ["ucx_am_context/ucx_am_context_perf.cpp"],
-    copts = [
-        "-fcoroutines",
-    ],
     linkstatic = False,  # Important for OpenUCX specific linking
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |

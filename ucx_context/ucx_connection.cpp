@@ -153,7 +153,8 @@ UcxConnection::UcxConnection(
     ucx_status_ = UCS_OK;
   }
   ++num_instances_;
-  struct sockaddr_in in_addr = {0};
+  struct sockaddr_in in_addr;
+  std::memset(&in_addr, 0, sizeof(in_addr));
   in_addr.sin_family = AF_INET;
   set_log_prefix((const struct sockaddr*)&in_addr, sizeof(in_addr));
   ucs_list_head_init(&all_requests_);
