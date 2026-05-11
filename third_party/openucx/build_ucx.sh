@@ -31,6 +31,17 @@ export CXX="$EXECROOT/$REAL_CXX"
 export CPP="$CC -E"
 export CXXCPP="$CXX -E"
 
+# Keep clang from picking up an incompatible linker from the invoking environment
+# (for example, conda's ld when Bazel is launched via `conda run`).
+REAL_LD=$(find -L . -path "*/bin/ld.lld" -type f | grep -v "sysroot" | head -n 1)
+if [ -z "$REAL_LD" ]; then
+	echo "FATAL: Hermetic LLVM linker (ld.lld) not found in Bazel sandbox!"
+	exit 1
+fi
+export LD="$EXECROOT/$REAL_LD"
+export PATH="$(dirname "$LD"):$PATH"
+export LDFLAGS="$LDFLAGS -fuse-ld=$LD"
+
 # We need to find the source root.
 SRC_ROOT=$(dirname $(find -L . -name "autogen.sh" | grep -v "install_out" | head -n 1))
 while [ ! -f "$SRC_ROOT/contrib/configure-release" ]; do

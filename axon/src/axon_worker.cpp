@@ -1224,6 +1224,28 @@ auto AxonWorker::ProcessRndvBuffer_(
     std::move(mem_policy), tensor_metas);
 }
 
+#define AXON_PROCESS_RNDV_BUFFER_TEMPLATE(BufferT, MemPolicyT)               \
+  template auto AxonWorker::ProcessRndvBuffer_<BufferT, MemPolicyT>(         \
+    WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicyT mem_policy,  \
+    utils::TensorMetaSpan tensor_metas)                                      \
+    -> std::conditional_t<                                                   \
+      std::is_same_v<BufferT, ucxx::UcxBuffer>,                              \
+      ucxx::ucx_am_context::recv_buffer_sender,                              \
+      ucxx::ucx_am_context::recv_iovec_buffer_sender>;
+
+AXON_PROCESS_RNDV_BUFFER_TEMPLATE(ucxx::UcxBuffer, AlwaysOnHostPolicy)
+AXON_PROCESS_RNDV_BUFFER_TEMPLATE(
+  ucxx::UcxBuffer, CustomMemoryPolicy<ucxx::UcxBuffer>)
+AXON_PROCESS_RNDV_BUFFER_TEMPLATE(
+  ucxx::UcxBuffer, CustomMemoryPolicy<rpc::PayloadVariant>)
+AXON_PROCESS_RNDV_BUFFER_TEMPLATE(ucxx::UcxBufferVec, AlwaysOnHostPolicy)
+AXON_PROCESS_RNDV_BUFFER_TEMPLATE(
+  ucxx::UcxBufferVec, CustomMemoryPolicy<ucxx::UcxBufferVec>)
+AXON_PROCESS_RNDV_BUFFER_TEMPLATE(
+  ucxx::UcxBufferVec, CustomMemoryPolicy<rpc::PayloadVariant>)
+
+#undef AXON_PROCESS_RNDV_BUFFER_TEMPLATE
+
 auto AxonWorker::ServerProcessMessage_(const RecvVariant& message) noexcept {
   auto handler = std::visit(
     [this](const auto& message) -> ServerMessageHandlerSender {
