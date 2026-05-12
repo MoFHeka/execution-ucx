@@ -200,7 +200,11 @@ class UcxContextCUDARunner : public UcxContextRunner {
 
   ~UcxContextCUDARunner() override {
     cleanup();
-    ucx_am_context::destroy_ucp_context(ucp_context_);
+    context_.reset();  // Destroy the worker and endpoints first
+    if (ucp_context_) {
+      ucx_am_context::destroy_ucp_context(ucp_context_);
+      ucp_context_ = nullptr;
+    }
   }
 
  protected:
@@ -256,7 +260,7 @@ class UcxAmTest : public ::testing::Test {
     setenv(
       "UCX_RNDV_THRESH", std::to_string(kUcxRndvThreshold).c_str(),
       1);  // Set RNDV threshold to 8KB
-    setenv("UCX_RNDV_SCHEME", "get_zcopy", 1);
+    // setenv("UCX_RNDV_SCHEME", "get_zcopy", 1);
     setenv("UCX_TCP_MAX_CONN_RETRIES", "1", 1);
   }
 
@@ -1382,10 +1386,12 @@ TEST_F(UcxAmTest, BidirectionalSmallMessageCUDATransfer) {
   CUcontext context;
   ASSERT_EQ(cuInit(0), CUDA_SUCCESS);
   ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxCreate(&context, 0, device), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxSetCurrent(context), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRetain(&context, device), CUDA_SUCCESS);
+  ASSERT_EQ(cuCtxPushCurrent(context), CUDA_SUCCESS);
   runBidirectionalTransferTestLogic(1024, ucx_memory_type::CUDA);
-  ASSERT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
+  CUcontext popped_ctx;
+  ASSERT_EQ(cuCtxPopCurrent(&popped_ctx), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRelease(device), CUDA_SUCCESS);
 }
 
 // Test bidirectional  large message transfer and processing (RNDV protocol)
@@ -1395,10 +1401,12 @@ TEST_F(UcxAmTest, BidirectionalLargeMessageCUDATransfer) {
   CUcontext context;
   ASSERT_EQ(cuInit(0), CUDA_SUCCESS);
   ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxCreate(&context, 0, device), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxSetCurrent(context), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRetain(&context, device), CUDA_SUCCESS);
+  ASSERT_EQ(cuCtxPushCurrent(context), CUDA_SUCCESS);
   runBidirectionalTransferTestLogic(1024 * 1024, ucx_memory_type::CUDA);
-  ASSERT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
+  CUcontext popped_ctx;
+  ASSERT_EQ(cuCtxPopCurrent(&popped_ctx), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRelease(device), CUDA_SUCCESS);
 }
 
 // Test bidirectional small message transfer and processing (eager protocol)
@@ -1434,10 +1442,12 @@ TEST_F(UcxAmTest, BidirectionalSmallHeaderBufferCUDATransfer) {
   CUcontext context;
   ASSERT_EQ(cuInit(0), CUDA_SUCCESS);
   ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxCreate(&context, 0, device), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxSetCurrent(context), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRetain(&context, device), CUDA_SUCCESS);
+  ASSERT_EQ(cuCtxPushCurrent(context), CUDA_SUCCESS);
   runBidirectionalHeaderBufferTransferTestLogic(1024, ucx_memory_type::CUDA);
-  ASSERT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
+  CUcontext popped_ctx;
+  ASSERT_EQ(cuCtxPopCurrent(&popped_ctx), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRelease(device), CUDA_SUCCESS);
 }
 
 TEST_F(UcxAmTest, BidirectionalLargeHeaderBufferCUDATransfer) {
@@ -1445,11 +1455,13 @@ TEST_F(UcxAmTest, BidirectionalLargeHeaderBufferCUDATransfer) {
   CUcontext context;
   ASSERT_EQ(cuInit(0), CUDA_SUCCESS);
   ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxCreate(&context, 0, device), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxSetCurrent(context), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRetain(&context, device), CUDA_SUCCESS);
+  ASSERT_EQ(cuCtxPushCurrent(context), CUDA_SUCCESS);
   runBidirectionalHeaderBufferTransferTestLogic(
     1024 * 1024, ucx_memory_type::CUDA);
-  ASSERT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
+  CUcontext popped_ctx;
+  ASSERT_EQ(cuCtxPopCurrent(&popped_ctx), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRelease(device), CUDA_SUCCESS);
 }
 
 TEST_F(UcxAmTest, BidirectionalSmallHeaderBufferCUDATransferWithUcpAddress) {

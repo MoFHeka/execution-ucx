@@ -60,6 +60,8 @@ out_shared_libs = [
     "libuct_xpmem.so",
     "libuct_xpmem.so.0",
     "libuct_xpmem.so.0.0.0",
+    "libxpmem.so",
+    "libgdrapi.so",
 ]
 
 cuda_out_shared_libs = [
@@ -100,12 +102,17 @@ native_ucx_build(
     name = "ucx_build",
     srcs = [
         ":all_srcs",
+        "@gdrcopy//:all_srcs",
         "@gdrcopy//:headers",
         "@infiniband_diags//:headers",
         "@knem//:headers",
         "@libfuse//:headers",
+        "@libfuse_libs//:libs",
         "@numactl//:headers",
+        "@numactl_libs//:libs",
         "@rdma_core//:headers",
+        "@rdma_core_libs//:libs",
+        "@xpmem//:all_srcs",
         "@xpmem//:headers",
     ] + select({
         "@rules_ml_toolchain//common:is_cuda_enabled": [
@@ -130,7 +137,6 @@ native_ucx_build(
         "--with-ib-hw-tm",
         "--with-dm",
         "--enable-tuning",
-        "--without-fuse3",
         "--with-mad=yes",
         "--with-gdrcopy=yes",
         "--with-mlx5=yes",
@@ -226,6 +232,11 @@ cc_library(
         "-Wl,--as-needed",
     ],
     visibility = ["//visibility:public"],
+    deps = [
+        "@libfuse_libs//:cc_libs",
+        "@numactl_libs//:cc_libs",
+        "@rdma_core_libs//:cc_libs",
+    ],
 )
 
 # Static libs only

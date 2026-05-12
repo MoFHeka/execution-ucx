@@ -68,7 +68,7 @@ class UcxConnectionTest : public ::testing::Test {
  protected:
   void SetUp() override {
     setenv("UCX_RNDV_THRESH", std::to_string(RNDV_THRESHOLD).c_str(), 1);
-    setenv("UCX_RNDV_SCHEME", "get_zcopy", 1);
+    // setenv("UCX_RNDV_SCHEME", "get_zcopy", 1);
 
     // Initialize UCX context and worker
     ucp_params_t ucp_params;

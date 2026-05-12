@@ -75,7 +75,7 @@ ucx_deps.ucx_git(
 use_repo(ucx_deps, "ucx")
 
 ucx_rdma_deps = use_extension("//third_party/openucx:extensions.bzl", "openucx_rdma_deps")
-use_repo(ucx_rdma_deps, "gdrcopy", "infiniband_diags", "knem", "libfuse", "numactl", "rdma_core", "xpmem")
+use_repo(ucx_rdma_deps, "gdrcopy", "infiniband_diags", "knem", "libfuse", "libfuse_libs", "numactl", "numactl_libs", "rdma_core", "rdma_core_libs", "xpmem")
 
 # setting cista for RPC serialization/deserialization
 cista_deps = use_extension("//third_party/cista:extensions.bzl", "cista_dep")
