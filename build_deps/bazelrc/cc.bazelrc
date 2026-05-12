@@ -7,26 +7,13 @@ build --cxxopt=-std=c++23
 build --conlyopt=-std=gnu17
 build --host_conlyopt=-std=gnu17
 
-# Hermetic sysroot
-build --repo_env=SYSROOT_DIST=linux_glibc_2_31
+# Hermetic LLVM + sysroot
+build --repo_env=LLVM_VERSION=20
+build --repo_env=SYSROOT_DIST=linux_glibc_2_39
 
 # ------------------------------------------------------------
-# GCC (default compiler)
+# Warning flags (applied globally via hermetic Clang)
 # ------------------------------------------------------------
-build:gcc --action_env=CC=gcc
-build:gcc --action_env=CXX=g++
-build:gcc --cxxopt=-Wall
-build:gcc --cxxopt=-Wextra
-build:gcc --cxxopt=-Wno-unused-parameter
-build:gcc --cxxopt=-fdiagnostics-color=always
-
-# ------------------------------------------------------------
-# Clang (opt-in via --config=clang)
-# ------------------------------------------------------------
-build:clang --repo_env=LLVM_VERSION=18
-build:clang --action_env=CC=clang
-build:clang --action_env=CXX=clang++
-build:clang --cxxopt=-fcolor-diagnostics
-
-# Default to GCC
-build --config=gcc
+build --cxxopt=-Wall
+build --cxxopt=-Wextra
+build --cxxopt=-fdiagnostics-color=always

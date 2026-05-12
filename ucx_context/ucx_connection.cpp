@@ -520,7 +520,7 @@ void UcxConnection::handle_connection_error(ucs_status_t status) {
 
 // Private methods implementation
 void UcxConnection::common_request_callback(
-  void* request, ucs_status_t status, void* user_data) {
+  void* request, ucs_status_t status, void* /*user_data*/) {
   assert(status != UCS_INPROGRESS);
 
   UcxRequest* r = reinterpret_cast<UcxRequest*>(request);
@@ -538,12 +538,12 @@ void UcxConnection::common_request_callback(
 }
 
 void UcxConnection::am_data_recv_callback(
-  void* request, ucs_status_t status, size_t length, void* user_data) {
+  void* request, ucs_status_t status, size_t /*length*/, void* user_data) {
   common_request_callback(request, status, user_data);
 }
 
 void UcxConnection::error_callback(
-  void* arg, ucp_ep_h ep, ucs_status_t status) {
+  void* arg, ucp_ep_h /*ep*/, ucs_status_t status) {
   reinterpret_cast<UcxConnection*>(arg)->handle_connection_error(status);
 }
 

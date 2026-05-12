@@ -24,6 +24,11 @@ module(
 
 # setting hermetic ML toolchain for C++ and CUDA
 bazel_dep(name = "rules_ml_toolchain", version = "0.4.0-rc1")
+git_override(
+    module_name = "rules_ml_toolchain",
+    commit = "11bbb592cb4d7cbc8ae07d6a4e5ad58ee38605f2",
+    remote = "https://github.com/google-ml-infra/rules_ml_toolchain.git",
+)
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
 

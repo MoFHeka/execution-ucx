@@ -605,7 +605,7 @@ void ucx_am_context::submit_timer_completion_queue_entry() {
 }
 
 void ucx_am_context::timer_timeout_callback(
-  int signo, siginfo_t* info, void* _) {
+  int signo, siginfo_t* info, void* /*_*/) {
   if (signo == SIGUSR2) {
     ucx_am_context* self =
       static_cast<ucx_am_context*>(info->si_value.sival_ptr);
