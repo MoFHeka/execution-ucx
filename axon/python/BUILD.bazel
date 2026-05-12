@@ -1,6 +1,6 @@
 """Python bindings for Axon Runtime using nanobind."""
 
-load("@python_deps//:requirements.bzl", "requirement")
+load("@pypi_mods//:requirements.bzl", "requirement")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 load("//axon:build_defs/utils_libs.bzl", "SUPPORTED_CPP_STANDARDS", "axon_utils_config_settings")
@@ -496,7 +496,7 @@ copy_to_dir(
     name = "copy_ucx_libs",
     srcs = ["@ucx//:ucx_shared_libs"],
     dirname = "axon/libs",
-    match_pattern = "*.so.0",
+    match_pattern = "*.so*",
     visibility = ["//visibility:public"],
 )
 

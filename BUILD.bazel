@@ -7,7 +7,7 @@ load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 sh_binary(
     name = "format",
-    srcs = ["format.sh"],
+    srcs = ["scripts/format.sh"],
 )
 
 refresh_compile_commands(

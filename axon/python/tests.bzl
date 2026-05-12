@@ -1,6 +1,6 @@
 """Definitions for Axon Python tests."""
 
-load("@python_deps//:requirements.bzl", "requirement")
+load("@pypi_mods//:requirements.bzl", "requirement")
 load("@rules_python//python:defs.bzl", "py_test")
 
 def axon_pytest_test(name, srcs, deps = [], data = [], **kwargs):

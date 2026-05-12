@@ -31,6 +31,9 @@
 *.out
 *.app
 
+# Distribution
+dist/
+
 # Bazel
 .local_config.bazelrc
 MODULE.bazel.lock
