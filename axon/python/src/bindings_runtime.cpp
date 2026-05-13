@@ -983,7 +983,6 @@ void RegisterRuntime(nb::module_& m) {
       ctx.finalize_header();
 
       // Prepare for dispatch
-      auto mr = self.GetMemoryResourceManager();
       bool use_custom_memory = !memory_policy_factory.is_none();
       auto result_handler = python::CreateRpcResultHandler(
         self.GetMemoryResourceManagerShared()->context(), future,

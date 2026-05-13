@@ -104,7 +104,8 @@ class __attribute__((visibility("hidden"))) DLPackCapsuleWrapper {
   // - copy: bool or None - whether to copy (True=always, False=never,
   // None=auto)
   nb::object dlpack(
-    nb::object stream = nb::none(), nb::object max_version = nb::none(),
+    nb::object stream = nb::none(),
+    [[maybe_unused]] nb::object max_version = nb::none(),
     nb::object dl_device = nb::none(), nb::object copy = nb::none()) {
     // Check if already consumed (atomic for thread safety)
     bool expected = false;

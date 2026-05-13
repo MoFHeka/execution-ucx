@@ -643,6 +643,7 @@ auto AxonWorker::ServerHandleSendErrorResponse_(
     {rpc::ParamMeta{
       .type = rpc::ParamType::STRING,
       .value = data::string(error_ctx.what),
+      .name = {},
     }},
   };
   auto header_buffer_size = rpc::utils::GetSerializedSize(header);

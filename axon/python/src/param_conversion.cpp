@@ -152,7 +152,8 @@ namespace nb = nanobind;
 namespace rpc = eux::rpc;
 
 nb::object ResultMetaToPython(
-  const rpc::ParamMeta& param, const void* buffer_data, size_t buffer_size) {
+  const rpc::ParamMeta& param, [[maybe_unused]] const void* buffer_data,
+  [[maybe_unused]] size_t buffer_size) {
   namespace data = cista::offset;
 
   switch (param.type) {

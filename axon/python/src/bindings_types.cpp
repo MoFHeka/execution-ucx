@@ -166,7 +166,7 @@ void RegisterTypes(nb::module_& m) {
     .def("type", &ucxx::UcxBuffer::type)
     .def(
       "__dlpack__",
-      [](ucxx::UcxBuffer& self, nb::object stream) {
+      [](ucxx::UcxBuffer& self, [[maybe_unused]] nb::object stream) {
         // Create DLTensor from UcxBuffer
         DLManagedTensor* dlm_tensor = new DLManagedTensor;
         dlm_tensor->dl_tensor.data = self.data();
@@ -186,7 +186,7 @@ void RegisterTypes(nb::module_& m) {
         return nb::cast(dlm_tensor);
       },
       nb::arg("stream") = nb::none())
-    .def("__dlpack_device__", [](ucxx::UcxBuffer& self) {
+    .def("__dlpack_device__", []([[maybe_unused]] ucxx::UcxBuffer& self) {
       return std::make_pair(static_cast<int>(kDLCPU), 0);
     });
 

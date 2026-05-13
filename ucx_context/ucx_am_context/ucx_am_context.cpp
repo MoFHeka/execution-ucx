@@ -805,7 +805,8 @@ void ucx_am_context::set_setimer_action_event() {
   }
 }
 
-std::error_code ucx_am_context::init_with_internal_ucp_context(bool forceInit) {
+std::error_code ucx_am_context::init_with_internal_ucp_context(
+  [[maybe_unused]] bool forceInit) {
   std::error_code ec;
 
   /* Create worker */
@@ -1327,7 +1328,8 @@ void ucx_am_context::handle_connection_error(std::uint64_t conn_id) {
   conn_manager_.remove_connection_to_failed_queue(conn_id);
 }
 
-void ucx_am_context::ucx_disconnect_callback::operator()(ucs_status_t status) {}
+void ucx_am_context::ucx_disconnect_callback::operator()(
+  [[maybe_unused]] ucs_status_t status) {}
 
 void ucx_am_context::ucx_disconnect_callback::mark_inactive(
   std::uint64_t conn_id) {
@@ -1354,7 +1356,7 @@ void ucx_am_context::ucx_handle_err_callback::operator()(ucs_status_t status) {
 }
 
 void ucx_am_context::ucx_handle_err_callback::handle_connection_error(
-  ucs_status_t status, std::uint64_t conn_id) {
+  [[maybe_unused]] ucs_status_t status, std::uint64_t conn_id) {
   context_.handle_connection_error(conn_id);
 }
 
@@ -1386,8 +1388,8 @@ ucx_am_context::connect_sender tag_invoke(
  */
 ucx_am_context::connect_sender tag_invoke(
   tag_t<connect_endpoint>, ucx_am_context::scheduler scheduler,
-  std::nullptr_t src_saddr, std::unique_ptr<sockaddr> dst_saddr,
-  socklen_t addrlen) {
+  [[maybe_unused]] std::nullptr_t src_saddr,
+  std::unique_ptr<sockaddr> dst_saddr, socklen_t addrlen) {
   return ucx_am_context::connect_sender{
     *scheduler.context_, nullptr, std::move(dst_saddr), addrlen};
 }
@@ -1421,8 +1423,8 @@ ucx_am_context::connect_sender tag_invoke(
  */
 ucx_am_context::connect_sender tag_invoke(
   tag_t<connect_endpoint>, ucx_am_context::scheduler scheduler,
-  std::nullptr_t src_saddr, std::unique_ptr<sockaddr> dst_saddr,
-  size_t addrlen) {
+  [[maybe_unused]] std::nullptr_t src_saddr,
+  std::unique_ptr<sockaddr> dst_saddr, size_t addrlen) {
   return ucx_am_context::connect_sender{
     *scheduler.context_, nullptr, std::move(dst_saddr),
     static_cast<socklen_t>(addrlen)};

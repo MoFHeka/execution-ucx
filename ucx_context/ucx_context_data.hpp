@@ -74,8 +74,8 @@ class UcxBuffer {
   }
 
   UcxBuffer(
-    const UcxAllocatorContext& mr_ctx, ucx_memory_type_t type, ucx_buffer_t&& buffer,
-    void* mem_h = nullptr, bool own_buffer = true,
+    const UcxAllocatorContext& mr_ctx, ucx_memory_type_t type,
+    ucx_buffer_t&& buffer, void* mem_h = nullptr, bool own_buffer = true,
     ucp_release_fn_t ucp_release_fn = nullptr)
     : mr_ctx_(mr_ctx),
       type_(type),
@@ -96,9 +96,9 @@ class UcxBuffer {
       ucp_release_fn_(ucp_release_fn) {}
 
   UcxBuffer(
-    const UcxAllocatorContext& mr_ctx, ucx_memory_type_t type, const void* buffer,
-    size_t size, void* mem_h = nullptr, bool own_buffer = false,
-    ucp_release_fn_t ucp_release_fn = nullptr)
+    const UcxAllocatorContext& mr_ctx, ucx_memory_type_t type,
+    const void* buffer, size_t size, void* mem_h = nullptr,
+    bool own_buffer = false, ucp_release_fn_t ucp_release_fn = nullptr)
     : mr_ctx_(mr_ctx),
       type_(type),
       buffer_({const_cast<void*>(buffer), size}),
@@ -249,7 +249,8 @@ class UcxHeader {
    * @param size The size of the buffer in bytes.
    * @param own_buffer Whether to own the buffer.
    */
-  UcxHeader(const UcxAllocatorContext& mr_ctx, size_t size, bool own_header = true)
+  UcxHeader(
+    const UcxAllocatorContext& mr_ctx, size_t size, bool own_header = true)
     : mr_ctx_(mr_ctx), header_{nullptr, 0}, own_header_(own_header) {
     if (size > 0) {
       header_.data = mr_ctx_.get().mr->allocate(ucx_memory_type::HOST, size);
@@ -258,7 +259,8 @@ class UcxHeader {
   }
 
   UcxHeader(
-    const UcxAllocatorContext& mr_ctx, ucx_header_t&& header, bool own_header = true)
+    const UcxAllocatorContext& mr_ctx, ucx_header_t&& header,
+    bool own_header = true)
     : mr_ctx_(mr_ctx), header_(std::move(header)), own_header_(own_header) {}
 
   UcxHeader(
@@ -741,8 +743,9 @@ class UcxAmData {
   }
 
   UcxAmData(
-    const UcxAllocatorContext& mr_ctx, ucx_am_data_t&& data, bool own_header = true,
-    bool own_buffer = true, ucp_release_fn_t ucp_release_fn = nullptr)
+    const UcxAllocatorContext& mr_ctx, ucx_am_data_t&& data,
+    bool own_header = true, bool own_buffer = true,
+    ucp_release_fn_t ucp_release_fn = nullptr)
     : mr_ctx_(mr_ctx),
       data_(std::move(data)),
       own_header_(own_header),
@@ -923,8 +926,8 @@ class UcxAmIovec {
   }
 
   UcxAmIovec(
-    const UcxAllocatorContext& mr_ctx, ucx_am_iovec_t&& iovec, bool own_header = true,
-    bool own_buffer = true)
+    const UcxAllocatorContext& mr_ctx, ucx_am_iovec_t&& iovec,
+    bool own_header = true, bool own_buffer = true)
     : mr_ctx_(mr_ctx),
       iovec_(std::move(iovec)),
       own_header_(own_header),

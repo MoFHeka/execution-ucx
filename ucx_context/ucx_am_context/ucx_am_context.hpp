@@ -2987,13 +2987,13 @@ class ucx_am_context::ucx_accept_callback : public ucx_callback {
     client_id_ = context.get_client_id();
   }
 
-  virtual void operator()(ucs_status_t status) {
+  virtual void operator()([[maybe_unused]] ucs_status_t status) {
     UNIFEX_ASSERT(connection_->ucx_status() == status);
   }
 
  private:
   [[maybe_unused]] ucx_am_context& context_;
-  ucx_connection* connection_;
+  [[maybe_unused]] ucx_connection* connection_;
 };
 
 class ucx_am_context::ucx_connect_callback : public ucx_callback {
@@ -3003,13 +3003,13 @@ class ucx_am_context::ucx_connect_callback : public ucx_callback {
     client_id_ = context.get_client_id();
   }
 
-  virtual void operator()(ucs_status_t status) {
+  virtual void operator()([[maybe_unused]] ucs_status_t status) {
     UNIFEX_ASSERT(connection_->ucx_status() == status);
   }
 
  private:
   [[maybe_unused]] ucx_am_context& context_;
-  ucx_connection* connection_;
+  [[maybe_unused]] ucx_connection* connection_;
 };
 
 class ucx_am_context::ucx_disconnect_callback : public ucx_callback {

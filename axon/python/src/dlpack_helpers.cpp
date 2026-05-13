@@ -403,8 +403,8 @@ struct TensorDlpackContext {
 };
 
 nb::object TensorMetaToDlpack(
-  const ucxx::UcxAllocatorContext& mr_ctx, rpc::utils::TensorMeta&& meta,
-  ucxx::UcxBuffer&& buffer) {
+  [[maybe_unused]] const ucxx::UcxAllocatorContext& mr_ctx,
+  rpc::utils::TensorMeta&& meta, ucxx::UcxBuffer&& buffer) {
   auto owned = std::make_shared<ucxx::UcxBuffer>(std::move(buffer), true);
   DLDevice device = UcxMemoryTypeToDlDevice(owned->type());
   auto tensor = std::make_unique<axon::utils::TensorBase>();
@@ -432,7 +432,7 @@ nb::object TensorMetaToDlpack(
 }
 
 nb::list TensorMetaVecToDlpack(
-  const ucxx::UcxAllocatorContext& mr_ctx,
+  [[maybe_unused]] const ucxx::UcxAllocatorContext& mr_ctx,
   cista::offset::vector<rpc::utils::TensorMeta>&& meta_vec,
   ucxx::UcxBufferVec&& buffer_vec) {
   if (meta_vec.size() != buffer_vec.size()) {

@@ -3,25 +3,25 @@
 
 set -e
 
-# Get the test file from arguments
-TEST_FILE="$1"
+# Convert test file to absolute path before changing directory
+if [ -n "$1" ]; then
+	TEST_FILE="$(realpath "$1")"
+else
+	TEST_FILE=""
+fi
+
+# Change to project root so paths and bazel commands work from anywhere
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+cd "$PROJECT_ROOT"
 
 # Find the _axon.so location using Bazel cquery for precision
 # This returns the exact path where Bazel outputs the library
 RUNTIME_SO=$(bazel cquery "//axon/python:axon_python_lib" --output=files 2>/dev/null | head -1)
 
 if [ -z "$RUNTIME_SO" ] || [ ! -f "$RUNTIME_SO" ]; then
-	# Fallback: try to find it in common Bazel output locations
-	if [ -f "bazel-bin/axon/python/axon/_axon.so" ]; then
-		RUNTIME_SO="bazel-bin/axon/python/axon/_axon.so"
-	elif [ -f "axon/python/axon/_axon.so" ]; then
-		RUNTIME_SO="axon/python/axon/_axon.so"
-	elif [ -f "bazel-bin/axon/python/libaxon_python_runtime.so" ]; then
-		RUNTIME_SO="bazel-bin/axon/python/libaxon_python_runtime.so"
-	else
-		# Last resort: search for the file
-		RUNTIME_SO=$(find . -name "_axon.so" 2>/dev/null | head -1)
-	fi
+	echo "ERROR: Could not find _axon.so using bazel cquery."
+	echo "Please ensure the extension is built via: bazel build //axon/python:axon_python_lib"
+	exit 1
 fi
 
 # Pass the library paths to the test process via environment variables

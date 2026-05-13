@@ -48,7 +48,7 @@ constexpr size_t DEFAULT_ZCOPY_THRESH = 4096;
 std::uint32_t UcxConnection::num_instances_ = 0;
 
 // EmptyCallback implementation
-void EmptyCallback::operator()(ucs_status_t status) {
+void EmptyCallback::operator()([[maybe_unused]] ucs_status_t status) {
   // Do nothing
 }
 
@@ -591,7 +591,8 @@ void UcxConnection::connect_common(
   connect_am(std::move(callback));
 }
 
-void UcxConnection::connect_am(std::unique_ptr<UcxCallback> callback) {
+void UcxConnection::connect_am(
+  [[maybe_unused]] std::unique_ptr<UcxCallback> callback) {
   // With AM use ep as a connection ID. AM receive callback provides
   // reply ep, which can be used for finding a proper connection.
   established(UCS_OK);
@@ -711,7 +712,7 @@ void UcxConnection::request_release(void* request) {
 }
 
 const std::string UcxConnection::sockaddr_str(
-  const struct sockaddr* saddr, size_t addrlen) {
+  const struct sockaddr* saddr, [[maybe_unused]] size_t addrlen) {
   char buf[128];
   uint16_t port;
 

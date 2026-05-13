@@ -83,23 +83,27 @@ class UcxCallback {
   virtual ~UcxCallback();
   virtual void operator()(ucs_status_t status) = 0;
   virtual void handle_connection_error(
-    ucs_status_t status, UcxConnection& conn) {
+    [[maybe_unused]] ucs_status_t status,
+    [[maybe_unused]] UcxConnection& conn) {
     throw std::runtime_error(
       "handle_connection_error with UcxConnection not implemented");
   }
   virtual void handle_connection_error(
-    ucs_status_t status, std::uint64_t conn_id) {
+    [[maybe_unused]] ucs_status_t status,
+    [[maybe_unused]] std::uint64_t conn_id) {
     throw std::runtime_error(
       "handle_connection_error with conn_id not implemented");
   }
-  virtual void mark_inactive(std::uint64_t conn_id) {
+  virtual void mark_inactive([[maybe_unused]] std::uint64_t conn_id) {
     throw std::runtime_error("mark_inactive not implemented");
   }
-  virtual void mark_disconnecting_from_inactive(std::uint64_t conn_id) {
+  virtual void mark_disconnecting_from_inactive(
+    [[maybe_unused]] std::uint64_t conn_id) {
     throw std::runtime_error(
       "mark_disconnecting_from_inactive not implemented");
   }
-  virtual void mark_failed_from_inactive(std::uint64_t conn_id) {
+  virtual void mark_failed_from_inactive(
+    [[maybe_unused]] std::uint64_t conn_id) {
     throw std::runtime_error("mark_failed_from_inactive not implemented");
   }
   uint64_t get_client_id() const { return client_id_; }
@@ -113,12 +117,16 @@ class EmptyCallback : public UcxCallback {
  public:
   void operator()(ucs_status_t status) override;
   void handle_connection_error(
-    ucs_status_t status, UcxConnection& conn) override {}
+    [[maybe_unused]] ucs_status_t status,
+    [[maybe_unused]] UcxConnection& conn) override {}
   void handle_connection_error(
-    ucs_status_t status, std::uint64_t conn_id) override {}
-  void mark_inactive(std::uint64_t conn_id) override {}
-  void mark_disconnecting_from_inactive(std::uint64_t conn_id) override {}
-  void mark_failed_from_inactive(std::uint64_t conn_id) override {}
+    [[maybe_unused]] ucs_status_t status,
+    [[maybe_unused]] std::uint64_t conn_id) override {}
+  void mark_inactive([[maybe_unused]] std::uint64_t conn_id) override {}
+  void mark_disconnecting_from_inactive(
+    [[maybe_unused]] std::uint64_t conn_id) override {}
+  void mark_failed_from_inactive(
+    [[maybe_unused]] std::uint64_t conn_id) override {}
 
   static EmptyCallback* get();
 
