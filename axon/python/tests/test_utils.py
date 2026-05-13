@@ -8,30 +8,39 @@ from typing import Optional, Callable, List, Tuple
 
 
 def setup_module_path():
-    """Setup PYTHONPATH to find axon_python_runtime.so and its python wrapper."""
-    # Insert axon/python to sys.path so `import axon` resolves to the correct package
-    # instead of Bazel's root `_main/axon` directory which contains an empty __init__.py
-    base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    sys.path.insert(0, base_path)
+    """Setup PYTHONPATH and inject extension module if provided."""
+    import importlib.util
 
-    # Try to find the directory containing 'axon' python module
+    # 1. Add source directory to sys.path
+    base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if base_path not in sys.path:
+        sys.path.insert(0, base_path)
+
+    # 2. Check for explicit extension path (from run_test.sh)
+    extension_path = os.environ.get("AXON_EXTENSION_PATH")
+    if extension_path and os.path.exists(extension_path):
+        # Set UCX module directory if provided
+        ucx_modules_path = os.environ.get("AXON_UCX_MODULES_PATH")
+        if ucx_modules_path and os.path.isdir(ucx_modules_path):
+            os.environ["UCX_MODULE_DIR"] = ucx_modules_path
+
+        # Inject the extension module into sys.modules
+        # This allows 'from ._axon import *' in axon/__init__.py to succeed
+        # even if _axon.so is not physically inside the axon/ package directory.
+        module_name = "axon._axon"
+        if module_name not in sys.modules:
+            spec = importlib.util.spec_from_file_location(module_name, extension_path)
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+
+    # 3. Fallback discovery logic
     possible_paths = [
-        # When running from axon/python/tests/ (e.g. directly executing python tests/test_basic.py)
+        # When running from axon/python/tests/
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
-        # When running from workspace root (e.g. python axon/python/tests/test_basic.py)
+        # When running from workspace root
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")),
-        # Bazel runfiles
-        os.path.abspath(
-            os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "..",
-                "..",
-                "bazel-bin",
-                "axon",
-                "python",
-            )
-        ),
     ]
 
     if "TEST_SRCDIR" in os.environ:
@@ -41,15 +50,13 @@ def setup_module_path():
         )
 
     for path in possible_paths:
-        # We need the directory that contains the 'axon' python package
         axon_init = os.path.join(path, "axon", "__init__.py")
         if os.path.exists(axon_init):
             if path not in sys.path:
                 sys.path.insert(0, path)
             try:
                 import axon
-
-                return  # Successfully imported
+                return
             except ImportError:
                 pass
 

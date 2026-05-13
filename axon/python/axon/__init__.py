@@ -3,10 +3,7 @@
 This module dynamically loads the C++ extension library built by Bazel.
 """
 
-import os
 import sys
-import importlib.util
-from pathlib import Path
 
 # Import and re-export device module
 from .device import (
@@ -50,7 +47,6 @@ def _preload_libs(base_dir=None):
 
 try:
     from ._axon import *  # noqa: F403
-    import sys
 
     _module = sys.modules.get(__name__ + "._axon")
 except ImportError as e:
