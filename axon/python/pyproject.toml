@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "axon-ucx"
+version = "0.0.1"
+description = "A high-performance C++/Python runtime for UCX active messages and Axon RPC."
+authors = [
+  { name = "He Jia", email = "mofhejia@163.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "nanobind>=2.0.0",
+    "numpy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "build",
+    "auditwheel",
+]

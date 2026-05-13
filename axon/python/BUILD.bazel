@@ -9,6 +9,10 @@ load("//axon/python:wheel.bzl", "axon_python_wheel", "copy_to_dir")
 
 package(default_visibility = ["//visibility:public"])
 
+NANOBIND_COPTS = [
+    "-fvisibility=hidden",
+]
+
 # Define config settings for C++ standards
 axon_utils_config_settings()
 
@@ -32,6 +36,7 @@ cc_library(
     hdrs = [
         "src/dlpack_helpers.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -52,6 +57,7 @@ cc_library(
     hdrs = [
         "src/dlpack_helpers.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -73,6 +79,7 @@ cc_library(
     hdrs = [
         "src/param_conversion.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -94,6 +101,7 @@ cc_library(
     hdrs = [
         "src/param_conversion.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -116,6 +124,7 @@ cc_library(
     hdrs = [
         "src/python_helpers.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -134,6 +143,7 @@ cc_library(
     hdrs = [
         "src/python_module.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -152,6 +162,7 @@ cc_library(
     hdrs = [
         "src/python_helpers.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -170,6 +181,7 @@ cc_library(
     hdrs = [
         "src/memory_policy_helpers.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -189,6 +201,7 @@ cc_library(
     hdrs = [
         "src/memory_policy_helpers.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -209,6 +222,7 @@ cc_library(
     hdrs = [
         "src/python_wake_manager.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -228,6 +242,7 @@ cc_library(
     hdrs = [
         "src/python_wake_manager.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -248,6 +263,7 @@ cc_library(
     hdrs = [
         "src/bindings_enums.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -266,6 +282,7 @@ cc_library(
     hdrs = [
         "src/bindings_enums.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -283,6 +300,7 @@ cc_library(
     hdrs = [
         "src/bindings_types.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -303,6 +321,7 @@ cc_library(
     hdrs = [
         "src/bindings_types.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -323,6 +342,7 @@ cc_library(
     hdrs = [
         "src/bindings_runtime_helpers.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -350,6 +370,7 @@ cc_library(
     hdrs = [
         "src/bindings_runtime_helpers.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -378,6 +399,7 @@ cc_library(
     hdrs = [
         "src/bindings_runtime_wrapper.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -404,6 +426,7 @@ cc_library(
     hdrs = [
         "src/bindings_runtime_wrapper.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -431,6 +454,7 @@ cc_library(
     hdrs = [
         "src/bindings_runtime.hpp",
     ],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -460,6 +484,7 @@ cc_library(
     hdrs = [
         "src/bindings_runtime.hpp",
     ],
+    copts = NANOBIND_COPTS,
     defines = select({
         "@rules_ml_toolchain//common:is_cuda_enabled": ["CUDA_ENABLED=1"],
         "//conditions:default": ["CUDA_ENABLED=0"],
@@ -493,10 +518,20 @@ cc_library(
 )
 
 copy_to_dir(
-    name = "copy_ucx_libs",
-    srcs = ["@ucx//:ucx_shared_libs"],
+    name = "copy_ucx_core_libs",
+    srcs = ["@ucx//:ucx_core_shared_libs"],
     dirname = "axon/libs",
     match_pattern = "*.so*",
+    rpath = "$ORIGIN",
+    visibility = ["//visibility:public"],
+)
+
+copy_to_dir(
+    name = "copy_ucx_transport_libs",
+    srcs = ["@ucx//:ucx_transport_shared_libs"],
+    dirname = "axon/ucx_modules",
+    match_pattern = "*.so*",
+    rpath = "$ORIGIN/../libs",
     visibility = ["//visibility:public"],
 )
 
@@ -504,6 +539,7 @@ cc_library(
     name = "bindings_memory_resource",
     srcs = ["src/bindings_memory_resource.cpp"],
     hdrs = ["src/bindings_memory_resource.hpp"],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -518,6 +554,7 @@ cc_library(
 cc_library(
     name = "axon_python_entry",
     srcs = ["src/axon_python.cpp"],
+    copts = NANOBIND_COPTS,
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
         {"//conditions:default": ["@platforms//:incompatible"]},
@@ -534,11 +571,12 @@ cc_library(
 
 cc_binary(
     name = "axon_python_runtime",
+    copts = NANOBIND_COPTS,
     linkopts = [
-        "-shared",
         "-Wl,-rpath,$ORIGIN",
         "-Wl,-rpath,$ORIGIN/libs",
     ],
+    linkshared = True,
     # For Python extension modules, we don't link Python statically
     # Python symbols will be resolved at runtime from the Python interpreter
     # We use linkstatic = True to force static linking of nanobind and other static deps.
@@ -581,7 +619,7 @@ cc_binary(
 genrule(
     name = "axon_python_lib",
     srcs = [":axon_python_runtime"],
-    outs = ["axon/axon.so"],
+    outs = ["axon/_axon.so"],
     cmd = "cp $(location :axon_python_runtime) $@",
     visibility = ["//visibility:public"],
 )
@@ -596,7 +634,8 @@ py_library(
     ],
     data = [
         ":axon_python_lib",
-        ":copy_ucx_libs",
+        ":copy_ucx_core_libs",
+        ":copy_ucx_transport_libs",
     ],
     imports = ["."],
     visibility = ["//visibility:public"],
@@ -803,7 +842,8 @@ axon_python_wheel(
         "axon/__init__.py": "platlib/axon/__init__.py",
         "axon/device.py": "platlib/axon/device.py",
         ":axon_python_lib": "platlib/axon/axon.so",
-        ":copy_ucx_libs": "platlib/axon/libs",
+        ":copy_ucx_core_libs": "platlib/axon/libs",
+        ":copy_ucx_transport_libs": "platlib/axon/ucx_modules",
     },
     description = "Axon Runtime Python bindings for distributed execution",
     version = "0.0.1",

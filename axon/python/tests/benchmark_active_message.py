@@ -167,9 +167,7 @@ def report_throughput(label: str, size_bytes: int, qps: float) -> None:
         size_str = f"{size_bytes:>4d}   B"
 
     print(
-        f"  {label:<26s}  "
-        f"size={size_str}  "
-        f"Concurrent QPS={qps:7.1f} (High Contention)"
+        f"  {label:<26s}  size={size_str}  Concurrent QPS={qps:7.1f} (High Contention)"
     )
 
 

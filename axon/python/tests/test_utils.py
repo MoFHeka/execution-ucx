@@ -3,81 +3,66 @@
 import os
 import sys
 import glob
-import asyncio
 from contextlib import contextmanager
 from typing import Optional, Callable, List, Tuple
 
 
 def setup_module_path():
-    """Setup PYTHONPATH to find axon_python_runtime.so."""
-    # Try to find axon_python_runtime.so in common locations
+    """Setup PYTHONPATH to find axon_python_runtime.so and its python wrapper."""
+    # Insert axon/python to sys.path so `import axon` resolves to the correct package
+    # instead of Bazel's root `_main/axon` directory which contains an empty __init__.py
+    base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    sys.path.insert(0, base_path)
+
+    # Try to find the directory containing 'axon' python module
     possible_paths = [
-        os.path.join(os.path.dirname(__file__), ".."),
-        os.path.join(os.path.dirname(__file__), "..", ".."),
-        os.path.dirname(__file__),
-        os.path.join(
-            os.path.dirname(__file__), "..", "..", "..", "bazel-bin", "axon", "python"
+        # When running from axon/python/tests/ (e.g. directly executing python tests/test_basic.py)
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
+        # When running from workspace root (e.g. python axon/python/tests/test_basic.py)
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")),
+        # Bazel runfiles
+        os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "..",
+                "bazel-bin",
+                "axon",
+                "python",
+            )
         ),
     ]
 
-    # Also check runfiles (Bazel)
     if "TEST_SRCDIR" in os.environ:
         runfiles_dir = os.environ["TEST_SRCDIR"]
-        possible_paths.insert(0, runfiles_dir)
         possible_paths.insert(
             0, os.path.join(runfiles_dir, "execution_ucx", "axon", "python")
         )
 
-    # Possible library names
-    # Bazel generates libaxon_python_runtime.so, but we also have axon.so from genrule
-    lib_names = [
-        "axon.so",
-        "libaxon_python_runtime.so",
-        "axon_python_runtime.so",
-    ]
-
-    # Search for the .so file
     for path in possible_paths:
-        for lib_name in lib_names:
-            runtime_so = os.path.join(path, lib_name)
-            if os.path.exists(runtime_so):
-                # Always prefer adding the source directory (where axon.py lives)
-                # to sys.path if it exists, so we use the wrapper which handles loading.
-                source_dir = os.path.abspath(
-                    os.path.join(os.path.dirname(__file__), "..")
-                )
-                if os.path.exists(os.path.join(source_dir, "axon.py")):
-                    if source_dir not in sys.path:
-                        sys.path.insert(0, source_dir)
-                    return
+        # We need the directory that contains the 'axon' python package
+        axon_init = os.path.join(path, "axon", "__init__.py")
+        if os.path.exists(axon_init):
+            if path not in sys.path:
+                sys.path.insert(0, path)
+            try:
+                import axon
 
-                # Fallback: add the directory containing the .so directly
-                if path not in sys.path:
-                    sys.path.insert(0, path)
-                return
+                return  # Successfully imported
+            except ImportError:
+                pass
 
-    # Try glob search as fallback
-    for lib_name in lib_names:
-        for pattern in [f"**/{lib_name}", lib_name]:
-            matches = glob.glob(pattern, recursive=True)
-            if matches:
-                # Prefer source dir if wrapper exists
-                source_dir = os.path.abspath(
-                    os.path.join(os.path.dirname(__file__), "..")
-                )
-                if os.path.exists(os.path.join(source_dir, "axon.py")):
-                    if source_dir not in sys.path:
-                        sys.path.insert(0, source_dir)
-                    return
-
-                runtime_dir = os.path.dirname(os.path.abspath(matches[0]))
-                if runtime_dir not in sys.path:
-                    sys.path.insert(0, runtime_dir)
-                return
+    try:
+        import axon
+    except ImportError as e:
+        raise ImportError(
+            "Failed to import axon module. "
+            "Please ensure you have built it using: bazel build //axon/python:axon_python_runtime"
+        ) from e
 
 
-# Setup module path before importing axon
-# This allows tests to run directly without Bazel
+# Verify module path before tests
 setup_module_path()
 
 # Try to import axon with helpful error message

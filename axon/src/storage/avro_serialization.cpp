@@ -223,7 +223,7 @@ static ParamMeta ConvertAvroToParamMeta(const avro::GenericRecord& param_rec);
 static PayloadVariant ConvertAvroToPayloadVariant(
   const avro::GenericDatum& payload_datum, UcxMemoryResourceManager& mr);
 
-std::string SerializeToJson(const AxonRequest& request) {
+std::string SerializeToJson(const AxonRequest& /*request*/) {
   throw std::runtime_error("SerializeToJson not implemented");
 }
 
@@ -254,7 +254,7 @@ avro::GenericDatum AvroSerialization::Serialize(
 }
 
 AxonRequest AvroSerialization::DeserializeFromJson(
-  const std::string& json_data) {
+  const std::string& /*json_data*/) {
   throw std::runtime_error("DeserializeFromJson not implemented");
 }
 

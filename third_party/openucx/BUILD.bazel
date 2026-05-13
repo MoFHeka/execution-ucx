@@ -3,7 +3,7 @@ Unified Communication X (UCX) is an award winning, optimized production proven-c
 """
 
 load("@//third_party/openucx:native_ucx_build.bzl", "native_ucx_build")
-load("@//third_party/openucx:utils.bzl", "file_filter")
+load("@//third_party/openucx:utils.bzl", "file_filter", "file_prefix_filter")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
@@ -193,6 +193,43 @@ file_filter(
     visibility = ["//visibility:public"],
 )
 
+# UCX core libraries: linked at build time as DT_NEEDED.
+file_prefix_filter(
+    name = "ucx_core_shared_libs",
+    srcs = [":ucx_shared_libs"],
+    exclude_prefixes = [
+        "libuct_",
+        "libucm_",
+    ],
+    prefixes = [
+        "libucm.so",
+        "libucp.so",
+        "libucs_signal.so",
+        "libucs.so",
+        "libuct.so",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# UCX transport plugins: loaded via dlopen at runtime.
+# UCX scans <libucs_dir>/ucx/ for these modules.
+file_prefix_filter(
+    name = "ucx_transport_shared_libs",
+    srcs = [":ucx_shared_libs"],
+    prefixes = [
+        "libuct_cma",
+        "libuct_ib",
+        "libuct_rdmacm",
+        "libuct_knem",
+        "libuct_xpmem",
+        "libuct_cuda",
+        "libucm_cuda",
+        "libxpmem",
+        "libgdrapi",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 file_filter(
     name = "ucx_static_libs",
     srcs = [":ucx_build"],
@@ -222,20 +259,21 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
-# Shared libs only
+# Core shared libs only (link-time dependencies).
+# Transport plugins are NOT included here; they are loaded via dlopen
+# by UCX's module loader at runtime, enabling graceful degradation
+# on machines without specific hardware (IB, XPMEM, CUDA, etc.).
 cc_library(
     name = "ucx_prebuilt_shared",
     srcs = [
-        ":ucx_shared_libs",
+        ":ucx_core_shared_libs",
     ],
     linkopts = [
         "-Wl,--as-needed",
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "@libfuse_libs//:cc_libs",
         "@numactl_libs//:cc_libs",
-        "@rdma_core_libs//:cc_libs",
     ],
 )
 

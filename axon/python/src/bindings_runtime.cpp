@@ -286,21 +286,23 @@ void RegisterRuntime(nb::module_& m) {
       },
       nb::call_guard<nb::gil_scoped_release>());
 
-  cls.def(
-    "get_local_address",
-    [](axon::AxonRuntime& self) {
-      auto addr = self.GetLocalAddress();
-      return nb::bytes(reinterpret_cast<const char*>(addr.data()), addr.size());
-    },
-    nb::call_guard<nb::gil_scoped_release>());
+  cls.def("get_local_address", [](axon::AxonRuntime& self) {
+    std::vector<std::byte> addr;
+    {
+      nb::gil_scoped_release release;
+      addr = self.GetLocalAddress();
+    }
+    return nb::bytes(reinterpret_cast<const char*>(addr.data()), addr.size());
+  });
 
-  cls.def(
-    "get_local_signatures",
-    [](axon::AxonRuntime& self) {
-      auto sigs = self.GetLocalSignatures();
-      return nb::bytes(reinterpret_cast<const char*>(sigs.data()), sigs.size());
-    },
-    nb::call_guard<nb::gil_scoped_release>());
+  cls.def("get_local_signatures", [](axon::AxonRuntime& self) {
+    cista::byte_buf sigs;
+    {
+      nb::gil_scoped_release release;
+      sigs = self.GetLocalSignatures();
+    }
+    return nb::bytes(reinterpret_cast<const char*>(sigs.data()), sigs.size());
+  });
 
   cls.def(
     "connect_endpoint_async",

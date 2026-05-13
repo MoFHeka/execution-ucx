@@ -1,0 +1,10 @@
+# Build artifacts
+*.so
+libs/
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+__pycache__/
+.env

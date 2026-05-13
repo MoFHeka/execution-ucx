@@ -44,7 +44,7 @@ done
 echo "Source root: $SRC_ROOT"
 
 # Create a clean source directory to run autogen.sh (to avoid modifying read-only cache)
-SRC_TMP=$(mktemp -d)
+SRC_TMP=$(mktemp -d "$EXECROOT/ucx_src_tmp.XXXXXX")
 cp -r $SRC_ROOT/* $SRC_TMP/
 cp -a $SRC_ROOT/.git $SRC_TMP/ 2>/dev/null || true
 cd $SRC_TMP
@@ -259,12 +259,14 @@ if [ -n "$GDRCOPY_SRC" ]; then
 	if [ -n "$GDRCOPY_INC" ]; then
 		echo "  Building libgdrapi.so from source..."
 		GDRCOPY_COMMON="-fPIC -Wno-error -I$GDRCOPY_INC -I$GDRCOPY_SRC_DIR/gdrdrv -DGDRAPI_VERSION_MAJOR=2 -DGDRAPI_VERSION_MINOR=4"
-		$CC $GDRCOPY_COMMON -c -o /tmp/gdrapi.o "$GDRCOPY_SRC_DIR/gdrapi.c"
-		$CC $GDRCOPY_COMMON -mavx -c -o /tmp/memcpy_avx.o "$GDRCOPY_SRC_DIR/memcpy_avx.c"
-		$CC $GDRCOPY_COMMON -msse -c -o /tmp/memcpy_sse.o "$GDRCOPY_SRC_DIR/memcpy_sse.c"
-		$CC $GDRCOPY_COMMON -msse4.1 -c -o /tmp/memcpy_sse41.o "$GDRCOPY_SRC_DIR/memcpy_sse41.c"
+		GDRCOPY_OBJ_DIR="$EXECROOT/tmp_gdrcopy"
+		mkdir -p "$GDRCOPY_OBJ_DIR"
+		$CC $GDRCOPY_COMMON -c -o "$GDRCOPY_OBJ_DIR/gdrapi.o" "$GDRCOPY_SRC_DIR/gdrapi.c"
+		$CC $GDRCOPY_COMMON -mavx -c -o "$GDRCOPY_OBJ_DIR/memcpy_avx.o" "$GDRCOPY_SRC_DIR/memcpy_avx.c"
+		$CC $GDRCOPY_COMMON -msse -c -o "$GDRCOPY_OBJ_DIR/memcpy_sse.o" "$GDRCOPY_SRC_DIR/memcpy_sse.c"
+		$CC $GDRCOPY_COMMON -msse4.1 -c -o "$GDRCOPY_OBJ_DIR/memcpy_sse41.o" "$GDRCOPY_SRC_DIR/memcpy_sse41.c"
 		$CC -shared -o "$EXECROOT/sysroot/lib/libgdrapi.so" \
-			/tmp/gdrapi.o /tmp/memcpy_avx.o /tmp/memcpy_sse.o /tmp/memcpy_sse41.o
+			"$GDRCOPY_OBJ_DIR/gdrapi.o" "$GDRCOPY_OBJ_DIR/memcpy_avx.o" "$GDRCOPY_OBJ_DIR/memcpy_sse.o" "$GDRCOPY_OBJ_DIR/memcpy_sse41.o"
 		echo "  Built libgdrapi.so"
 	fi
 fi

@@ -28,7 +28,7 @@ void RegisterDefaultResourceManager(nb::module_& m);
 void RegisterTypes(nb::module_& m);
 void RegisterRuntime(nb::module_& m);
 
-NB_MODULE(axon, m) {
+NB_MODULE(_axon, m) {
   m.doc() = "Axon Runtime Python bindings";
 
   // Register all bindings
