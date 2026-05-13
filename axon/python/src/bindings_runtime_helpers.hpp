@@ -80,8 +80,8 @@ std::string ExtractErrorMessageFromResponseHeader(
 // Helper function to handle RPC success result
 template <typename PayloadT>
 void HandleRpcSuccessResult(
-  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
-  SharedPyObject future_guard, PythonWakeManager& manager,
+  const ucxx::UcxAllocatorContext& mr_ctx, SharedPyObject future_guard,
+  PythonWakeManager& manager,
   std::unique_ptr<
     const rpc::RpcResponseHeader, rpc::UcxDataDeleter<ucxx::UcxHeader>>
     response_header,
@@ -90,7 +90,7 @@ void HandleRpcSuccessResult(
   manager.Enqueue(pro::make_proxy<TaskFacade>(
     [future_guard, response_header = std::move(response_header),
      returned_payload = std::forward<PayloadT>(returned_payload),
-     from_dlpack_fn, mr]() mutable {
+     from_dlpack_fn, mr_ctx]() mutable {
       nb::object future = future_guard.get();
 
       // Check if the future is valid (not none)
@@ -112,7 +112,7 @@ void HandleRpcSuccessResult(
         nb::object from_dlpack_obj =
           from_dlpack_fn ? from_dlpack_fn.get() : nb::none();
         nb::object py_results = ResultsToPython<PayloadT>(
-          mr, response_header->results, std::move(returned_payload),
+          mr_ctx, response_header->results, std::move(returned_payload),
           std::move(from_dlpack_obj));
         future.attr("set_result")(py_results);
       } catch (const std::exception& e) {
@@ -174,15 +174,15 @@ struct __attribute__((visibility("hidden"))) CreateRpcResultHandler {
   SharedPyObject future_;
   PythonWakeManager& manager_;
   SharedPyObject from_dlpack_;  // GIL-safe wrapper for from_dlpack_fn callable
-  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr_;
+  std::reference_wrapper<const ucxx::UcxAllocatorContext> mr_ctx_;
 
   CreateRpcResultHandler(
-    std::shared_ptr<ucxx::UcxMemoryResourceManager> mr, SharedPyObject future,
+    const ucxx::UcxAllocatorContext& mr_ctx, SharedPyObject future,
     PythonWakeManager& manager, nb::object from_dlpack_fn = nb::none())
     : future_(std::move(future)),
       manager_(manager),
       from_dlpack_(std::move(from_dlpack_fn)),
-      mr_(std::move(mr)) {}
+      mr_ctx_(mr_ctx) {}
 
   template <typename Sender>
   auto operator()(Sender&& sender) {
@@ -190,37 +190,38 @@ struct __attribute__((visibility("hidden"))) CreateRpcResultHandler {
     // across threads
     auto chained_sender =
       unifex::just(future_, from_dlpack_)
-      | unifex::let_value(
-        [&manager = manager_, sender = std::forward<Sender>(sender), mr_ = mr_](
-          const SharedPyObject& future_in,
-          const SharedPyObject& from_dlpack_in) mutable {
+      | unifex::let_value([&manager = manager_,
+                           sender = std::forward<Sender>(sender),
+                           mr_ctx_ = mr_ctx_](
+                            const SharedPyObject& future_in,
+                            const SharedPyObject& from_dlpack_in) mutable {
           SharedPyObject future = future_in;
           SharedPyObject from_dlpack_fn = from_dlpack_in;
           auto enhanced_sender =
             std::move(sender)
             | unifex::then([future, &manager, from_dlpack_fn,
-                            mr = mr_](auto&& result_pair) mutable {
+                            mr_ctx = mr_ctx_](auto&& result_pair) mutable {
                 try {
                   auto& [response_header, returned_payload] = result_pair;
                   using PayloadType = std::decay_t<decltype(returned_payload)>;
                   if constexpr (std::is_same_v<PayloadType, std::monostate>) {
                     HandleRpcSuccessResult<std::monostate>(
-                      mr, future, manager, std::move(response_header),
+                      mr_ctx, future, manager, std::move(response_header),
                       std::move(returned_payload), from_dlpack_fn);
                   } else if constexpr (std::is_same_v<
                                          PayloadType, ucxx::UcxBuffer>) {
                     HandleRpcSuccessResult<ucxx::UcxBuffer>(
-                      mr, future, manager, std::move(response_header),
+                      mr_ctx, future, manager, std::move(response_header),
                       std::move(returned_payload), from_dlpack_fn);
                   } else if constexpr (std::is_same_v<
                                          PayloadType, ucxx::UcxBufferVec>) {
                     HandleRpcSuccessResult<ucxx::UcxBufferVec>(
-                      mr, future, manager, std::move(response_header),
+                      mr_ctx, future, manager, std::move(response_header),
                       std::move(returned_payload), from_dlpack_fn);
                   } else if constexpr (std::is_same_v<
                                          PayloadType, rpc::PayloadVariant>) {
                     HandleRpcSuccessResult<rpc::PayloadVariant>(
-                      mr, future, manager, std::move(response_header),
+                      mr_ctx, future, manager, std::move(response_header),
                       std::move(returned_payload), from_dlpack_fn);
                   }
                 } catch (const std::exception& e) {
@@ -443,20 +444,21 @@ struct __attribute__((visibility("hidden"))) InvokeContext {
 
   // Create UcxBuffer from cached data (no repeated ExtractDlpackTensor call)
   [[nodiscard]] ucxx::UcxBuffer to_ucx_buffer(
-    std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr) {
+    const ucxx::UcxAllocatorContext& mr_ctx) {
     if (dlm_ptrs.empty()) {
       throw std::runtime_error(
         "InvokeContext::to_ucx_buffer: no tensors to convert");
     }
     return DlpackToUcxBufferFromDlm(
-      dlm_ptrs[0], std::move(dlm_owners[0]), tensor_metas[0], mr);
+      dlm_ptrs[0], std::move(dlm_owners[0]), tensor_metas[0], mr_ctx);
   }
 
   // Create UcxBufferVec from cached data (no repeated ExtractDlpackTensor
   // calls)
   [[nodiscard]] ucxx::UcxBufferVec to_ucx_buffer_vec(
-    std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr) {
-    return DlpackToUcxBufferVecFromDlm(dlm_ptrs, dlm_owners, tensor_metas, mr);
+    const ucxx::UcxAllocatorContext& mr_ctx) {
+    return DlpackToUcxBufferVecFromDlm(
+      dlm_ptrs, dlm_owners, tensor_metas, mr_ctx);
   }
 
   // Convert tensor_objs to nb::list for DlpackToUcxBufferVec
@@ -601,24 +603,24 @@ std::chrono::milliseconds ConvertTimeout(nb::object timeout_obj);
 
 // HandleRpcSuccessResult instantiations
 extern template void HandleRpcSuccessResult<ucxx::UcxBuffer>(
-  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
-  SharedPyObject future, PythonWakeManager& manager,
+  const ucxx::UcxAllocatorContext& mr_ctx, SharedPyObject future,
+  PythonWakeManager& manager,
   std::unique_ptr<
     const rpc::RpcResponseHeader, rpc::UcxDataDeleter<ucxx::UcxHeader>>
     response_header,
   ucxx::UcxBuffer&& returned_payload, SharedPyObject from_dlpack_fn);
 
 extern template void HandleRpcSuccessResult<ucxx::UcxBufferVec>(
-  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
-  SharedPyObject future, PythonWakeManager& manager,
+  const ucxx::UcxAllocatorContext& mr_ctx, SharedPyObject future,
+  PythonWakeManager& manager,
   std::unique_ptr<
     const rpc::RpcResponseHeader, rpc::UcxDataDeleter<ucxx::UcxHeader>>
     response_header,
   ucxx::UcxBufferVec&& returned_payload, SharedPyObject from_dlpack_fn);
 
 extern template void HandleRpcSuccessResult<rpc::PayloadVariant>(
-  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
-  SharedPyObject future, PythonWakeManager& manager,
+  const ucxx::UcxAllocatorContext& mr_ctx, SharedPyObject future,
+  PythonWakeManager& manager,
   std::unique_ptr<
     const rpc::RpcResponseHeader, rpc::UcxDataDeleter<ucxx::UcxHeader>>
     response_header,

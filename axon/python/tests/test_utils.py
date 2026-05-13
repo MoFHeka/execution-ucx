@@ -56,6 +56,7 @@ def setup_module_path():
                 sys.path.insert(0, path)
             try:
                 import axon
+
                 return
             except ImportError:
                 pass

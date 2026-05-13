@@ -208,9 +208,10 @@ def run_child_mode(mode: str, inline_coroutine: str, direct_future: str) -> str:
     env[INLINE_COROUTINE_ENV] = inline_coroutine
     env[DIRECT_FUTURE_ENV] = direct_future
     env[BENCHMARK_CHILD_ENV] = "1"
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
 
     result = subprocess.run(
-        [sys.executable, __file__, "--child", "--mode", mode],
+        [sys.executable, sys.argv[0], "--child", "--mode", mode],
         env=env,
         text=True,
         capture_output=True,

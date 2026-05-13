@@ -29,6 +29,13 @@ limitations under the License.
 namespace eux {
 namespace ucxx {
 
+class UcxMemoryResourceManager;
+
+struct UcxAllocatorContext {
+  UcxMemoryResourceManager* mr;
+  bool is_alive;
+};
+
 /**
  * @brief Base class for managing different types of memory resources in UCX
  * context
@@ -39,8 +46,11 @@ namespace ucxx {
  */
 class UcxMemoryResourceManager {
  public:
-  UcxMemoryResourceManager() = default;
-  virtual ~UcxMemoryResourceManager() = default;
+  UcxMemoryResourceManager()
+    : allocator_context_(new UcxAllocatorContext{this, true}) {}
+  virtual ~UcxMemoryResourceManager() { allocator_context_->is_alive = false; }
+
+  const UcxAllocatorContext& context() const { return *allocator_context_; }
 
   static constexpr const size_t UCX_MEMORY_TYPE_COUNT =
     static_cast<std::underlying_type_t<ucx_memory_type>>(ucx_memory_type::LAST)
@@ -132,6 +142,8 @@ class UcxMemoryResourceManager {
       std::function<void*(void*, const void*, size_t)>, UCX_MEMORY_TYPE_COUNT>,
     UCX_MEMORY_TYPE_COUNT>
     memcpy_fns_;  // [src_type][dest_type]
+
+  UcxAllocatorContext* allocator_context_;
 };
 
 /**

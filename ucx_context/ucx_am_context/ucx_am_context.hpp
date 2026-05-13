@@ -1488,7 +1488,7 @@ class ucx_am_context::recv_sender {
     ucx_am_context& context, ucx_memory_type data_type) noexcept
     : context_(context),
       data_own_(
-        std::in_place, context.mr_, 0, 0, data_type,
+        std::in_place, context.mr_.get().context(), 0, 0, data_type,
         /*own_header=*/true,
         /*own_buffer=*/true),
       data_(*data_own_.value().get()),
@@ -1827,7 +1827,7 @@ class ucx_am_context::recv_buffer_sender_t {
     std::enable_if_t<std::is_same_v<B, UcxBuffer>>* = nullptr) noexcept
     : am_desc_key_(key),
       context_(context),
-      buffer_own_({context.mr_, memory_type, 0}),
+      buffer_own_({context.mr_.get().context(), memory_type, 0}),
       mr_(context.mr_) {}
 
   template <typename Receiver>
@@ -1952,7 +1952,7 @@ class ucx_am_context::recv_header_sender {
           this->conn_ = conn;
 
           header_own_.emplace(UcxHeader(
-            context_.mr_, amDesc.header, amDesc.header_length,
+            context_.mr_.get().context(), amDesc.header, amDesc.header_length,
             /*own_header=*/true));
 
           // Only use RNDV path if recv_attr has RNDV flag AND data_length > 0
@@ -1972,8 +1972,8 @@ class ucx_am_context::recv_header_sender {
               if (amDesc.recv_attr & UCP_AM_RECV_ATTR_FLAG_DATA) {
                 ucp_worker_h ucp_worker = this->ucpWorker_;
                 buffer_own_.emplace(UcxBuffer(
-                  context_.mr_, ucx_memory_type::HOST, std::move(buffer),
-                  nullptr,
+                  context_.mr_.get().context(), ucx_memory_type::HOST,
+                  std::move(buffer), nullptr,
                   /*own_buffer=*/true, [ucp_worker](void* data) {
                     if (data == nullptr) {
                       UCX_CTX_ERROR << "data is nullptr when release"
@@ -1991,13 +1991,13 @@ class ucx_am_context::recv_header_sender {
                 // Has been handled in the message callback
                 // Eager message is always in host memory
                 buffer_own_.emplace(UcxBuffer(
-                  context_.mr_, ucx_memory_type::HOST, std::move(buffer),
-                  nullptr,
+                  context_.mr_.get().context(), ucx_memory_type::HOST,
+                  std::move(buffer), nullptr,
                   /*own_buffer=*/true));
               }
             } else {
               buffer_own_.emplace(UcxBuffer(
-                context_.mr_, ucx_memory_type::HOST, 0, nullptr,
+                context_.mr_.get().context(), ucx_memory_type::HOST, 0, nullptr,
                 /*own_buffer=*/true));
             }
           }

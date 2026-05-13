@@ -860,7 +860,7 @@ void RegisterRuntime(nb::module_& m) {
 
       // Create result handler
       auto result_handler = python::CreateRpcResultHandler(
-        self.GetMemoryResourceManagerShared(), future,
+        self.GetMemoryResourceManagerShared()->context(), future,
         python::GetPythonWakeManager());
 
       // Determine if using custom memory policy
@@ -878,13 +878,14 @@ void RegisterRuntime(nb::module_& m) {
           try {
             auto mr = self.GetMemoryResourceManager();
             if (payload_info.type == python::PayloadTypeInfo::UCX_BUFFER) {
-              ucxx::UcxBuffer buffer =
-                python::CreateUcxBufferFromPayload(payload_obj, mr);
+              ucxx::UcxBuffer buffer = python::CreateUcxBufferFromPayload(
+                payload_obj, mr.get().context());
               handler(std::move(buffer));
             } else if (
               payload_info.type == python::PayloadTypeInfo::UCX_BUFFER_VEC) {
               ucxx::UcxBufferVec buffer_vec =
-                python::CreateUcxBufferVecFromPayload(payload_obj, mr);
+                python::CreateUcxBufferVecFromPayload(
+                  payload_obj, mr.get().context());
               handler(std::move(buffer_vec));
             } else {
               handler(std::monostate{});
@@ -985,7 +986,7 @@ void RegisterRuntime(nb::module_& m) {
       auto mr = self.GetMemoryResourceManager();
       bool use_custom_memory = !memory_policy_factory.is_none();
       auto result_handler = python::CreateRpcResultHandler(
-        self.GetMemoryResourceManagerShared(), future,
+        self.GetMemoryResourceManagerShared()->context(), future,
         python::GetPythonWakeManager(), std::move(from_dlpack_fn));
 
       // Dispatch based on tensor count
@@ -1000,8 +1001,8 @@ void RegisterRuntime(nb::module_& m) {
             std::move(result_handler)));
         }
       } else if (ctx.tensor_count() == 1) {
-        // Use cached data to create buffer (no repeated ExtractDlpackTensor)
-        ucxx::UcxBuffer buffer = ctx.to_ucx_buffer(mr);
+        ucxx::UcxBuffer buffer =
+          ctx.to_ucx_buffer(self.GetMemoryResourceManager().get().context());
         if (use_custom_memory) {
           self.SpawnClientTask(python::InvokeRpcWithCustomMemory(
             self, worker_name, std::move(request_header), std::move(buffer),
@@ -1012,8 +1013,8 @@ void RegisterRuntime(nb::module_& m) {
             std::move(result_handler)));
         }
       } else {
-        // Vector path
-        ucxx::UcxBufferVec buffer_vec = ctx.to_ucx_buffer_vec(mr);
+        ucxx::UcxBufferVec buffer_vec = ctx.to_ucx_buffer_vec(
+          self.GetMemoryResourceManager().get().context());
         if (use_custom_memory) {
           self.SpawnClientTask(python::InvokeRpcWithCustomMemory(
             self, worker_name, std::move(request_header), std::move(buffer_vec),

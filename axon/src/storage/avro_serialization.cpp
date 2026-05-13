@@ -776,7 +776,8 @@ PayloadVariant ConvertAvroToPayloadVariant(
       constexpr auto mem_type = ucx_memory_type::HOST;
       void* buffer_data = mr.allocate(mem_type, size);
       mr.memcpy(mem_type, buffer_data, mem_type, data_vec.data(), size);
-      return ucxx::UcxBuffer(mr, mem_type, {buffer_data, size}, nullptr, true);
+      return ucxx::UcxBuffer(
+        mr.context(), mem_type, {buffer_data, size}, nullptr, true);
     }
     case avro::AVRO_ARRAY: {
       const auto& payload_array =
@@ -798,7 +799,7 @@ PayloadVariant ConvertAvroToPayloadVariant(
         buffers.push_back({buffer_data, size});
       }
       return ucxx::UcxBufferVec(
-        mr, mem_type, std::move(buffers), nullptr, true);
+        mr.context(), mem_type, std::move(buffers), nullptr, true);
     }
     default:
       throw std::runtime_error(

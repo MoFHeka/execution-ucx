@@ -269,7 +269,7 @@ std::pair<DLManagedTensor*, nb::object> ExtractDlpackTensor(
 
 ucxx::UcxBuffer DlpackToUcxBuffer(
   nb::object py_dlpack, const rpc::utils::TensorMeta& meta,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr) {
+  const ucxx::UcxAllocatorContext& mr_ctx) {
   auto [dlm, owner] = ExtractDlpackTensor(py_dlpack);
   if (!dlm) {
     throw std::runtime_error(
@@ -283,13 +283,13 @@ ucxx::UcxBuffer DlpackToUcxBuffer(
 
   SharedPyObject owner_guard(std::move(owner));
   return ucxx::UcxBuffer(
-    mr, mem_type, data_ptr, required_size, nullptr, true,
+    mr_ctx, mem_type, data_ptr, required_size, nullptr, true,
     [owner_guard = std::move(owner_guard)](void*) {});
 }
 
 ucxx::UcxBuffer DlpackToUcxBuffer(
   nb::object py_dlpack, size_t size, ucx_memory_type_t mem_type,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr) {
+  const ucxx::UcxAllocatorContext& mr_ctx) {
   auto [dlm, owner] = ExtractDlpackTensor(py_dlpack);
   if (!dlm) {
     throw std::runtime_error(
@@ -301,13 +301,13 @@ ucxx::UcxBuffer DlpackToUcxBuffer(
 
   SharedPyObject owner_guard(std::move(owner));
   return ucxx::UcxBuffer(
-    mr, mem_type, data_ptr, size, nullptr, true,
+    mr_ctx, mem_type, data_ptr, size, nullptr, true,
     [owner_guard = std::move(owner_guard)](void*) {});
 }
 
 ucxx::UcxBufferVec DlpackToUcxBufferVec(
   nb::object py_dlpack_list, const rpc::utils::TensorMetaSpan tensor_metas,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr) {
+  const ucxx::UcxAllocatorContext& mr_ctx) {
   if (!nb::isinstance<nb::list>(py_dlpack_list)) {
     throw std::runtime_error("Expected list of dlpack objects");
   }
@@ -354,14 +354,13 @@ ucxx::UcxBufferVec DlpackToUcxBufferVec(
   // Create UcxBufferVec using external memory pointers with custom deleter
   // that holds the owners list.
   return ucxx::UcxBufferVec(
-    mr, mem_type, buffers, nullptr, true,
+    mr_ctx, mem_type, buffers, nullptr, true,
     [owners = std::move(owners)](void*) {});
 }
 
 ucxx::UcxBufferVec DlpackToUcxBufferVec(
   nb::object py_dlpack_list, std::span<const size_t> sizes,
-  ucx_memory_type_t mem_type,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr) {
+  ucx_memory_type_t mem_type, const ucxx::UcxAllocatorContext& mr_ctx) {
   if (!nb::isinstance<nb::list>(py_dlpack_list)) {
     throw std::runtime_error("Expected list of dlpack objects");
   }
@@ -390,24 +389,22 @@ ucxx::UcxBufferVec DlpackToUcxBufferVec(
   }
 
   return ucxx::UcxBufferVec(
-    mr, mem_type, buffers, nullptr, true,
+    mr_ctx, mem_type, buffers, nullptr, true,
     [owners = std::move(owners)](void*) {});
 }
 
 struct TensorDlpackContext {
   std::unique_ptr<axon::utils::TensorBase> tensor;
-  std::shared_ptr<ucxx::UcxMemoryResourceManager> mr;
   std::shared_ptr<void> data_keeper;
 
   TensorDlpackContext(
-    std::unique_ptr<axon::utils::TensorBase> t, std::shared_ptr<void> keeper,
-    std::shared_ptr<ucxx::UcxMemoryResourceManager> m)
-    : tensor(std::move(t)), mr(std::move(m)), data_keeper(std::move(keeper)) {}
+    std::unique_ptr<axon::utils::TensorBase> t, std::shared_ptr<void> keeper)
+    : tensor(std::move(t)), data_keeper(std::move(keeper)) {}
 };
 
 nb::object TensorMetaToDlpack(
-  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
-  rpc::utils::TensorMeta&& meta, ucxx::UcxBuffer&& buffer) {
+  const ucxx::UcxAllocatorContext& mr_ctx, rpc::utils::TensorMeta&& meta,
+  ucxx::UcxBuffer&& buffer) {
   auto owned = std::make_shared<ucxx::UcxBuffer>(std::move(buffer), true);
   DLDevice device = UcxMemoryTypeToDlDevice(owned->type());
   auto tensor = std::make_unique<axon::utils::TensorBase>();
@@ -423,8 +420,7 @@ nb::object TensorMetaToDlpack(
   dlm_tensor->dl_tensor.strides = tensor->strides;
   dlm_tensor->dl_tensor.byte_offset = tensor->byte_offset;
   dlm_tensor->manager_ctx = new TensorDlpackContext(
-    std::move(tensor), std::static_pointer_cast<void>(std::move(owned)),
-    std::move(mr));
+    std::move(tensor), std::static_pointer_cast<void>(std::move(owned)));
   dlm_tensor->deleter = [](DLManagedTensor* self) {
     delete static_cast<TensorDlpackContext*>(self->manager_ctx);
     delete self;
@@ -436,7 +432,7 @@ nb::object TensorMetaToDlpack(
 }
 
 nb::list TensorMetaVecToDlpack(
-  const std::shared_ptr<ucxx::UcxMemoryResourceManager>& mr,
+  const ucxx::UcxAllocatorContext& mr_ctx,
   cista::offset::vector<rpc::utils::TensorMeta>&& meta_vec,
   ucxx::UcxBufferVec&& buffer_vec) {
   if (meta_vec.size() != buffer_vec.size()) {
@@ -464,7 +460,7 @@ nb::list TensorMetaVecToDlpack(
       dlm_tensor->dl_tensor.strides = tensor->strides;
       dlm_tensor->dl_tensor.byte_offset = tensor->byte_offset;
       dlm_tensor->manager_ctx =
-        new TensorDlpackContext(std::move(tensor), shared_buffer_vec, mr);
+        new TensorDlpackContext(std::move(tensor), shared_buffer_vec);
       dlm_tensor->deleter = [](DLManagedTensor* self) {
         delete static_cast<TensorDlpackContext*>(self->manager_ctx);
         delete self;
@@ -478,7 +474,7 @@ nb::list TensorMetaVecToDlpack(
     auto bufs = std::move(buffer_vec).ExtractBuffers();
     for (size_t i = 0; i < meta_vec.size(); ++i) {
       result.append(
-        TensorMetaToDlpack(mr, std::move(meta_vec[i]), std::move(bufs[i])));
+        TensorMetaToDlpack(mr_ctx, std::move(meta_vec[i]), std::move(bufs[i])));
     }
   }
   return result;
@@ -612,8 +608,7 @@ nb::list UcxBufferVecToDLTensor(ucxx::UcxBufferVec&& buffer_vec) {
 }
 
 ucxx::UcxBuffer CreateUcxBufferFromPayload(
-  nb::object payload_obj,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr) {
+  nb::object payload_obj, const ucxx::UcxAllocatorContext& mr_ctx) {
   // payload_obj should be a dlpack object (UcxBuffer/UcxBufferVec are only
   // exposed through dlpack in Python)
   auto [dlm, owner] = ExtractDlpackTensor(payload_obj);
@@ -635,13 +630,12 @@ ucxx::UcxBuffer CreateUcxBufferFromPayload(
   // Create UcxBuffer with deleter keeping owner alive
   SharedPyObject owner_guard(std::move(owner));
   return ucxx::UcxBuffer(
-    mr, mem_type, data_ptr, size, nullptr, true,
+    mr_ctx, mem_type, data_ptr, size, nullptr, true,
     [owner_guard = std::move(owner_guard)](void*) {});
 }
 
 ucxx::UcxBufferVec CreateUcxBufferVecFromPayload(
-  nb::object payload_obj,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr) {
+  nb::object payload_obj, const ucxx::UcxAllocatorContext& mr_ctx) {
   // payload_obj should be a list of dlpack objects
   if (!nb::isinstance<nb::list>(payload_obj)) {
     throw std::runtime_error(
@@ -694,7 +688,7 @@ ucxx::UcxBufferVec CreateUcxBufferVecFromPayload(
 
   // Create UcxBufferVec with deleter keeping owners alive
   return ucxx::UcxBufferVec(
-    mr, mem_type, buffers, nullptr, true,
+    mr_ctx, mem_type, buffers, nullptr, true,
     [owners = std::move(owners)](void*) {});
 }
 
@@ -730,7 +724,7 @@ rpc::utils::TensorMeta ExtractTensorMetaFromDlm(DLManagedTensor* dlm) {
 
 ucxx::UcxBuffer DlpackToUcxBufferFromDlm(
   DLManagedTensor* dlm, nb::object owner, const rpc::utils::TensorMeta& meta,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr) {
+  const ucxx::UcxAllocatorContext& mr_ctx) {
   if (!dlm) {
     throw std::runtime_error(
       "DlpackToUcxBufferFromDlm: DLManagedTensor pointer is null");
@@ -743,14 +737,14 @@ ucxx::UcxBuffer DlpackToUcxBufferFromDlm(
 
   SharedPyObject owner_guard(std::move(owner));
   return ucxx::UcxBuffer(
-    mr, mem_type, data_ptr, required_size, nullptr, true,
+    mr_ctx, mem_type, data_ptr, required_size, nullptr, true,
     [owner_guard = std::move(owner_guard)](void*) {});
 }
 
 ucxx::UcxBufferVec DlpackToUcxBufferVecFromDlm(
   std::span<DLManagedTensor*> dlms, std::span<nb::object> owners,
   const rpc::utils::TensorMetaSpan tensor_metas,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr) {
+  const ucxx::UcxAllocatorContext& mr_ctx) {
   if (dlms.size() != owners.size() || dlms.size() != tensor_metas.size()) {
     throw std::runtime_error(
       "DlpackToUcxBufferVecFromDlm: size mismatch between dlms, owners, and "
@@ -758,7 +752,8 @@ ucxx::UcxBufferVec DlpackToUcxBufferVecFromDlm(
   }
 
   if (dlms.empty()) {
-    return ucxx::UcxBufferVec(mr, ucx_memory_type::HOST, std::vector<size_t>{});
+    return ucxx::UcxBufferVec(
+      mr_ctx, ucx_memory_type::HOST, std::vector<size_t>{});
   }
 
   // Determine memory type from first tensor
@@ -787,7 +782,7 @@ ucxx::UcxBufferVec DlpackToUcxBufferVecFromDlm(
   }
 
   return ucxx::UcxBufferVec(
-    mr, mem_type, buffers, nullptr, true,
+    mr_ctx, mem_type, buffers, nullptr, true,
     [owner_guards = std::move(owner_guards)](void*) {});
 }
 

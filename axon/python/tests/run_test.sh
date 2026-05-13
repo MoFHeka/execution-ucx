@@ -53,7 +53,7 @@ fi
 
 # Set default UCX network device to loopback for local tests if not specified
 if [ -z "$UCX_NET_DEVICES" ]; then
-    export UCX_NET_DEVICES=lo
+	export UCX_NET_DEVICES=lo
 fi
 
 # Set PYTHONPATH

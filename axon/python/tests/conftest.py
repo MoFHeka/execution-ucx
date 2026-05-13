@@ -56,6 +56,7 @@ def pytest_configure(config):
         import axon  # noqa: F401
     except ImportError:
         import glob
+
         for pattern in ["**/_axon.so", "_axon.so"]:
             matches = glob.glob(pattern, recursive=True)
             if matches:
