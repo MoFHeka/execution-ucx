@@ -1376,10 +1376,11 @@ class ucx_am_context::recv_sender {
 
       // If data is owned, move it; otherwise, copy from the external buffer.
       UcxAmData am_data_wrapper =
-        self.data_own_.has_value() ? std::move(self.data_own_.value())
-                                   : UcxAmData(
-                                     self.mr_, self.data_, /*own_header=*/false,
-                                     /*own_buffer=*/false);
+        self.data_own_.has_value()
+          ? std::move(self.data_own_.value())
+          : UcxAmData(
+            self.mr_.get().context(), self.data_, /*own_header=*/false,
+            /*own_buffer=*/false);
 
       if (get_stop_token(self.receiver_).stop_requested()) {
         unifex::set_done(std::move(self.receiver_));
