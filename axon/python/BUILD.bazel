@@ -645,7 +645,7 @@ py_library(
 py_library(
     name = "test_utils_lib",
     srcs = ["tests/test_utils.py"],
-    imports = ["."],
+    imports = ["tests"],
     visibility = ["//visibility:public"],
 )
 
