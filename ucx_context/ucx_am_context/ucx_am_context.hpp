@@ -1400,18 +1400,8 @@ class ucx_am_context::recv_sender {
           }
         }
       } else if (self.result_ == UCS_ERR_CANCELED) {
-        UNIFEX_TRY { am_data_wrapper.~UcxAmData(); }
-        UNIFEX_CATCH(...) {
-          UCX_CTX_ERROR
-            << "Failed to deallocate data in recv_sender on_read_complete";
-        }
         unifex::set_done(std::move(self.receiver_));
       } else {
-        UNIFEX_TRY { am_data_wrapper.~UcxAmData(); }
-        UNIFEX_CATCH(...) {
-          UCX_CTX_ERROR
-            << "Failed to deallocate data in recv_sender on_read_complete";
-        }
         unifex::set_error(
           std::move(self.receiver_),
           eux::ucxx::make_error_code(static_cast<ucs_status_t>(self.result_)));

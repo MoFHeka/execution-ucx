@@ -20,8 +20,17 @@ from .device import (
     auto_detect,
 )
 
+import os
+
 try:
+    # UCX memory hooks (ucm) require RTLD_GLOBAL to intercept munmap/madvise
+    # from other libraries like NumPy. Without this, UCX's registration cache
+    # (rcache) holds stale references to freed memory, causing shared memory leaks.
+    old_flags = sys.getdlopenflags()
+    sys.setdlopenflags(old_flags | os.RTLD_GLOBAL)
     from ._axon import *  # noqa: F403
+
+    sys.setdlopenflags(old_flags)
 
     _module = sys.modules.get(__name__ + "._axon")
 except ImportError as e:

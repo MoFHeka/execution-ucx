@@ -1746,7 +1746,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
                  } else {
                    // Receive by key using vector of UcxBuffer
                    UcxBufferVec buffers(
-                     *server.get_memory_resource(), test_memory_type,
+                     server.get_memory_resource()->context(), test_memory_type,
                      recv_info.buffer_sizes);
 
                    auto buffer_bundle = co_await connection_recv_buffer(
@@ -1860,7 +1860,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
           std::cerr << "Error in client task: " << e.what() << std::endl;
         }
         co_return UcxAmData(
-          *client.get_memory_resource(), 0, 0, test_memory_type);
+          client.get_memory_resource()->context(), 0, 0, test_memory_type);
       });
 
     co_await scope.join();

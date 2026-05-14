@@ -331,6 +331,7 @@ static inline void init_am_send_params(
   param.cb.send = cb;
   param.flags = UCP_AM_SEND_FLAG_REPLY;
   param.memory_type = memory_type;
+
   if (memh) {
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_MEMH;
     param.memh = memh;

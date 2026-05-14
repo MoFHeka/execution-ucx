@@ -933,6 +933,8 @@ ucs_status_t ucx_am_context::am_recv_callback(
         ucx_memory_type::HOST, new_data, ucx_memory_type::HOST, data,
         data_length);
       data = new_data;
+    } else {
+      data = nullptr;
     }
     // Only one stituation return UCS_OK: when all data was copied out of the
     // UCX inner buffer and UCS will not keep the data after this callback

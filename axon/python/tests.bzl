@@ -24,9 +24,7 @@ def axon_pytest_test(name, srcs, deps = [], data = [], **kwargs):
     ]
 
     # Common data files
-    common_data = [
-        "//axon/python:axon_python_lib",
-    ]
+    common_data = []
 
     py_test(
         name = name,

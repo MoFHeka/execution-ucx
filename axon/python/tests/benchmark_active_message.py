@@ -63,6 +63,7 @@ class BenchmarkContext:
 
         self.client = axon.AxonRuntime("bench_client", timeout=5000)
         self.client.start_client()
+        await asyncio.sleep(0.5)
         await self.client.connect_endpoint_async(
             self.server.get_local_address(), self.server_name
         )
@@ -217,6 +218,9 @@ def run_child_mode(mode: str, inline_coroutine: str, direct_future: str) -> str:
         capture_output=True,
         check=False,
     )
+    if result.stderr:
+        print(f"[{mode} STDERR]\n{result.stderr}", file=sys.stderr)
+
     if result.returncode != 0:
         raise RuntimeError(
             f"benchmark mode {mode} failed with exit code {result.returncode}\n"
