@@ -20,31 +20,6 @@ from .device import (
     auto_detect,
 )
 
-
-def _preload_libs(base_dir=None):
-    """Set up environment variables for UCX module loading."""
-    import os
-
-    # Path to libs directory
-    if base_dir:
-        libs_dir = os.path.join(base_dir, "libs")
-    else:
-        libs_dir = os.path.join(os.path.dirname(__file__), "libs")
-
-    if not os.path.isdir(libs_dir):
-        return
-
-    # Point UCX module loader to transport plugins directory.
-    ucx_modules_dir = os.path.join(os.path.dirname(libs_dir), "ucx_modules")
-    if os.path.isdir(ucx_modules_dir) and "UCX_MODULE_DIR" not in os.environ:
-        os.environ["UCX_MODULE_DIR"] = ucx_modules_dir
-
-
-# Preload bundled libraries before loading extension
-# Try default location first
-# _preload_libs()
-
-
 try:
     from ._axon import *  # noqa: F403
 

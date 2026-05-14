@@ -1,27 +1,27 @@
-import os
-import shutil
+import re
 import subprocess
-import sys
 from pathlib import Path
 
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
+_VERSIONED_SO = re.compile(r"\.so\.\d+\.\d+")
+
 
 class BazelExtension(Extension):
-    def __init__(self, name, target):
-        # We don't rely on setuptools to compile any C++ sources.
+    def __init__(self, name, bazel_target):
         super().__init__(name, sources=[])
-        self.target = target
+        self.bazel_target = bazel_target
 
 
 class BazelBuildExt(build_ext):
-    def build_extension(self, ext):
-        if not isinstance(ext, BazelExtension):
-            super().build_extension(ext)
-            return
+    """Build C extensions via Bazel and place symlinks inplace.
 
-        # Ensure bazel is available
+    We override run() entirely to avoid setuptools' internal copy_file
+    machinery, which would dereference our symlinks into actual files.
+    """
+
+    def run(self):
         try:
             subprocess.check_call(
                 ["bazel", "version"],
@@ -31,71 +31,82 @@ class BazelBuildExt(build_ext):
         except OSError:
             raise RuntimeError("Bazel must be installed to build this extension.")
 
-        # Determine workspace root (parent of axon/python)
-        ext_dir = Path(__file__).resolve().parent
-        workspace_root = ext_dir.parent.parent
+        setup_dir = Path(__file__).resolve().parent
+        workspace_root = setup_dir.parent.parent
+        bazel_axon = workspace_root / "bazel-bin" / "axon" / "python" / "axon"
 
-        # Targets to build: the shared object and the UCX libs
         targets = [
-            "//axon/python:axon_python_lib",
+            "//axon/python:axon/_axon.so",
             "//axon/python:copy_ucx_core_libs",
             "//axon/python:copy_ucx_transport_libs",
         ]
-
-        # Run Bazel build
-        print(f"Building {ext.target} and UCX libs with Bazel...")
+        print(f"Building with Bazel: {' '.join(targets)}")
         subprocess.check_call(["bazel", "build"] + targets, cwd=workspace_root)
 
-        # Bazel puts the outputs in bazel-bin/axon/python/axon/
-        bazel_bin = workspace_root / "bazel-bin" / "axon" / "python" / "axon"
+        axon_so_src = bazel_axon / "_axon.so"
+        if not axon_so_src.exists():
+            raise RuntimeError(f"{axon_so_src} not found after bazel build.")
 
-        # Target directory in build_lib
-        # ext.name is 'axon.axon' (translates to path `axon/axon.so`)
-        ext_dest_path = Path(self.get_ext_fullpath(ext.name))
-        ext_dest_dir = ext_dest_path.parent
-        ext_dest_dir.mkdir(parents=True, exist_ok=True)
+        pkg_dir = setup_dir / "axon"
 
-        # In develop mode, pip install -e . might call this, but typically pip install -e .
-        # puts an egg-link and uses the source directory. Setuptools handles that, but for extension
-        # it compiles it to inplace if setup.py build_ext --inplace is used.
-        # For editable install, PEP 660 is used by setuptools.
+        # Use the ABI-tagged name so multiple Python versions can coexist.
+        # get_ext_fullpath returns a path relative to CWD (= setup_dir here).
+        inplace_so = setup_dir / self.get_ext_fullpath(self.extensions[0].name)
+        inplace_so.parent.mkdir(parents=True, exist_ok=True)
+        _symlink(axon_so_src, inplace_so)
 
-        # Also copy to the source tree directly for editable installs
-        source_ext_dir = ext_dir / "axon"
+        # UCX core libs → axon/libs/  (resolved via RPATH $ORIGIN/libs)
+        _symlink_dir(bazel_axon / "libs", pkg_dir / "libs")
 
-        # Copy _axon.so to setuptools build dir
-        axon_so_src = bazel_bin / "_axon.so"
-        if axon_so_src.exists():
-            print(f"Copying {axon_so_src} to {ext_dest_path}")
-            if ext_dest_path.exists():
-                ext_dest_path.unlink()
-            shutil.copy2(axon_so_src, ext_dest_path)
-        else:
-            raise RuntimeError(f"Expected {axon_so_src} not found after bazel build.")
+        # UCX transport plugins → axon/libs/ucx/  (loaded by UCX via dlopen)
+        _symlink_dir(bazel_axon / "ucx_modules", pkg_dir / "libs" / "ucx")
 
-        # Copy libs/ directory
-        libs_src_dir = bazel_bin / "libs"
-        libs_dest_dir = ext_dest_dir / "libs"
+    def build_extension(self, ext):
+        # Handled in run(); nothing to do here.
+        pass
 
-        if libs_src_dir.exists() and libs_src_dir.is_dir():
-            # Create dest dirs if not exists
-            libs_dest_dir.mkdir(parents=True, exist_ok=True)
 
-            print(f"Copying UCX libraries from {libs_src_dir} to {libs_dest_dir}")
-            for so_file in libs_src_dir.glob("*.so*"):
-                # Copy to setuptools build dir
-                dest_file = libs_dest_dir / so_file.name
-                if dest_file.exists():
-                    dest_file.unlink()
-                shutil.copy2(so_file, dest_file)
+def _symlink(src: Path, dst: Path) -> None:
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    dst.symlink_to(src)
+
+
+def _symlink_dir(src: Path, dst: Path) -> None:
+    """Symlink only the most relevant .so file to prevent bloat.
+
+    For a given library (e.g., libucm), prefers libucm.so.0 over libucm.so,
+    and completely ignores fully versioned files like libucm.so.0.0.0.
+    """
+    if not src.exists():
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+
+    groups = {}
+    for entry in src.iterdir():
+        if not (entry.is_file() or entry.is_symlink()):
+            continue
+        base = entry.name.split(".so")[0]
+        groups.setdefault(base, []).append(entry)
+
+    for base, entries in groups.items():
+        # Ignore .so.X.Y.Z
+        valid = [e for e in entries if not _VERSIONED_SO.search(e.name)]
+        if not valid:
+            continue
+
+        # Prefer .so.X over .so
+        so_x = [e for e in valid if re.search(r"\.so\.\d+$", e.name)]
+        best = so_x[0] if so_x else valid[0]
+
+        _symlink(best, dst / best.name)
 
 
 setup(
     ext_modules=[
-        BazelExtension("axon._axon", "//axon/python:axon_python_lib"),
+        BazelExtension("axon._axon", "//axon/python:axon/_axon.so"),
     ],
     cmdclass={"build_ext": BazelBuildExt},
     packages=["axon"],
-    # Include __init__.py, device.py, and all .so files in libs/
-    package_data={"axon": ["*.py", "libs/*.so*"]},
+    package_data={"axon": ["*.py", "libs/*.so*", "libs/ucx/*.so*"]},
 )

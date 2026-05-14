@@ -531,7 +531,7 @@ copy_to_dir(
     srcs = ["@ucx//:ucx_transport_shared_libs"],
     dirname = "axon/ucx_modules",
     match_pattern = "*.so*",
-    rpath = "$ORIGIN/../libs",
+    rpath = "$ORIGIN/..:$ORIGIN/../libs",
     visibility = ["//visibility:public"],
 )
 
@@ -570,11 +570,12 @@ cc_library(
 )
 
 cc_binary(
-    name = "axon_python_runtime",
+    name = "axon/_axon.so",
     copts = NANOBIND_COPTS,
     linkopts = [
-        "-Wl,-rpath,$ORIGIN",
-        "-Wl,-rpath,$ORIGIN/libs",
+        "-Wl,--disable-new-dtags",
+        "-Wl,-rpath,$$ORIGIN",
+        "-Wl,-rpath,$$ORIGIN/libs",
     ],
     linkshared = True,
     # For Python extension modules, we don't link Python statically
@@ -613,17 +614,6 @@ cc_binary(
     ],
 )
 
-# Create a symlink/copy with the correct name for Python import
-# nanobind expects the module name to match the .so filename
-# Bazel generates libaxon_python_runtime.so, we copy it to axon/axon.so
-genrule(
-    name = "axon_python_lib",
-    srcs = [":axon_python_runtime"],
-    outs = ["axon/_axon.so"],
-    cmd = "cp $(location :axon_python_runtime) $@",
-    visibility = ["//visibility:public"],
-)
-
 # Python wrapper library that exposes the C++ extension module
 # This creates a py_library that can be imported as 'axon'
 py_library(
@@ -633,7 +623,7 @@ py_library(
         "axon/device.py",
     ],
     data = [
-        ":axon_python_lib",
+        ":axon/_axon.so",
         ":copy_ucx_core_libs",
         ":copy_ucx_transport_libs",
     ],
@@ -647,6 +637,7 @@ py_library(
     srcs = ["tests/test_utils.py"],
     imports = ["tests"],
     visibility = ["//visibility:public"],
+    deps = [":axon_python"],
 )
 
 # Pytest configuration
@@ -806,9 +797,6 @@ test_suite(
 py_binary(
     name = "benchmark_active_message",
     srcs = ["tests/benchmark_active_message.py"],
-    data = [
-        "//axon/python:axon_python_lib",
-    ],
     main = "tests/benchmark_active_message.py",
     python_version = "PY3",
     deps = [
@@ -841,9 +829,9 @@ axon_python_wheel(
     data_files = {
         "axon/__init__.py": "platlib/axon/__init__.py",
         "axon/device.py": "platlib/axon/device.py",
-        ":axon_python_lib": "platlib/axon/axon.so",
+        ":axon/_axon.so": "platlib/axon/_axon.so",
         ":copy_ucx_core_libs": "platlib/axon/libs",
-        ":copy_ucx_transport_libs": "platlib/axon/ucx_modules",
+        ":copy_ucx_transport_libs": "platlib/axon/libs/ucx",
     },
     description = "Axon Runtime Python bindings for distributed execution",
     version = "0.0.1",

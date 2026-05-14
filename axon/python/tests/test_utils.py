@@ -1,90 +1,9 @@
 """Test utilities for Axon Runtime tests."""
 
-import os
-import sys
-import glob
 from contextlib import contextmanager
 from typing import Optional, Callable, List, Tuple
 
-
-def setup_module_path():
-    """Setup PYTHONPATH and inject extension module if provided."""
-    import importlib.util
-
-    # 1. Add source directory to sys.path
-    base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    if base_path not in sys.path:
-        sys.path.insert(0, base_path)
-
-    # 2. Check for explicit extension path (from run_test.sh)
-    extension_path = os.environ.get("AXON_EXTENSION_PATH")
-    if extension_path and os.path.exists(extension_path):
-        # Set UCX module directory if provided
-        ucx_modules_path = os.environ.get("AXON_UCX_MODULES_PATH")
-        if ucx_modules_path and os.path.isdir(ucx_modules_path):
-            os.environ["UCX_MODULE_DIR"] = ucx_modules_path
-
-        # Inject the extension module into sys.modules
-        # This allows 'from ._axon import *' in axon/__init__.py to succeed
-        # even if _axon.so is not physically inside the axon/ package directory.
-        module_name = "axon._axon"
-        if module_name not in sys.modules:
-            spec = importlib.util.spec_from_file_location(module_name, extension_path)
-            if spec and spec.loader:
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[module_name] = module
-                spec.loader.exec_module(module)
-
-    # 3. Fallback discovery logic
-    possible_paths = [
-        # When running from axon/python/tests/
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
-        # When running from workspace root
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")),
-    ]
-
-    if "TEST_SRCDIR" in os.environ:
-        runfiles_dir = os.environ["TEST_SRCDIR"]
-        possible_paths.insert(
-            0, os.path.join(runfiles_dir, "execution_ucx", "axon", "python")
-        )
-
-    for path in possible_paths:
-        axon_init = os.path.join(path, "axon", "__init__.py")
-        if os.path.exists(axon_init):
-            if path not in sys.path:
-                sys.path.insert(0, path)
-            try:
-                import axon
-
-                return
-            except ImportError:
-                pass
-
-    try:
-        import axon
-    except ImportError as e:
-        raise ImportError(
-            "Failed to import axon module. "
-            "Please ensure you have built it using: bazel build //axon/python:axon_python_runtime"
-        ) from e
-
-
-# Verify module path before tests
-setup_module_path()
-
-# Try to import axon with helpful error message
-try:
-    import axon
-except ImportError as e:
-    error_msg = (
-        "Failed to import axon module.\n"
-        "Please ensure that axon_python_runtime.so has been built.\n"
-        "Build it using: bazel build //axon/python:axon_python_runtime\n"
-        "Or set PYTHONPATH to the directory containing axon_python_runtime.so\n"
-        f"Original error: {e}"
-    )
-    raise ImportError(error_msg) from e
+import axon
 
 
 # Common async functions for testing
@@ -118,11 +37,6 @@ async def server_vector(vec: list) -> list:
     return [x * 2 for x in vec]
 
 
-async def server_mixed(x: int, name: str, f: float) -> str:
-    """Server function with mixed parameters."""
-    return f"{name}: {x} + {f}"
-
-
 async def server_bool_func(b: bool) -> bool:
     """Server function with bool."""
     return not b
@@ -149,13 +63,7 @@ def create_runtime(
     thread_pool_size: Optional[int] = None,
     timeout: Optional[int] = None,
 ):
-    """Context manager for creating and cleaning up Runtime.
-
-    Args:
-        worker_name: Name of the worker
-        thread_pool_size: Size of thread pool
-        timeout: Timeout in milliseconds (int)
-    """
+    """Context manager for creating and cleaning up Runtime."""
     kwargs = {}
     if thread_pool_size is not None:
         kwargs["thread_pool_size"] = thread_pool_size
@@ -252,14 +160,11 @@ async def connect_and_invoke(
     memory_policy: Optional[object] = None,
 ) -> Tuple[axon.RpcResponseHeader, object]:
     """Helper function to connect to server and invoke_raw RPC."""
-    # Connect
-    conn_id = await client.connect_endpoint_async(server_address, server_name)
+    _ = await client.connect_endpoint_async(server_address, server_name)
 
-    # Create request header if not provided
     if request_header is None:
         request_header = create_request_header(function_id, workflow_id=workflow_id)
 
-    # Invoke RPC
     result = await client.invoke_raw(
         worker_name=server_name,
         request_header=request_header,

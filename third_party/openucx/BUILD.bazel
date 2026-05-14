@@ -116,7 +116,6 @@ native_ucx_build(
         "@xpmem//:headers",
     ] + select({
         "@rules_ml_toolchain//common:is_cuda_enabled": [
-            "@local_config_cuda//cuda",
             "@local_config_cuda//cuda:cuda_driver",
             "@local_config_cuda//cuda:cuda_headers",
             "@local_config_cuda//cuda:cudart",

@@ -125,7 +125,7 @@ cuda_library(
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
-        "@local_config_cuda//cuda",
+        "@local_config_cuda//cuda:cudart",
     ],
 )
 
@@ -141,7 +141,7 @@ cuda_library(
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
-        "@local_config_cuda//cuda",
+        "@local_config_cuda//cuda:cudart",
     ],
 )
 
@@ -156,7 +156,7 @@ cuda_library(
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
-        "@local_config_cuda//cuda",
+        "@local_config_cuda//cuda:cudart",
     ],
 )
 
@@ -216,7 +216,7 @@ cc_test(
             ":ucx_cuda_context",
             ":ucx_cuda_memory_manager",
             "@googletest//:gtest_main",
-            "@local_config_cuda//cuda",
+            "@local_config_cuda//cuda:cudart",
             "@unifex",
         ],
         "//conditions:default": [
