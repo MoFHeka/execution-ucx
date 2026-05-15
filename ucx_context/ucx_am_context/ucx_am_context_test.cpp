@@ -200,7 +200,11 @@ class UcxContextCUDARunner : public UcxContextRunner {
 
   ~UcxContextCUDARunner() override {
     cleanup();
-    ucx_am_context::destroy_ucp_context(ucp_context_);
+    context_.reset();  // Destroy the worker and endpoints first
+    if (ucp_context_) {
+      ucx_am_context::destroy_ucp_context(ucp_context_);
+      ucp_context_ = nullptr;
+    }
   }
 
  protected:
@@ -256,7 +260,7 @@ class UcxAmTest : public ::testing::Test {
     setenv(
       "UCX_RNDV_THRESH", std::to_string(kUcxRndvThreshold).c_str(),
       1);  // Set RNDV threshold to 8KB
-    setenv("UCX_RNDV_SCHEME", "get_zcopy", 1);
+    // setenv("UCX_RNDV_SCHEME", "get_zcopy", 1);
     setenv("UCX_TCP_MAX_CONN_RETRIES", "1", 1);
   }
 
@@ -271,7 +275,8 @@ class UcxAmTest : public ::testing::Test {
     sockaddr_in* addr = new sockaddr_in{
       .sin_family = AF_INET,
       .sin_port = htons(port),
-      .sin_addr = {.s_addr = htonl(INADDR_ANY)}};
+      .sin_addr = {.s_addr = htonl(INADDR_ANY)},
+      .sin_zero = {0}};
     return std::unique_ptr<sockaddr>(reinterpret_cast<sockaddr*>(addr));
   }
 
@@ -279,7 +284,8 @@ class UcxAmTest : public ::testing::Test {
     sockaddr_in* addr = new sockaddr_in{
       .sin_family = AF_INET,
       .sin_port = htons(port),
-      .sin_addr = {.s_addr = htonl(INADDR_LOOPBACK)}};
+      .sin_addr = {.s_addr = htonl(INADDR_LOOPBACK)},
+      .sin_zero = {0}};
     return std::unique_ptr<sockaddr>(reinterpret_cast<sockaddr*>(addr));
   }
 
@@ -673,7 +679,7 @@ class UcxAmTest : public ::testing::Test {
     auto testFloatVec = create_float_test_data(floatDataSize);
 
     ucx_am_data sendData{};
-    UcxAmData recvDataWrapper(*default_mr_, 0, 0, test_memory_type);
+    UcxAmData recvDataWrapper(default_mr_->context(), 0, 0, test_memory_type);
     sendData.header.data = headerData.data();
     sendData.header.size = headerData.size();
     sendData.buffer.data = testFloatVec.data();
@@ -838,7 +844,7 @@ class UcxAmTest : public ::testing::Test {
           std::cerr << "Error in biDiClientSendRecvTask: " << e.what()
                     << std::endl;
         }
-        co_return UcxAmData(*default_mr_, 0, 0, sendData.buffer_type);
+        co_return UcxAmData(default_mr_->context(), 0, 0, sendData.buffer_type);
       });
 
     co_await scope.join();
@@ -935,7 +941,7 @@ class UcxAmTest : public ::testing::Test {
     auto testFloatVec = create_float_test_data(floatDataSize);
 
     ucx_am_data sendData{};
-    UcxAmData recvDataWrapper(*default_mr_, 0, 0, test_memory_type);
+    UcxAmData recvDataWrapper(default_mr_->context(), 0, 0, test_memory_type);
     sendData.header.data = headerData.data();
     sendData.header.size = headerData.size();
     sendData.buffer.data = testFloatVec.data();
@@ -1324,7 +1330,8 @@ TEST_F(UcxAmTest, ErrorHandling) {
   sockaddr_in* addr = new sockaddr_in{
     .sin_family = AF_INET,
     .sin_port = htons(port),
-    .sin_addr = {.s_addr = inet_addr("192.0.2.1")}};  // illegal address
+    .sin_addr = {.s_addr = inet_addr("192.0.2.1")},
+    .sin_zero = {0}};  // illegal address
   auto clientSocket =
     std::unique_ptr<sockaddr>(reinterpret_cast<sockaddr*>(addr));
   auto testData = create_test_data(1024);
@@ -1379,10 +1386,12 @@ TEST_F(UcxAmTest, BidirectionalSmallMessageCUDATransfer) {
   CUcontext context;
   ASSERT_EQ(cuInit(0), CUDA_SUCCESS);
   ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxCreate(&context, 0, device), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxSetCurrent(context), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRetain(&context, device), CUDA_SUCCESS);
+  ASSERT_EQ(cuCtxPushCurrent(context), CUDA_SUCCESS);
   runBidirectionalTransferTestLogic(1024, ucx_memory_type::CUDA);
-  ASSERT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
+  CUcontext popped_ctx;
+  ASSERT_EQ(cuCtxPopCurrent(&popped_ctx), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRelease(device), CUDA_SUCCESS);
 }
 
 // Test bidirectional  large message transfer and processing (RNDV protocol)
@@ -1392,10 +1401,12 @@ TEST_F(UcxAmTest, BidirectionalLargeMessageCUDATransfer) {
   CUcontext context;
   ASSERT_EQ(cuInit(0), CUDA_SUCCESS);
   ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxCreate(&context, 0, device), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxSetCurrent(context), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRetain(&context, device), CUDA_SUCCESS);
+  ASSERT_EQ(cuCtxPushCurrent(context), CUDA_SUCCESS);
   runBidirectionalTransferTestLogic(1024 * 1024, ucx_memory_type::CUDA);
-  ASSERT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
+  CUcontext popped_ctx;
+  ASSERT_EQ(cuCtxPopCurrent(&popped_ctx), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRelease(device), CUDA_SUCCESS);
 }
 
 // Test bidirectional small message transfer and processing (eager protocol)
@@ -1431,10 +1442,12 @@ TEST_F(UcxAmTest, BidirectionalSmallHeaderBufferCUDATransfer) {
   CUcontext context;
   ASSERT_EQ(cuInit(0), CUDA_SUCCESS);
   ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxCreate(&context, 0, device), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxSetCurrent(context), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRetain(&context, device), CUDA_SUCCESS);
+  ASSERT_EQ(cuCtxPushCurrent(context), CUDA_SUCCESS);
   runBidirectionalHeaderBufferTransferTestLogic(1024, ucx_memory_type::CUDA);
-  ASSERT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
+  CUcontext popped_ctx;
+  ASSERT_EQ(cuCtxPopCurrent(&popped_ctx), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRelease(device), CUDA_SUCCESS);
 }
 
 TEST_F(UcxAmTest, BidirectionalLargeHeaderBufferCUDATransfer) {
@@ -1442,11 +1455,13 @@ TEST_F(UcxAmTest, BidirectionalLargeHeaderBufferCUDATransfer) {
   CUcontext context;
   ASSERT_EQ(cuInit(0), CUDA_SUCCESS);
   ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxCreate(&context, 0, device), CUDA_SUCCESS);
-  ASSERT_EQ(cuCtxSetCurrent(context), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRetain(&context, device), CUDA_SUCCESS);
+  ASSERT_EQ(cuCtxPushCurrent(context), CUDA_SUCCESS);
   runBidirectionalHeaderBufferTransferTestLogic(
     1024 * 1024, ucx_memory_type::CUDA);
-  ASSERT_EQ(cuCtxDestroy(context), CUDA_SUCCESS);
+  CUcontext popped_ctx;
+  ASSERT_EQ(cuCtxPopCurrent(&popped_ctx), CUDA_SUCCESS);
+  ASSERT_EQ(cuDevicePrimaryCtxRelease(device), CUDA_SUCCESS);
 }
 
 TEST_F(UcxAmTest, BidirectionalSmallHeaderBufferCUDATransferWithUcpAddress) {
@@ -1558,7 +1573,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
   UcxMemoryResourceManager* server_mr_ptr = server.get_memory_resource().get();
   UcxMemoryResourceManager* client_mr_ptr = client.get_memory_resource().get();
 
-  UcxAmData recvDataWrapper(*server_mr_ptr, 0, 0, test_memory_type);
+  UcxAmData recvDataWrapper(server_mr_ptr->context(), 0, 0, test_memory_type);
 
   // Prepare data based on use_iovec flag
   std::variant<std::monostate, UcxAmData, UcxAmIovec> sendData;
@@ -1628,7 +1643,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
 
       // Emplace the wrapper into variant by moving from holder
       sendData = UcxAmIovec(
-        *client_mr_ptr, std::move(raw), /*own_header=*/false,
+        client_mr_ptr->context(), std::move(raw), /*own_header=*/false,
         /*own_buffer=*/false);
     } else {
       ucx_am_data_t raw{};
@@ -1640,7 +1655,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
       raw.mem_h = nullptr;
 
       sendData = UcxAmData(
-        *client_mr_ptr, std::move(raw), /*own_header=*/false,
+        client_mr_ptr->context(), std::move(raw), /*own_header=*/false,
         /*own_buffer=*/false);
     }
   } else {
@@ -1649,7 +1664,8 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
     auto& holderPtr = g_holders.back();
     if (use_iovec) {
       UcxAmIovec allocWrapper(
-        *client_mr_ptr, /*header_size=*/0, buffer_sizes, test_memory_type,
+        client_mr_ptr->context(), /*header_size=*/0, buffer_sizes,
+        test_memory_type,
         /*own_header=*/false, /*own_buffer=*/true);
       // header copy free
       allocWrapper.get()->header.data = holderPtr->header->data();
@@ -1665,7 +1681,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
       sendData = std::move(allocWrapper);
     } else {
       UcxAmData allocWrapper(
-        *client_mr_ptr, /*header_size=*/0,
+        client_mr_ptr->context(), /*header_size=*/0,
         /*buffer_size=*/totalFloatCount * sizeof(float), test_memory_type,
         /*own_header=*/false, /*own_buffer=*/true);
       // header copy free
@@ -1730,7 +1746,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
                  } else {
                    // Receive by key using vector of UcxBuffer
                    UcxBufferVec buffers(
-                     *server.get_memory_resource(), test_memory_type,
+                     server.get_memory_resource()->context(), test_memory_type,
                      recv_info.buffer_sizes);
 
                    auto buffer_bundle = co_await connection_recv_buffer(
@@ -1844,7 +1860,7 @@ void UcxAmTest::runUcpAddressHeaderBufferTestLogic(
           std::cerr << "Error in client task: " << e.what() << std::endl;
         }
         co_return UcxAmData(
-          *client.get_memory_resource(), 0, 0, test_memory_type);
+          client.get_memory_resource()->context(), 0, 0, test_memory_type);
       });
 
     co_await scope.join();

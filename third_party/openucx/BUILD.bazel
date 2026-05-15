@@ -2,9 +2,9 @@
 Unified Communication X (UCX) is an award winning, optimized production proven-communication framework for modern, high-bandwidth and low-latency networks.
 """
 
-load("@//third_party/openucx:utils.bzl", "file_filter")
+load("@//third_party/openucx:native_ucx_build.bzl", "native_ucx_build")
+load("@//third_party/openucx:utils.bzl", "file_filter", "file_prefix_filter")
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -14,22 +14,121 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-exports_files(["BUILD.bazel"])
+exports_files([
+    "BUILD.bazel",
+    "build_ucx.sh",
+])
 
-configure_make(
-    name = "ucx",
-    args = [
-        "-j$(nproc)",
-    ],
-    autogen = True,
-    configure_command = "./contrib/configure-release-mt",
-    configure_in_place = True,
+config_setting(
+    name = "debug_build",
+    values = {"compilation_mode": "dbg"},
+)
+
+out_binaries = []
+
+out_shared_libs = [
+    "libucm.so",
+    "libucm.so.0",
+    "libucm.so.0.0.0",
+    "libucp.so",
+    "libucp.so.0",
+    "libucp.so.0.0.0",
+    "libucs_signal.so",
+    "libucs_signal.so.0",
+    "libucs_signal.so.0.0.0",
+    "libucs.so",
+    "libucs.so.0",
+    "libucs.so.0.0.0",
+    "libuct.so",
+    "libuct.so.0",
+    "libuct.so.0.0.0",
+    "libuct_cma.so",
+    "libuct_cma.so.0",
+    "libuct_cma.so.0.0.0",
+    "libuct_ib.so",
+    "libuct_ib.so.0",
+    "libuct_ib.so.0.0.0",
+    "libuct_ib_mlx5.so",
+    "libuct_ib_mlx5.so.0",
+    "libuct_ib_mlx5.so.0.0.0",
+    "libuct_rdmacm.so",
+    "libuct_rdmacm.so.0",
+    "libuct_rdmacm.so.0.0.0",
+    "libuct_knem.so",
+    "libuct_knem.so.0",
+    "libuct_knem.so.0.0.0",
+    "libuct_xpmem.so",
+    "libuct_xpmem.so.0",
+    "libuct_xpmem.so.0.0.0",
+    "libxpmem.so",
+    "libgdrapi.so",
+]
+
+cuda_out_shared_libs = [
+    "libucm_cuda.so",
+    "libucm_cuda.so.0",
+    "libucm_cuda.so.0.0.0",
+    "libuct_cuda.so",
+    "libuct_cuda.so.0",
+    "libuct_cuda.so.0.0.0",
+]
+
+out_static_libs = [
+    "libucm.a",
+    "libucp.a",
+    "libucs_signal.a",
+    "libucs.a",
+    "libuct.a",
+    "libuct_cma.a",
+    "libuct_ib.a",
+    "libuct_ib_mlx5.a",
+]
+
+cuda_out_static_libs = [
+    "libucm_cuda.a",
+    "libuct_cuda.a",
+]
+
+base_outs = (
+    ["lib/" + lib for lib in out_shared_libs] +
+    ["lib/" + lib for lib in out_static_libs] +
+    ["bin/" + bin for bin in out_binaries] + [
+        "include/ucp/api/ucp_version.h",
+        "include/uct/api/version.h",
+    ]
+)
+
+native_ucx_build(
+    name = "ucx_build",
+    srcs = [
+        ":all_srcs",
+        "@gdrcopy//:all_srcs",
+        "@gdrcopy//:headers",
+        "@infiniband_diags//:headers",
+        "@knem//:headers",
+        "@libfuse//:headers",
+        "@libfuse_libs//:libs",
+        "@numactl//:headers",
+        "@numactl_libs//:libs",
+        "@rdma_core//:headers",
+        "@rdma_core_libs//:libs",
+        "@xpmem//:all_srcs",
+        "@xpmem//:headers",
+    ] + select({
+        "@rules_ml_toolchain//common:is_cuda_enabled": [
+            "@local_config_cuda//cuda:cuda_driver",
+            "@local_config_cuda//cuda:cuda_headers",
+            "@local_config_cuda//cuda:cudart",
+            "@local_config_cuda//cuda:cudart_headers",
+            "@local_config_cuda//cuda:cudart_static",
+            "@local_config_cuda//cuda:nvml_headers",
+        ],
+        "//conditions:default": [],
+    }),
+    outs = base_outs,
     configure_options = [
-        # "--enable-ucg",  # ucg is out-of-date, use ucc now
         "--with-avx",
         "--with-march",
-        "--enable-compiler-opt",
-        "--enable-optimizations",
         "--enable-cma",
         "--with-rc",
         "--with-ud",
@@ -37,121 +136,54 @@ configure_make(
         "--with-ib-hw-tm",
         "--with-dm",
         "--enable-tuning",
-        "--with-fuse3=guess",
-        "--with-mad=guess",
-        "--with-gdrcopy=guess",
-        "--with-mlx5=guess",
-        # "--with-verbs=guess",  # Seems OpenFabrics verbs not compatible with mlx5?
-        "--with-rdmacm=guess",
-        "--with-knem=guess",
-        "--with-xpmem=guess",
+        "--with-mad=yes",
+        "--with-gdrcopy=yes",
+        "--with-mlx5=yes",
+        "--with-rdmacm=yes",
+        "--with-knem=yes",
+        "--with-xpmem=yes",
         "--with-java=no",
         "--with-go=no",
-    ] + select({
-        "@rules_cuda//cuda:is_enabled": [
-            "--with-cuda",
-        ],
-        "//conditions:default": [
-        ],
-    }),
-    copts = [
-        "-Wno-error",
-        "-fPIC",  # Add position-independent code flag for shared library linking
     ],
-    lib_source = "@ucx//:all_srcs",
-    out_bin_dir = "bin",
-    out_binaries = [
-        "io_demo",
-        "ucx_info",
-        "ucx_perftest",
-        "ucx_perftest_daemon",
-        "ucx_read_profile",
+    cuda_outs = (
+        ["lib/" + lib for lib in cuda_out_shared_libs] +
+        ["lib/" + lib for lib in cuda_out_static_libs]
+    ),
+    debug_options = [
+        "--enable-debug",
+        "--enable-debug-data",
+        "--enable-logging",
+        "--enable-params-check",
+        "--enable-compiler-opt=0",
     ],
-    out_include_dir = "include",
-    out_lib_dir = "lib",
-    out_shared_libs = [
-        "libucm.so",
-        "libucm.so.0",
-        "libucm.so.0.0.0",
-        "libucp.so",
-        "libucp.so.0",
-        "libucp.so.0.0.0",
-        "libucs_signal.so",
-        "libucs_signal.so.0",
-        "libucs_signal.so.0.0.0",
-        "libucs.so",
-        "libucs.so.0",
-        "libucs.so.0.0.0",
-        "libuct.so",
-        "libuct.so.0",
-        "libuct.so.0.0.0",
-        # ucx directory prefix has been removed
-        "libuct_cma.so",
-        "libuct_cma.so.0",
-        "libuct_cma.so.0.0.0",
-        "libuct_ib.so",
-        "libuct_ib.so.0",
-        "libuct_ib.so.0.0.0",
-        "libuct_ib_mlx5.so",
-        "libuct_ib_mlx5.so.0",
-        "libuct_ib_mlx5.so.0.0.0",
-    ] + select({
-        "@rules_cuda//cuda:is_enabled": [
-            # ucx directory prefix has been removed
-            "libucm_cuda.so",
-            "libucm_cuda.so.0",
-            "libucm_cuda.so.0.0.0",
-            "libuct_cuda.so",
-            "libuct_cuda.so.0",
-            "libuct_cuda.so.0.0.0",
-        ],
-        "//conditions:default": [
-        ],
-    }),
-    out_static_libs = [
-        "libucm.a",
-        "libucp.a",
-        "libucs_signal.a",
-        "libucs.a",
-        "libuct.a",
-        # ucx directory prefix has been removed
-        "libuct_cma.a",
-        "libuct_ib.a",
-        "libuct_ib_mlx5.a",
-    ] + select({
-        "@rules_cuda//cuda:is_enabled": [
-            "libucm_cuda.a",
-            "libuct_cuda.a",
-        ],
-        "//conditions:default": [
-        ],
-    }),
+    opt_options = [
+        "--disable-debug",
+        "--disable-debug-data",
+        "--disable-assertions",
+        "--disable-logging",
+        "--disable-params-check",
+        "--without-valgrind",
+        "--enable-optimizations",
+        "--enable-compiler-opt=3",
+    ],
     visibility = ["//visibility:public"],
-    deps = select({
-        "@rules_cuda//cuda:is_enabled": [
-            "@rules_cuda//cuda:runtime",
-        ],
-        "//conditions:default": [
-        ],
-    }),
 )
 
 filegroup(
     name = "ucx_gen_dir",
-    srcs = [":ucx"],
-    output_group = "gen_dir",
+    srcs = [":ucx_build"],
     visibility = ["//visibility:public"],
 )
 
 filegroup(
     name = "ucx_libs_all",
-    srcs = [":ucx"],
+    srcs = [":ucx_build"],
     visibility = ["//visibility:public"],
 )
 
 file_filter(
     name = "ucx_shared_libs",
-    srcs = [":ucx"],
+    srcs = [":ucx_build"],
     extensions = [
         ".so",
         ".so.0",
@@ -160,38 +192,88 @@ file_filter(
     visibility = ["//visibility:public"],
 )
 
+# UCX core libraries: linked at build time as DT_NEEDED.
+file_prefix_filter(
+    name = "ucx_core_shared_libs",
+    srcs = [":ucx_shared_libs"],
+    exclude_prefixes = [
+        "libuct_",
+        "libucm_",
+    ],
+    prefixes = [
+        "libucm.so",
+        "libucp.so",
+        "libucs_signal.so",
+        "libucs.so",
+        "libuct.so",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# UCX transport plugins: loaded via dlopen at runtime.
+# UCX scans <libucs_dir>/ucx/ for these modules.
+file_prefix_filter(
+    name = "ucx_transport_shared_libs",
+    srcs = [":ucx_shared_libs"],
+    prefixes = [
+        "libuct_cma",
+        "libuct_ib",
+        "libuct_rdmacm",
+        "libuct_knem",
+        "libuct_xpmem",
+        "libuct_cuda",
+        "libucm_cuda",
+        "libxpmem",
+        "libgdrapi",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 file_filter(
     name = "ucx_static_libs",
-    srcs = [":ucx"],
+    srcs = [":ucx_build"],
     extensions = [".a"],
     visibility = ["//visibility:public"],
 )
 
-filegroup(
+file_filter(
     name = "_ucx_header_includes",
-    srcs = [":ucx"],
-    output_group = "include",
+    srcs = [":ucx_build"],
+    extensions = [".h"],
 )
 
 cc_library(
     name = "ucx_headers",
     hdrs = [
         ":_ucx_header_includes",
+    ] + glob([
+        "src/**/*.h",
+        "src/**/*.hpp",
+        "src/**/*.def",
+    ]),
+    includes = [
+        "include",
+        "src",
     ],
-    includes = ["ucx/include"],
     visibility = ["//visibility:public"],
 )
 
-# Shared libs only
+# Core shared libs only (link-time dependencies).
+# Transport plugins are NOT included here; they are loaded via dlopen
+# by UCX's module loader at runtime, enabling graceful degradation
+# on machines without specific hardware (IB, XPMEM, CUDA, etc.).
 cc_library(
     name = "ucx_prebuilt_shared",
     srcs = [
-        ":ucx_shared_libs",
+        ":ucx_core_shared_libs",
     ],
     linkopts = [
         "-Wl,--as-needed",
     ],
     visibility = ["//visibility:public"],
+    deps = [
+        "@numactl_libs//:cc_libs",
+    ],
 )
 
 # Static libs only
@@ -263,7 +345,7 @@ cc_library(
         "-ldl",
         "-lrt",
         "-lm",
-        "-pthread",
+        "-lpthread",
     ],
     linkstatic = False,
     visibility = ["@ucc//:__pkg__"],
@@ -282,7 +364,7 @@ cc_library(
         "-ldl",
         "-lrt",
         "-lm",
-        "-pthread",
+        "-lpthread",
     ],
     linkstatic = True,
     visibility = ["@ucc//:__pkg__"],
@@ -366,4 +448,10 @@ cc_library(
         ":uct_static",
         ":ucx_headers",
     ],
+)
+
+alias(
+    name = "ucx",
+    actual = ":ucx_runtime",
+    visibility = ["//visibility:public"],
 )

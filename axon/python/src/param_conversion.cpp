@@ -152,7 +152,8 @@ namespace nb = nanobind;
 namespace rpc = eux::rpc;
 
 nb::object ResultMetaToPython(
-  const rpc::ParamMeta& param, const void* buffer_data, size_t buffer_size) {
+  const rpc::ParamMeta& param, [[maybe_unused]] const void* buffer_data,
+  [[maybe_unused]] size_t buffer_size) {
   namespace data = cista::offset;
 
   switch (param.type) {
@@ -598,8 +599,8 @@ nb::dict HeaderToDict(const rpc::RpcResponseHeader& header) {
 // ConvertTensorResult implementations
 
 nb::object ConvertTensorResult(
-  const rpc::ParamMeta& param, ucxx::UcxBuffer&& buffer,
-  const nb::object& from_dlpack_fn) {
+  const ucxx::UcxAllocatorContext& mr_ctx, const rpc::ParamMeta& param,
+  ucxx::UcxBuffer&& buffer, const nb::object& from_dlpack_fn) {
   auto meta = cista::get<rpc::utils::TensorMeta>(param.value);
 
   // Try to get custom buffer (RNDV path with memory policy)
@@ -609,7 +610,7 @@ nb::object ConvertTensorResult(
     return custom_obj;
   }
 
-  auto result = TensorMetaToDlpack(std::move(meta), std::move(buffer));
+  auto result = TensorMetaToDlpack(mr_ctx, std::move(meta), std::move(buffer));
   if (!from_dlpack_fn.is_none()) {
     return from_dlpack_fn(result);
   }
@@ -617,8 +618,8 @@ nb::object ConvertTensorResult(
 }
 
 nb::object ConvertTensorResult(
-  const rpc::ParamMeta& param, ucxx::UcxBufferVec&& buffer_vec,
-  const nb::object& from_dlpack_fn) {
+  const ucxx::UcxAllocatorContext& mr_ctx, const rpc::ParamMeta& param,
+  ucxx::UcxBufferVec&& buffer_vec, const nb::object& from_dlpack_fn) {
   auto meta_vec = cista::get<rpc::TensorMetaVec>(param.value);
   size_t num_tensors = meta_vec.size();
   const auto& num_buffers = buffer_vec.size();
@@ -654,7 +655,7 @@ nb::object ConvertTensorResult(
   }
 
   auto tensors =
-    TensorMetaVecToDlpack(std::move(meta_vec), std::move(buffer_vec));
+    TensorMetaVecToDlpack(mr_ctx, std::move(meta_vec), std::move(buffer_vec));
   if (!from_dlpack_fn.is_none()) {
     nb::list result;
     for (const auto& tensor : tensors) {

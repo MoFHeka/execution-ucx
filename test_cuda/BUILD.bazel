@@ -1,0 +1,14 @@
+load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
+load(":test_rule.bzl", "test_cuda")
+
+test_cuda(
+    name = "test_cuda_compile",
+    deps = select({
+        "@rules_ml_toolchain//common:is_cuda_enabled": [
+            "@local_config_cuda//cuda:cuda_headers",
+            "@local_config_cuda//cuda:cudart",
+            "@local_config_cuda//cuda:cudart_headers",
+        ],
+        "//conditions:default": [],
+    }),
+)

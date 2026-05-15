@@ -170,10 +170,11 @@ class DefaultUcxLogger : public UcxLogger {
 
   class NullStreambuf : public std::streambuf {
    protected:
-    int overflow(int c) override {
+    int overflow([[maybe_unused]] int c) override {
       return traits_type::not_eof(c);  // Return non-EOF to indicate success
     }
-    std::streamsize xsputn(const char* s, std::streamsize n) override {
+    std::streamsize xsputn(
+      [[maybe_unused]] const char* s, std::streamsize n) override {
       return n;  // Report all characters as "written"
     }
   };

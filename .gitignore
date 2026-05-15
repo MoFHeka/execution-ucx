@@ -31,6 +31,9 @@
 *.out
 *.app
 
+# Distribution
+dist/
+
 # Bazel
 .local_config.bazelrc
 MODULE.bazel.lock
@@ -44,7 +47,10 @@ bazel-execution-ucx
 # VSCode
 .vscode
 .cursor
+.agent*
 
 # Python cache
 __pycache__
 *requirements_lock.txt
+
+tmp/**

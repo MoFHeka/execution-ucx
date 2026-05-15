@@ -1,6 +1,5 @@
-load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
-load("@rules_cuda//cuda:defs.bzl", "cuda_library", "requires_cuda")
+load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -115,14 +114,18 @@ cc_library(
     ],
 )
 
-cc_library(
+cuda_library(
     name = "ucx_cuda_memory_manager",
     hdrs = [
         "cuda/ucx_cuda_macro.h",
         "cuda/ucx_cuda_memory_manager.hpp",
     ],
+    target_compatible_with = select({
+        "@rules_ml_toolchain//common:is_cuda_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     deps = [
-        "@local_cuda//:cuda",
+        "@local_config_cuda//cuda:cudart",
     ],
 )
 
@@ -133,17 +136,27 @@ cuda_library(
         "ucx_am_context/ucx_am_context_test_helper.h",
         "ucx_context_def.h",
     ],
-    target_compatible_with = requires_cuda(),
+    target_compatible_with = select({
+        "@rules_ml_toolchain//common:is_cuda_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        "@local_config_cuda//cuda:cudart",
+    ],
 )
 
-cc_library(
+cuda_library(
     name = "ucx_cuda_context",
     hdrs = [
         "cuda/ucx_cuda_context.hpp",
         "cuda/ucx_cuda_macro.h",
     ],
+    target_compatible_with = select({
+        "@rules_ml_toolchain//common:is_cuda_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     deps = [
-        "@local_cuda//:cuda",
+        "@local_config_cuda//cuda:cudart",
     ],
 )
 
@@ -187,11 +200,8 @@ cc_test(
     srcs = [
         "ucx_am_context/ucx_am_context_test.cpp",
     ],
-    copts = [
-        "-fcoroutines",
-    ],
     defines = select({
-        "@rules_cuda//cuda:is_enabled": ["CUDA_ENABLED=1"],
+        "@rules_ml_toolchain//common:is_cuda_enabled": ["CUDA_ENABLED=1"],
         "//conditions:default": ["CUDA_ENABLED=0"],
     }),
     target_compatible_with = select(
@@ -199,14 +209,14 @@ cc_test(
         {"//conditions:default": ["@platforms//:incompatible"]},
     ),
     deps = select({
-        "@rules_cuda//cuda:is_enabled": [
+        "@rules_ml_toolchain//common:is_cuda_enabled": [
             ":ucx_am_context",
             ":ucx_am_context_test_cuda_helper",
             ":ucx_am_context_test_host_helper",
             ":ucx_cuda_context",
             ":ucx_cuda_memory_manager",
             "@googletest//:gtest_main",
-            "@local_cuda//:cuda",
+            "@local_config_cuda//cuda:cudart",
             "@unifex",
         ],
         "//conditions:default": [
@@ -221,9 +231,6 @@ cc_test(
 cc_binary(
     name = "ucx_am_context_perf",
     srcs = ["ucx_am_context/ucx_am_context_perf.cpp"],
-    copts = [
-        "-fcoroutines",
-    ],
     linkstatic = False,  # Important for OpenUCX specific linking
     target_compatible_with = select(
         {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |

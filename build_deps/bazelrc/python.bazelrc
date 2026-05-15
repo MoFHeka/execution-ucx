@@ -1,0 +1,6 @@
+# Python version configurations
+build:python38 --repo_env=HERMETIC_PYTHON_VERSION=3.8
+build:python39 --repo_env=HERMETIC_PYTHON_VERSION=3.9
+build:python310 --repo_env=HERMETIC_PYTHON_VERSION=3.10
+build:python311 --repo_env=HERMETIC_PYTHON_VERSION=3.11
+build:python312 --repo_env=HERMETIC_PYTHON_VERSION=3.12

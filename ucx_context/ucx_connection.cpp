@@ -48,7 +48,7 @@ constexpr size_t DEFAULT_ZCOPY_THRESH = 4096;
 std::uint32_t UcxConnection::num_instances_ = 0;
 
 // EmptyCallback implementation
-void EmptyCallback::operator()(ucs_status_t status) {
+void EmptyCallback::operator()([[maybe_unused]] ucs_status_t status) {
   // Do nothing
 }
 
@@ -153,7 +153,8 @@ UcxConnection::UcxConnection(
     ucx_status_ = UCS_OK;
   }
   ++num_instances_;
-  struct sockaddr_in in_addr = {0};
+  struct sockaddr_in in_addr;
+  std::memset(&in_addr, 0, sizeof(in_addr));
   in_addr.sin_family = AF_INET;
   set_log_prefix((const struct sockaddr*)&in_addr, sizeof(in_addr));
   ucs_list_head_init(&all_requests_);
@@ -330,6 +331,7 @@ static inline void init_am_send_params(
   param.cb.send = cb;
   param.flags = UCP_AM_SEND_FLAG_REPLY;
   param.memory_type = memory_type;
+
   if (memh) {
     param.op_attr_mask |= UCP_OP_ATTR_FIELD_MEMH;
     param.memh = memh;
@@ -352,8 +354,7 @@ static inline void init_am_recv_params(
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_data(
   const void* header, size_t header_length, const void* buffer, size_t length,
-  ucp_mem_h memh, ucs_memory_type_t memory_type,
-  std::unique_ptr<UcxCallback> callback) {
+  ucp_mem_h memh, ucs_memory_type_t memory_type, UcxCallback* callback) {
   if (ep_ == nullptr) {
     (*callback)(UCS_ERR_CANCELED);
     return std::make_tuple(UCS_ERR_CANCELED, nullptr);
@@ -368,14 +369,13 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_data(
 
   ucs_status_ptr_t sptr = ucp_am_send_nbx(
     ep_, DEFAULT_AM_MSG_ID, header, header_length, buffer, length, &param);
-  ucp_worker_progress(worker_);
   return process_request(
-    "ucp_am_send_nbx", sptr, std::move(callback), UcxRequestType::Send);
+    "ucp_am_send_nbx", sptr, callback, UcxRequestType::Send);
 }
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_data(
   void* buffer, size_t length, ucp_mem_h memh, const UcxAmDesc&& data_desc,
-  ucs_memory_type_t memory_type, std::unique_ptr<UcxCallback> callback) {
+  ucs_memory_type_t memory_type, UcxCallback* callback) {
   assert(ep_ != nullptr);
 
   if (__builtin_expect(!ucx_am_is_rndv(data_desc), false)) {
@@ -393,15 +393,14 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_data(
 
   ucs_status_ptr_t sptr =
     ucp_am_recv_data_nbx(worker_, data_desc.desc, buffer, length, &param);
-  ucp_worker_progress(worker_);
   return process_request(
-    "ucp_am_recv_data_nbx", sptr, std::move(callback), UcxRequestType::Recv);
+    "ucp_am_recv_data_nbx", sptr, callback, UcxRequestType::Recv);
 }
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_iov_data(
   const void* header, size_t header_length, const ucp_dt_iov_t* iov_base,
   size_t iov_count, ucp_mem_h memh, ucs_memory_type_t memory_type,
-  std::unique_ptr<UcxCallback> callback) {
+  UcxCallback* callback) {
   if (ep_ == nullptr) {
     (*callback)(UCS_ERR_CANCELED);
     return std::make_tuple(UCS_ERR_CANCELED, nullptr);
@@ -420,15 +419,14 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_iov_data(
 
   ucs_status_ptr_t sptr = ucp_am_send_nbx(
     ep_, IOVEC_AM_MSG_ID, header, header_length, iov_base, iov_count, &param);
-  ucp_worker_progress(worker_);
   return process_request(
-    "ucp_am_send_nbx_iov", sptr, std::move(callback), UcxRequestType::Send);
+    "ucp_am_send_nbx_iov", sptr, callback, UcxRequestType::Send);
 }
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_iov_data(
   ucp_dt_iov_t* iov_base, size_t iov_count, ucp_mem_h memh,
   const UcxAmDesc&& data_desc, ucs_memory_type_t memory_type,
-  std::unique_ptr<UcxCallback> callback) {
+  UcxCallback* callback) {
   assert(ep_ != nullptr);
 
   if (__builtin_expect(!ucx_am_is_rndv(data_desc), false)) {
@@ -446,10 +444,8 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::recv_am_iov_data(
 
   ucs_status_ptr_t sptr =
     ucp_am_recv_data_nbx(worker_, data_desc.desc, iov_base, iov_count, &param);
-  ucp_worker_progress(worker_);
   return process_request(
-    "ucp_am_recv_data_nbx_iov", sptr, std::move(callback),
-    UcxRequestType::Recv);
+    "ucp_am_recv_data_nbx_iov", sptr, callback, UcxRequestType::Recv);
 }
 
 void UcxConnection::cancel_request(UcxRequest* request) {
@@ -525,7 +521,7 @@ void UcxConnection::handle_connection_error(ucs_status_t status) {
 
 // Private methods implementation
 void UcxConnection::common_request_callback(
-  void* request, ucs_status_t status, void* user_data) {
+  void* request, ucs_status_t status, void* /*user_data*/) {
   assert(status != UCS_INPROGRESS);
 
   UcxRequest* r = reinterpret_cast<UcxRequest*>(request);
@@ -543,12 +539,12 @@ void UcxConnection::common_request_callback(
 }
 
 void UcxConnection::am_data_recv_callback(
-  void* request, ucs_status_t status, size_t length, void* user_data) {
+  void* request, ucs_status_t status, size_t /*length*/, void* user_data) {
   common_request_callback(request, status, user_data);
 }
 
 void UcxConnection::error_callback(
-  void* arg, ucp_ep_h ep, ucs_status_t status) {
+  void* arg, ucp_ep_h /*ep*/, ucs_status_t status) {
   reinterpret_cast<UcxConnection*>(arg)->handle_connection_error(status);
 }
 
@@ -596,7 +592,8 @@ void UcxConnection::connect_common(
   connect_am(std::move(callback));
 }
 
-void UcxConnection::connect_am(std::unique_ptr<UcxCallback> callback) {
+void UcxConnection::connect_am(
+  [[maybe_unused]] std::unique_ptr<UcxCallback> callback) {
   // With AM use ep as a connection ID. AM receive callback provides
   // reply ep, which can be used for finding a proper connection.
   established(UCS_OK);
@@ -652,8 +649,8 @@ void UcxConnection::ep_close(enum ucp_ep_close_mode mode) {
 }
 
 std::tuple<ucs_status_t, UcxRequest*> UcxConnection::process_request(
-  std::string_view what, ucs_status_ptr_t ptr_status,
-  std::unique_ptr<UcxCallback> callback, UcxRequestType type) {
+  std::string_view what, ucs_status_ptr_t ptr_status, UcxCallback* callback,
+  UcxRequestType type) {
   ucs_status_t status = UCS_OK;
 
   if (ptr_status == nullptr) {
@@ -675,7 +672,7 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::process_request(
       request_release(r);
       r = nullptr;
     } else {
-      r->callback = std::move(callback);
+      r->callback = callback;
       r->conn = std::ref(*this);
       r->type = type;
       r->what = what;
@@ -716,7 +713,7 @@ void UcxConnection::request_release(void* request) {
 }
 
 const std::string UcxConnection::sockaddr_str(
-  const struct sockaddr* saddr, size_t addrlen) {
+  const struct sockaddr* saddr, [[maybe_unused]] size_t addrlen) {
   char buf[128];
   uint16_t port;
 

@@ -114,8 +114,8 @@ class UcxCudaMemoryResourceManager : public UcxMemoryResourceManager {
    * @throw std::runtime_error if memory type is not supported
    */
   void deallocate(
-    ucx_memory_type_t type, void* ptr, size_t size,
-    size_t alignment = 8) override {
+    ucx_memory_type_t type, void* ptr, size_t /*size*/,
+    size_t /*alignment*/ = 8) override {
     switch (type) {
       case ucx_memory_type::HOST:
         free(ptr);

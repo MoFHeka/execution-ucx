@@ -54,7 +54,7 @@ cc_library(
         "source",
     ],
     linkopts = [
-        "-pthread",
+        "-lpthread",
     ],
     linkstatic = True,
     target_compatible_with = select(

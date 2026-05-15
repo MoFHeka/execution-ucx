@@ -159,6 +159,8 @@ ucx_am_context::ucx_am_context(
 
 ucx_am_context::~ucx_am_context() {
   destroy_connections();
+  destroy_listener();
+  destroy_worker();
 
   if (ucpContext_ && !isUcpContextExternal_) {
     ucx_am_context::destroy_ucp_context(ucpContext_);
@@ -603,7 +605,7 @@ void ucx_am_context::submit_timer_completion_queue_entry() {
 }
 
 void ucx_am_context::timer_timeout_callback(
-  int signo, siginfo_t* info, void* _) {
+  int signo, siginfo_t* info, void* /*_*/) {
   if (signo == SIGUSR2) {
     ucx_am_context* self =
       static_cast<ucx_am_context*>(info->si_value.sival_ptr);
@@ -803,7 +805,8 @@ void ucx_am_context::set_setimer_action_event() {
   }
 }
 
-std::error_code ucx_am_context::init_with_internal_ucp_context(bool forceInit) {
+std::error_code ucx_am_context::init_with_internal_ucp_context(
+  [[maybe_unused]] bool forceInit) {
   std::error_code ec;
 
   /* Create worker */
@@ -930,6 +933,8 @@ ucs_status_t ucx_am_context::am_recv_callback(
         ucx_memory_type::HOST, new_data, ucx_memory_type::HOST, data,
         data_length);
       data = new_data;
+    } else {
+      data = nullptr;
     }
     // Only one stituation return UCS_OK: when all data was copied out of the
     // UCX inner buffer and UCS will not keep the data after this callback
@@ -1325,7 +1330,8 @@ void ucx_am_context::handle_connection_error(std::uint64_t conn_id) {
   conn_manager_.remove_connection_to_failed_queue(conn_id);
 }
 
-void ucx_am_context::ucx_disconnect_callback::operator()(ucs_status_t status) {}
+void ucx_am_context::ucx_disconnect_callback::operator()(
+  [[maybe_unused]] ucs_status_t status) {}
 
 void ucx_am_context::ucx_disconnect_callback::mark_inactive(
   std::uint64_t conn_id) {
@@ -1352,7 +1358,7 @@ void ucx_am_context::ucx_handle_err_callback::operator()(ucs_status_t status) {
 }
 
 void ucx_am_context::ucx_handle_err_callback::handle_connection_error(
-  ucs_status_t status, std::uint64_t conn_id) {
+  [[maybe_unused]] ucs_status_t status, std::uint64_t conn_id) {
   context_.handle_connection_error(conn_id);
 }
 
@@ -1384,8 +1390,8 @@ ucx_am_context::connect_sender tag_invoke(
  */
 ucx_am_context::connect_sender tag_invoke(
   tag_t<connect_endpoint>, ucx_am_context::scheduler scheduler,
-  std::nullptr_t src_saddr, std::unique_ptr<sockaddr> dst_saddr,
-  socklen_t addrlen) {
+  [[maybe_unused]] std::nullptr_t src_saddr,
+  std::unique_ptr<sockaddr> dst_saddr, socklen_t addrlen) {
   return ucx_am_context::connect_sender{
     *scheduler.context_, nullptr, std::move(dst_saddr), addrlen};
 }
@@ -1419,8 +1425,8 @@ ucx_am_context::connect_sender tag_invoke(
  */
 ucx_am_context::connect_sender tag_invoke(
   tag_t<connect_endpoint>, ucx_am_context::scheduler scheduler,
-  std::nullptr_t src_saddr, std::unique_ptr<sockaddr> dst_saddr,
-  size_t addrlen) {
+  [[maybe_unused]] std::nullptr_t src_saddr,
+  std::unique_ptr<sockaddr> dst_saddr, size_t addrlen) {
   return ucx_am_context::connect_sender{
     *scheduler.context_, nullptr, std::move(dst_saddr),
     static_cast<socklen_t>(addrlen)};

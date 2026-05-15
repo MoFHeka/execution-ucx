@@ -1,82 +1,10 @@
-# C++23 For Axon Project
-build --cxxopt=-std=c++23
-# GNU17 For C Project
-build --conlyopt=-std=gnu17
-build --host_conlyopt=-std=gnu17
+# Axon Project Root Bazel Configuration
 
-# Convenient flag shortcuts.
-build --flag_alias=cuda_archs=@rules_cuda//cuda:archs
-build --cuda_archs="compute_70:sm_70;compute_80:sm_80,sm_86"
-build --flag_alias=cuda_enable=@rules_cuda//cuda:enable
-build --flag_alias=cuda_compiler=@rules_cuda//cuda:compiler
+# Import modular configurations
+import %workspace%/build_deps/bazelrc/cc.bazelrc
+import %workspace%/build_deps/bazelrc/cuda.bazelrc
+import %workspace%/build_deps/bazelrc/python.bazelrc
+import %workspace%/build_deps/bazelrc/profiles.bazelrc
 
-# Debug build settings
-build:debug --compilation_mode=dbg
-build:debug --copt=-g
-build:debug --copt=-O0
-# build:debug --copt=-fsanitize=address
-# build:debug --linkopt=-fsanitize=address
-build:debug --strip=never
-build:debug --define=DEBUG=1
-
-# Release build settings
-build:release --compilation_mode=opt
-# build:release --copt=-pg  # profiling with uftrace
-build:release --copt=-O3
-build:release --strip=never
-build:release --define=NDEBUG=1
-
-# Debug build
-# build --config=debug
-# build --config=release
-
-# COMPILER OPT
-# Arch
-build:release_native --config=release
-build:release_native --copt=-march=native
-build:release_native --linkopt=-march=native
-
-# GCC
-build:release_gcc --config=release
-build:release_gcc --config=release_native
-build:release_gcc --copt=-flto
-build:release_gcc --linkopt=-flto
-# Clang
-build:release_clang --config=release
-build:release_clang --config=release_native
-build:release_clang --feature=thin_lto
-build:release_clang --@rules_cc//cc:link_interface_libraries=True
-
-# Python version configurations for wheel building
-# These configs allow building wheels for different Python versions
-# 
-# Usage examples:
-#   Build with Python 3.8:
-#     bazel build //axon/python:wheel --config=python38
-#   
-#   Build with Python 3.10:
-#     bazel build //axon/python:wheel --config=python310
-#
-#   Or use environment variable:
-#     HERMETIC_PYTHON_VERSION=3.10 bazel build //axon/python:wheel
-#
-# Note: For C++ extension modules, each Python version requires a separate build
-# because the extension is compiled against a specific Python ABI.
-# The wheel filename will reflect the Python version used.
-#
-# Python 3.8 configuration
-build:python38 --repo_env=HERMETIC_PYTHON_VERSION=3.8
-# Python 3.9 configuration
-build:python39 --repo_env=HERMETIC_PYTHON_VERSION=3.9
-# Python 3.10 configuration
-build:python310 --repo_env=HERMETIC_PYTHON_VERSION=3.10
-# Python 3.11 configuration
-build:python311 --repo_env=HERMETIC_PYTHON_VERSION=3.11
-# Python 3.12 configuration
-build:python312 --repo_env=HERMETIC_PYTHON_VERSION=3.12
-
-# Default to Python 3 (uses system default or toolchain default)
-# Users can override by using --config=python38, --config=python39, etc.
-# or by setting HERMETIC_PYTHON_VERSION environment variable
-
+# User-specific local overrides (should not be checked into version control)
 try-import %workspace%/.local_config.bazelrc

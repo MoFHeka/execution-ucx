@@ -1,0 +1,19 @@
+# ============================================================
+# C/C++ Language & Compiler Configuration
+# ============================================================
+
+# Language standards
+build --cxxopt=-std=c++23
+build --conlyopt=-std=gnu17
+build --host_conlyopt=-std=gnu17
+
+# Hermetic LLVM + sysroot
+build --repo_env=LLVM_VERSION=20
+build --repo_env=SYSROOT_DIST=linux_glibc_2_39
+
+# ------------------------------------------------------------
+# Warning flags (applied globally via hermetic Clang)
+# ------------------------------------------------------------
+build --cxxopt=-Wall
+build --cxxopt=-Wextra
+build --cxxopt=-fdiagnostics-color=always

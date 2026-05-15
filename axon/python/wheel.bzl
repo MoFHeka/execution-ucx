@@ -16,17 +16,45 @@ def _copy_to_dir_impl(ctx):
     script = """
     out_dir="$1"
     match_pattern="$2"
-    shift 2
+    rpath="$3"
+    shift 3
     
+    
+
     mkdir -p "$out_dir"
     
     for f in "$@"; do
         basename=$(basename "$f")
+        
+        # Skip fully versioned files (.so.X.Y.Z)
+        if [[ "$basename" =~ \\.so\\.[0-9]+\\.[0-9]+ ]]; then
+            continue
+        fi
+        
+        # If this is an unversioned .so, check if a .so.X version exists in the input list
+        if [[ "$basename" == *.so ]]; then
+            has_versioned=false
+            for other in "$@"; do
+                other_base=$(basename "$other")
+                if [[ "$other_base" != "$basename" && "$other_base" == "${basename}."* && ! "$other_base" =~ \\.so\\.[0-9]+\\.[0-9]+ ]]; then
+                    has_versioned=true
+                    break
+                fi
+            done
+            if [[ "$has_versioned" == true ]]; then
+                continue
+            fi
+        fi
+        
         # Check pattern match using case (portable)
         case "$basename" in
             $match_pattern)
                 if [[ -f "$f" ]]; then
                     cp -L "$f" "$out_dir/"
+                    chmod +w "$out_dir/$basename"
+                    if [[ -n "$rpath" ]] && [[ "$basename" == *.so* ]]; then
+                        patchelf --set-rpath "$rpath" "$out_dir/$basename" || true
+                    fi
                 fi
                 ;;
         esac
@@ -37,8 +65,9 @@ def _copy_to_dir_impl(ctx):
         inputs = ctx.files.srcs,
         outputs = [out_dir],
         command = script,
-        arguments = [out_dir.path, ctx.attr.match_pattern] + [f.path for f in ctx.files.srcs],
-        mnemonic = "CopyFiles",
+        arguments = [out_dir.path, ctx.attr.match_pattern, ctx.attr.rpath] + [f.path for f in ctx.files.srcs],
+        mnemonic = "CopyAndPatchFiles",
+        use_default_shell_env = True,
     )
 
     return [DefaultInfo(files = depset([out_dir]), runfiles = ctx.runfiles(files = [out_dir]))]
@@ -49,6 +78,7 @@ copy_to_dir = rule(
         "srcs": attr.label_list(allow_files = True),
         "dirname": attr.string(default = "libs"),
         "match_pattern": attr.string(default = "*"),
+        "rpath": attr.string(default = ""),
     },
 )
 

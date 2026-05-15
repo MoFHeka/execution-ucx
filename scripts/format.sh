@@ -4,7 +4,11 @@
 set -euo pipefail
 
 if [ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]; then
-	cd ${BUILD_WORKSPACE_DIRECTORY}
+	cd "${BUILD_WORKSPACE_DIRECTORY}"
+else
+	# If run manually, ensure we are at the workspace root
+	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	cd "$SCRIPT_DIR/.."
 fi
 echo "Current directory: "$PWD
 
@@ -27,6 +31,11 @@ find . -type f \( \
 	-o -name "BUILD" \
 	-o -name "WORKSPACE" \
 	\) -exec buildifier {} \;
+
+# Format Shell scripts using shfmt
+find . -type d -name "bazel-*" -prune -o -type f \( \
+	-name "*.sh" \
+	\) -print0 | xargs -0 shfmt -w
 
 # Format Python files using Black with Google style (line length 100)
 find . -type d -name "bazel-*" -prune -o -type f \( \

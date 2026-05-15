@@ -52,7 +52,7 @@ struct LifecycleStatusHandlerFacade
     ::add_convention<
       pro::operator_dispatch<"()">,
       LifecycleStatus(
-        std::shared_ptr<utils::AxonRequest>,
+        const std::shared_ptr<utils::AxonRequest>&,
         utils::AxonMessageID /*axon worker precomputed hash id*/)>  //
     ::support_copy<pro::constraint_level::nontrivial>               //
     ::build {};

@@ -22,23 +22,49 @@ module(
     compatibility_level = 0,
 )
 
-# setting cuda toolchain
-bazel_dep(name = "rules_cuda", version = "0.2.5")
-
-cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
-cuda.local_toolchain(
-    name = "local_cuda",
-    toolkit_path = "",
-    # toolkit_path = "/opt/nvidia/hpc_sdk/Linux_x86_64/2024/cuda/",  # Specify local CUDA toolkit path
+# setting hermetic ML toolchain for C++ and CUDA
+bazel_dep(name = "rules_ml_toolchain", version = "0.4.0-rc1")
+git_override(
+    module_name = "rules_ml_toolchain",
+    commit = "11bbb592cb4d7cbc8ae07d6a4e5ad58ee38605f2",
+    remote = "https://github.com/google-ml-infra/rules_ml_toolchain.git",
 )
-use_repo(cuda, "local_cuda")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
+
+cuda_json_ext = use_extension("@rules_ml_toolchain//extensions:cuda_json.bzl", "cuda_json_ext")
+use_repo(cuda_json_ext, "cuda_redist_json")
+
+cuda_redist_init_ext = use_extension("@rules_ml_toolchain//extensions:cuda_redist_init.bzl", "cuda_redist_init_ext")
+use_repo(
+    cuda_redist_init_ext,
+    "cuda_cccl",
+    "cuda_cudart",
+    "cuda_cudnn",
+    "cuda_cupti",
+    "cuda_driver",
+    "cuda_nvcc",
+    "cuda_nvml",
+    "cuda_nvtx",
+    "cuda_profiler_api",
+)
+
+cuda_configure_ext = use_extension("@rules_ml_toolchain//extensions:cuda_configure.bzl", "cuda_configure_ext")
+use_repo(cuda_configure_ext, "local_config_cuda")
 
 # # setting Nvidia stdexec as default tensor container for replacing libunifex
 # stdexec_deps = use_extension("//third_party/nvidia_stdexec:extensions.bzl", "nvidia_stdexec_dep")
 # use_repo(stdexec_deps, "stdexec")
 
 # setting Meta libunifex as default CPP stdexec implement
-bazel_dep(name = "liburing", version = "2.10")
+bazel_dep(name = "liburing", version = "2.14")
+single_version_override(
+    module_name = "liburing",
+    patch_cmds = [
+        "sed -i 's/has_idtype_t=\"no\"/has_idtype_t=\"yes\"/g' configure",
+    ],
+    version = "2.14",
+)
 
 unifex_deps = use_extension("//third_party/libunifex:extensions.bzl", "libunifex_dep")
 use_repo(unifex_deps, "unifex")
@@ -52,6 +78,9 @@ ucx_deps.ucx_git(
     tag = "v1.20.0",
 )
 use_repo(ucx_deps, "ucx")
+
+ucx_rdma_deps = use_extension("//third_party/openucx:extensions.bzl", "openucx_rdma_deps")
+use_repo(ucx_rdma_deps, "gdrcopy", "infiniband_diags", "knem", "libfuse", "libfuse_libs", "numactl", "numactl_libs", "rdma_core", "rdma_core_libs", "xpmem")
 
 # setting cista for RPC serialization/deserialization
 cista_deps = use_extension("//third_party/cista:extensions.bzl", "cista_dep")
@@ -99,7 +128,7 @@ python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 #   - Using --config=python38, --config=python39, etc. in .bazelrc
 #   - Overriding in their own MODULE.bazel
 python.toolchain(
-    python_version = "3.10",
+    python_version = "3.12",
 )
 
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
@@ -107,16 +136,15 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 # Use the same Python version as the toolchain
 # This ensures pip dependencies are resolved for the correct Python version
 pip.parse(
-    hub_name = "python_deps",
-    python_version = "3.10",  # Must match python.toolchain python_version
+    hub_name = "pypi_mods",
+    python_version = "3.12",  # Must match python.toolchain python_version
     requirements_lock = "//axon/python:requirements_lock.txt",
 )
-use_repo(pip, "python_deps")
+use_repo(pip, "pypi_mods")
 
 # basic bazel dependencies
 bazel_dep(name = "rules_shell", version = "0.6.1")
 bazel_dep(name = "rules_cc", version = "0.2.12-rc2")
-bazel_dep(name = "rules_foreign_cc", version = "0.12.0")
 bazel_dep(name = "rules_python", version = "0.36.0")
 
 # Hedron's Compile Commands Extractor for Bazel
@@ -133,8 +161,3 @@ git_override(
 bazel_dep(name = "platforms", version = "0.0.11")
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
 bazel_dep(name = "googletest", version = "1.16.0.bcr.1")
-
-register_toolchains(
-    "@local_cuda//toolchain:nvcc-local-toolchain",
-    "@local_cuda//toolchain/clang:clang-local-toolchain",
-)

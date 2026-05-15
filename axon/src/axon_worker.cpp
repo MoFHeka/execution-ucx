@@ -544,7 +544,8 @@ AxonWorker::UcxSendCombinedSender AxonWorker::ServerHandleSendResponse_(
           buffer_sizes.push_back(buf.size);
         }
         ucxx::UcxAmIovec iov_data(
-          mr_, resp_buf_required_size, buffer_sizes, payload.type(),
+          mr_.get().context(), resp_buf_required_size, buffer_sizes,
+          payload.type(),
           /*own_header=*/true, /*own_buffer=*/false);
         serialize_fn(static_cast<std::byte*>(iov_data.get()->header.data));
         if (payload.size() > 0 && iov_data.get()->buffer_vec != nullptr) {
@@ -565,14 +566,15 @@ AxonWorker::UcxSendCombinedSender AxonWorker::ServerHandleSendResponse_(
         const size_t payload_size = payload.size();
         const void* payload_data = payload.get()->data;
         ucxx::UcxAmData data(
-          mr_, resp_buf_required_size, payload_size, payload.type(),
+          mr_.get().context(), resp_buf_required_size, payload_size,
+          payload.type(),
           /*own_header=*/true, /*own_buffer=*/false);
         serialize_fn(static_cast<std::byte*>(data.get()->header.data));
         data.get()->buffer.data = const_cast<void*>(payload_data);
         return ucxx::connection_send(send_sched, conn_id, std::move(data));
       } else {  // monostate
         ucxx::UcxAmData data(
-          mr_, resp_buf_required_size, 0, ucx_memory_type::HOST,
+          mr_.get().context(), resp_buf_required_size, 0, ucx_memory_type::HOST,
           /*own_header=*/true, /*own_buffer=*/false);
         serialize_fn(static_cast<std::byte*>(data.get()->header.data));
         return ucxx::connection_send(send_sched, conn_id, std::move(data));
@@ -614,7 +616,8 @@ auto AxonWorker::ServerHandleSendErrorResponse_(
       /*.results = */ {},
     };
     auto header_buffer_size = rpc::utils::GetSerializedSize(header);
-    ucxx::UcxAmData am_data(mr_, header_buffer_size, 0, ucx_memory_type::HOST);
+    ucxx::UcxAmData am_data(
+      mr_.get().context(), header_buffer_size, 0, ucx_memory_type::HOST);
     auto writer = rpc::utils::FixedBufferWriter(
       static_cast<std::byte*>(am_data.get()->header.data), header_buffer_size);
     rpc::RpcDispatcher::SerializeResponse(header, writer);
@@ -640,10 +643,12 @@ auto AxonWorker::ServerHandleSendErrorResponse_(
     {rpc::ParamMeta{
       .type = rpc::ParamType::STRING,
       .value = data::string(error_ctx.what),
+      .name = {},
     }},
   };
   auto header_buffer_size = rpc::utils::GetSerializedSize(header);
-  ucxx::UcxAmData am_data(mr_, header_buffer_size, 0, ucx_memory_type::HOST);
+  ucxx::UcxAmData am_data(
+    mr_.get().context(), header_buffer_size, 0, ucx_memory_type::HOST);
   auto writer = rpc::utils::FixedBufferWriter(
     static_cast<std::byte*>(am_data.get()->header.data), header_buffer_size);
   rpc::RpcDispatcher::SerializeResponse(header, writer);
@@ -1207,7 +1212,8 @@ auto AxonWorker::ProcessRndvBuffer_(
         for (const auto& meta : tensor_metas) {
           sizes.push_back(rpc::utils::CalculateTensorSize(meta));
         }
-        auto empty_buffer_vec = ucxx::UcxBufferVec(mr_, arg, sizes);
+        auto empty_buffer_vec =
+          ucxx::UcxBufferVec(mr_.get().context(), arg, sizes);
         return ucxx::connection_recv_buffer(
           scheduler, am_desc_key, std::move(empty_buffer_vec));
       } else {
@@ -1217,6 +1223,28 @@ auto AxonWorker::ProcessRndvBuffer_(
     },
     std::move(mem_policy), tensor_metas);
 }
+
+#define AXON_PROCESS_RNDV_BUFFER_TEMPLATE(BufferT, MemPolicyT)              \
+  template auto AxonWorker::ProcessRndvBuffer_<BufferT, MemPolicyT>(        \
+    WorkerScheduler scheduler, uint64_t am_desc_key, MemPolicyT mem_policy, \
+    utils::TensorMetaSpan tensor_metas)                                     \
+    ->std::conditional_t<                                                   \
+      std::is_same_v<BufferT, ucxx::UcxBuffer>,                             \
+      ucxx::ucx_am_context::recv_buffer_sender,                             \
+      ucxx::ucx_am_context::recv_iovec_buffer_sender>;
+
+AXON_PROCESS_RNDV_BUFFER_TEMPLATE(ucxx::UcxBuffer, AlwaysOnHostPolicy)
+AXON_PROCESS_RNDV_BUFFER_TEMPLATE(
+  ucxx::UcxBuffer, CustomMemoryPolicy<ucxx::UcxBuffer>)
+AXON_PROCESS_RNDV_BUFFER_TEMPLATE(
+  ucxx::UcxBuffer, CustomMemoryPolicy<rpc::PayloadVariant>)
+AXON_PROCESS_RNDV_BUFFER_TEMPLATE(ucxx::UcxBufferVec, AlwaysOnHostPolicy)
+AXON_PROCESS_RNDV_BUFFER_TEMPLATE(
+  ucxx::UcxBufferVec, CustomMemoryPolicy<ucxx::UcxBufferVec>)
+AXON_PROCESS_RNDV_BUFFER_TEMPLATE(
+  ucxx::UcxBufferVec, CustomMemoryPolicy<rpc::PayloadVariant>)
+
+#undef AXON_PROCESS_RNDV_BUFFER_TEMPLATE
 
 auto AxonWorker::ServerProcessMessage_(const RecvVariant& message) noexcept {
   auto handler = std::visit(
@@ -1444,7 +1472,7 @@ AxonWorker::UcxSendCombinedSender AxonWorker::ClientSendRequest_(
       return eux::ucxx::connection_send(
         send_sched, *conn_id,
         ucxx::UcxAmIovec(
-          mr_, std::move(iov_data), /*own_header=*/false,
+          mr_.get().context(), std::move(iov_data), /*own_header=*/false,
           /*own_buffer=*/false));
     } else if constexpr (std::is_same_v<T, ucxx::UcxBuffer>) {
       ucx_am_data send_data{
@@ -1459,7 +1487,7 @@ AxonWorker::UcxSendCombinedSender AxonWorker::ClientSendRequest_(
       return eux::ucxx::connection_send(
         send_sched, *conn_id,
         ucxx::UcxAmData(
-          mr_, std::move(send_data), /*own_header=*/false,
+          mr_.get().context(), std::move(send_data), /*own_header=*/false,
           /*own_buffer=*/false));
     } else {
       ucx_am_data send_data{
@@ -1477,7 +1505,7 @@ AxonWorker::UcxSendCombinedSender AxonWorker::ClientSendRequest_(
       auto sender = eux::ucxx::connection_send(
         send_sched, *conn_id,
         ucxx::UcxAmData(
-          mr_, std::move(send_data), /*own_header=*/false,
+          mr_.get().context(), std::move(send_data), /*own_header=*/false,
           /*own_buffer=*/false));
       return sender;
     }
@@ -1913,7 +1941,7 @@ ucxx::UcxBufferVec AxonWorker::DefaultMemoryProvider(
   for (const auto& meta : tensor_metas) {
     sizes.push_back(rpc::utils::CalculateTensorSize(meta));
   }
-  return ucxx::UcxBufferVec(mr, memory_type, sizes);
+  return ucxx::UcxBufferVec(mr.get().context(), memory_type, sizes);
 }
 
 ucxx::UcxBuffer AxonWorker::DefaultMemoryProvider(
@@ -1921,7 +1949,7 @@ ucxx::UcxBuffer AxonWorker::DefaultMemoryProvider(
   const rpc::utils::TensorMeta& tensor_meta) {
   size_t size = rpc::utils::CalculateTensorSize(tensor_meta);
   ucx_memory_type_t memory_type = GetMemoryType(tensor_meta.device);
-  return ucxx::UcxBuffer(mr, memory_type, size);
+  return ucxx::UcxBuffer(mr.get().context(), memory_type, size);
 }
 
 std::reference_wrapper<ucxx::UcxMemoryResourceManager>

@@ -104,7 +104,8 @@ class __attribute__((visibility("hidden"))) DLPackCapsuleWrapper {
   // - copy: bool or None - whether to copy (True=always, False=never,
   // None=auto)
   nb::object dlpack(
-    nb::object stream = nb::none(), nb::object max_version = nb::none(),
+    nb::object stream = nb::none(),
+    [[maybe_unused]] nb::object max_version = nb::none(),
     nb::object dl_device = nb::none(), nb::object copy = nb::none()) {
     // Check if already consumed (atomic for thread safety)
     bool expected = false;
@@ -180,26 +181,26 @@ std::pair<DLManagedTensor*, nb::object> ExtractDlpackTensor(
 
 ucxx::UcxBuffer DlpackToUcxBuffer(
   nb::object py_dlpack, const rpc::utils::TensorMeta& meta,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr);
+  const ucxx::UcxAllocatorContext& mr_ctx);
 
 ucxx::UcxBuffer DlpackToUcxBuffer(
   nb::object py_dlpack, size_t size, ucx_memory_type_t mem_type,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr);
+  const ucxx::UcxAllocatorContext& mr_ctx);
 
 ucxx::UcxBufferVec DlpackToUcxBufferVec(
   nb::object py_dlpack_list, const rpc::utils::TensorMetaSpan tensor_metas,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr);
+  const ucxx::UcxAllocatorContext& mr_ctx);
 
 ucxx::UcxBufferVec DlpackToUcxBufferVec(
   nb::object py_dlpack_list, std::span<const size_t> sizes,
-  ucx_memory_type_t mem_type,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr);
+  ucx_memory_type_t mem_type, const ucxx::UcxAllocatorContext& mr_ctx);
 
 nb::object TensorMetaToDlpack(
-  rpc::utils::TensorMeta&& meta, ucxx::UcxBuffer&& buffer);
+  const ucxx::UcxAllocatorContext& mr_ctx, rpc::utils::TensorMeta&& meta,
+  ucxx::UcxBuffer&& buffer);
 
-// Convert TensorMetaVec + UcxBufferVec to dlpack objects (multiple tensors)
 nb::list TensorMetaVecToDlpack(
+  const ucxx::UcxAllocatorContext& mr_ctx,
   cista::offset::vector<rpc::utils::TensorMeta>&& meta_vec,
   ucxx::UcxBufferVec&& buffer_vec);
 
@@ -214,13 +215,11 @@ nb::list UcxBufferVecToDLTensor(ucxx::UcxBufferVec&& buffer_vec);
 
 // Create UcxBuffer from dlpack object
 ucxx::UcxBuffer CreateUcxBufferFromPayload(
-  nb::object payload_obj,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr);
+  nb::object payload_obj, const ucxx::UcxAllocatorContext& mr_ctx);
 
 // Create UcxBufferVec from dlpack object
 ucxx::UcxBufferVec CreateUcxBufferVecFromPayload(
-  nb::object payload_obj,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr);
+  nb::object payload_obj, const ucxx::UcxAllocatorContext& mr_ctx);
 
 // Extract TensorMeta directly from DLManagedTensor* (no Python call)
 rpc::utils::TensorMeta ExtractTensorMetaFromDlm(DLManagedTensor* dlm);
@@ -228,13 +227,13 @@ rpc::utils::TensorMeta ExtractTensorMetaFromDlm(DLManagedTensor* dlm);
 // Create UcxBuffer from pre-extracted DLManagedTensor* (no repeated extraction)
 ucxx::UcxBuffer DlpackToUcxBufferFromDlm(
   DLManagedTensor* dlm, nb::object owner, const rpc::utils::TensorMeta& meta,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr);
+  const ucxx::UcxAllocatorContext& mr_ctx);
 
 // Create UcxBufferVec from pre-extracted DLManagedTensor* array
 ucxx::UcxBufferVec DlpackToUcxBufferVecFromDlm(
   std::span<DLManagedTensor*> dlms, std::span<nb::object> owners,
   const rpc::utils::TensorMetaSpan tensor_metas,
-  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr);
+  const ucxx::UcxAllocatorContext& mr_ctx);
 
 // Extract TensorMeta from dlpack tensor
 rpc::utils::TensorMeta ExtractTensorMetaFromDlpack(nb::object py_dlpack);
