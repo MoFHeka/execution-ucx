@@ -125,8 +125,9 @@ if [ "$ENABLE_CUDA" = "1" ]; then
 	NVCC_BIN=$(find -L . -name "nvcc" -type f | grep -v "sysroot" | head -n 1)
 	if [ -n "$NVCC_BIN" ]; then
 		export NVCC="$EXECROOT/$NVCC_BIN"
-	elif command -v nvcc &>/dev/null; then
-		export NVCC=$(command -v nvcc)
+	else
+		echo "FATAL: Hermetic nvcc not found in Bazel sandbox!"
+		exit 1
 	fi
 else
 	CUDA_OPT=""
@@ -254,7 +255,7 @@ if [ -n "$XPMEM_SRC" ]; then
 	XPMEM_INC=$(find -L . -path "*xpmem*/include" -type d | head -n 1)
 	if [ -n "$XPMEM_INC" ]; then
 		echo "  Building libxpmem.so from source..."
-		$CC -shared -fPIC -Wno-error \
+		$CC -shared -fPIC $LDFLAGS -Wno-error \
 			-I"$XPMEM_INC" -I"$XPMEM_LIB_DIR" \
 			-o "$EXECROOT/sysroot/lib/libxpmem.so" \
 			"$XPMEM_SRC"

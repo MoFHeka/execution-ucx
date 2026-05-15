@@ -41,7 +41,7 @@ def _native_ucx_build_impl(ctx):
         variables = cc_common.create_compile_variables(
             feature_configuration = feature_configuration,
             cc_toolchain = cc_toolchain,
-            user_compile_flags = ctx.fragments.cpp.copts,
+            user_compile_flags = ctx.fragments.cpp.copts + ctx.fragments.cpp.conlyopts,
         ),
     )
     env.update(cc_env)

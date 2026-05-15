@@ -19,7 +19,9 @@ limitations under the License.
 #define UCX_MEMORY_RESOURCE_HPP_
 
 #include <array>
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <memory_resource>
 #include <optional>
 #include <type_traits>
@@ -33,7 +35,7 @@ class UcxMemoryResourceManager;
 
 struct UcxAllocatorContext {
   UcxMemoryResourceManager* mr;
-  bool is_alive;
+  std::atomic<bool> is_alive;
 };
 
 /**
@@ -46,11 +48,10 @@ struct UcxAllocatorContext {
  */
 class UcxMemoryResourceManager {
  public:
-  UcxMemoryResourceManager()
-    : allocator_context_(new UcxAllocatorContext{this, true}) {}
-  virtual ~UcxMemoryResourceManager() { allocator_context_->is_alive = false; }
+  UcxMemoryResourceManager() : allocator_context_{this, true} {}
+  virtual ~UcxMemoryResourceManager() { allocator_context_.is_alive = false; }
 
-  const UcxAllocatorContext& context() const { return *allocator_context_; }
+  const UcxAllocatorContext& context() const { return allocator_context_; }
 
   static constexpr const size_t UCX_MEMORY_TYPE_COUNT =
     static_cast<std::underlying_type_t<ucx_memory_type>>(ucx_memory_type::LAST)
@@ -143,7 +144,7 @@ class UcxMemoryResourceManager {
     UCX_MEMORY_TYPE_COUNT>
     memcpy_fns_;  // [src_type][dest_type]
 
-  UcxAllocatorContext* allocator_context_;
+  UcxAllocatorContext allocator_context_;
 };
 
 /**
