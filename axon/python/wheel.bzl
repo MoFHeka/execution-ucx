@@ -53,7 +53,7 @@ def _copy_to_dir_impl(ctx):
                     cp -L "$f" "$out_dir/"
                     chmod +w "$out_dir/$basename"
                     if [[ -n "$rpath" ]] && [[ "$basename" == *.so* ]]; then
-                        patchelf --set-rpath "$rpath" "$out_dir/$basename" || true
+                        patchelf --set-rpath "$rpath" "$out_dir/$basename"
                     fi
                 fi
                 ;;

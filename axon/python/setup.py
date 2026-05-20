@@ -33,7 +33,16 @@ class BazelBuildExt(build_ext):
 
         setup_dir = Path(__file__).resolve().parent
         workspace_root = setup_dir.parent.parent
-        bazel_axon = workspace_root / "bazel-bin" / "axon" / "python" / "axon"
+
+        try:
+            bazel_bin_out = subprocess.check_output(
+                ["bazel", "info", "bazel-bin"], cwd=workspace_root, text=True
+            ).strip()
+        except subprocess.SubprocessError as e:
+            raise RuntimeError(f"Failed to query 'bazel info bazel-bin': {e}") from e
+
+        bazel_bin = Path(bazel_bin_out)
+        bazel_axon = bazel_bin / "axon" / "python" / "axon"
 
         targets = [
             "//axon/python:axon/_axon.so",

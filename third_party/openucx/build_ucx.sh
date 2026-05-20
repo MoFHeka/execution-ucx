@@ -56,6 +56,7 @@ echo "Source root: $SRC_ROOT"
 
 # Create a clean source directory to run autogen.sh (to avoid modifying read-only cache)
 SRC_TMP=$(mktemp -d "$EXECROOT/ucx_src_tmp.XXXXXX")
+trap 'rm -rf "$SRC_TMP"' EXIT
 cp -r $SRC_ROOT/* $SRC_TMP/
 cp -a $SRC_ROOT/.git $SRC_TMP/ 2>/dev/null || true
 cd $SRC_TMP
@@ -64,6 +65,9 @@ cd $SRC_TMP
 # This prevents `autoreconf` (called by autogen.sh) from parsing these components and searching
 # for missing M4 macros (like AM_PATH_GTEST or AM_PATH_OMPI) on the host system, which would
 # otherwise cause fatal errors during the hermetic build process.
+# NOTE: Using standard configure options (e.g. --disable-tests) is insufficient here because
+# autoreconf parses these directories and throws fatal errors on missing M4 macros BEFORE configure
+# can execute. Thus, this specialized sed-strip workaround is strictly required for Bazel hermetic sandbox build.
 sed -i 's|src/tools/perf||g' Makefile.am
 sed -i 's|src/tools/profile||g' Makefile.am
 sed -i 's|test/apps||g' Makefile.am

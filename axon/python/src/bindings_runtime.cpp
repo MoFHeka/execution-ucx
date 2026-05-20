@@ -162,12 +162,17 @@ void RegisterRuntime(nb::module_& m) {
       if (!memory_manager_obj.is_none()) {
         auto* raw =
           nb::cast<ucxx::UcxMemoryResourceManager*>(memory_manager_obj);
-        // No-op deleter: Python (via nb::keep_alive<0, 5>) owns the lifetime.
-        // nanobind guarantees memory_manager_obj is not GC'd until after the
-        // AxonRuntime instance is destroyed, so the raw pointer remains valid
-        // for the entire lifetime of the shared_ptr.
+        auto kept_alive = std::move(memory_manager_obj);
         auto mr = std::shared_ptr<ucxx::UcxMemoryResourceManager>(
-          raw, [](ucxx::UcxMemoryResourceManager*) {});
+          raw, [kept_alive = std::move(kept_alive)](
+                 ucxx::UcxMemoryResourceManager*) mutable {
+            if (Py_IsInitialized()) {
+              nb::gil_scoped_acquire gil;
+              kept_alive = nb::object{};
+            } else {
+              Py_XDECREF(kept_alive.release().ptr());
+            }
+          });
         new (self) axon::AxonRuntime(
           std::move(mr), worker_name, thread_pool_size,
           python::ConvertTimeout(timeout_obj), std::move(device_context));
