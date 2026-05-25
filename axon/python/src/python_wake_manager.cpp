@@ -66,11 +66,18 @@ void PythonWakeManager::Enqueue(Task&& task) {
 }
 
 std::size_t PythonWakeManager::ProcessQueue() {
+  uint64_t val = 0;
+  ssize_t read_bytes = ::read(event_fd_, &val, sizeof(val));
+  if (read_bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+    throw std::runtime_error("Failed to read from eventfd");
+  }
+
   // Ensure we are active if a caller invokes while inactive with an empty
   // queue.
   (void)queue_.try_mark_active();
 
   std::size_t processed = 0;
+
   for (;;) {
     auto batch = queue_.dequeue_all();
     if (batch.empty()) {
@@ -81,7 +88,6 @@ std::size_t PythonWakeManager::ProcessQueue() {
       continue;
     }
 
-    nb::gil_scoped_acquire acquire;
     while (!batch.empty()) {
       auto* node = batch.pop_front();
       if (!node) continue;
@@ -205,6 +211,7 @@ bool PythonWakeManager::UnregisterAsyncioReader() {
     // We use ProcessQueue (not ClearQueue) because other components are still
     // active, so tasks must be executed, not discarded.
     // This fixes the HANG in concurrent tests.
+    nb::gil_scoped_acquire acquire;
     ProcessQueue();
     return true;
   }
