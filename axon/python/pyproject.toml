@@ -22,3 +22,8 @@ dev = [
     "build",
     "auditwheel",
 ]
+
+[tool.pyright]
+include = ["axon", "tests"]
+ignore = ["src"]
+extraPaths = ["."]

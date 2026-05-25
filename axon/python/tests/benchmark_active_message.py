@@ -25,15 +25,12 @@ import test_utils  # noqa: F401 – sets up sys.path for axon module
 
 import axon
 
-INLINE_COROUTINE_ENV = "AXON_PYTHON_INLINE_COROUTINE_COMPLETION"
-DIRECT_FUTURE_ENV = "AXON_PYTHON_DIRECT_FUTURE_COMPLETION"
+DISABLE_FAST_PATH_ENV = "AXON_DISABLE_FAST_PATH"
 BENCHMARK_CHILD_ENV = "AXON_BENCHMARK_ACTIVE_MESSAGE_CHILD"
 
 ABLATION_MODES = [
-    ("baseline", "0", "0"),
-    ("direct-future-only", "0", "1"),
-    ("inline-coroutine-only", "1", "0"),
-    ("combined", "1", "1"),
+    ("fast-path (axon-future)", "0"),
+    ("slow-path (eventfd)", "1"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -204,10 +201,9 @@ def parse_child_metrics(output: str) -> dict[str, dict[str, float]]:
     return metrics
 
 
-def run_child_mode(mode: str, inline_coroutine: str, direct_future: str) -> str:
+def run_child_mode(mode: str, disable_fast_path: str) -> str:
     env = os.environ.copy()
-    env[INLINE_COROUTINE_ENV] = inline_coroutine
-    env[DIRECT_FUTURE_ENV] = direct_future
+    env[DISABLE_FAST_PATH_ENV] = disable_fast_path
     env[BENCHMARK_CHILD_ENV] = "1"
     env["PYTHONPATH"] = os.pathsep.join(sys.path)
 
@@ -231,9 +227,9 @@ def run_child_mode(mode: str, inline_coroutine: str, direct_future: str) -> str:
 
 
 def report_ablation(results: dict[str, dict[str, dict[str, float]]]) -> None:
-    baseline = results["baseline"]
+    baseline = results["slow-path (eventfd)"]
     print("=" * 80)
-    print("Ablation Summary")
+    print("Ablation Summary (Baseline = Slow Path)")
     print("=" * 80)
     for payload_label, _ in PAYLOADS:
         key = payload_label
@@ -255,15 +251,11 @@ def report_ablation(results: dict[str, dict[str, dict[str, float]]]) -> None:
 
 def run_ablation() -> None:
     results: dict[str, dict[str, dict[str, float]]] = {}
-    for mode, inline_coroutine, direct_future in ABLATION_MODES:
+    for mode, disable_fast_path in ABLATION_MODES:
         print("=" * 80)
-        print(
-            f"Running mode={mode} "
-            f"{INLINE_COROUTINE_ENV}={inline_coroutine} "
-            f"{DIRECT_FUTURE_ENV}={direct_future}"
-        )
+        print(f"Running mode={mode} " f"{DISABLE_FAST_PATH_ENV}={disable_fast_path} ")
         print("=" * 80)
-        output = run_child_mode(mode, inline_coroutine, direct_future)
+        output = run_child_mode(mode, disable_fast_path)
         print(output, end="" if output.endswith("\n") else "\n")
         results[mode] = parse_child_metrics(output)
 
@@ -292,10 +284,7 @@ async def run_benchmark(mode: str) -> None:
     print("=" * 80)
     print("Axon Python Eager-Path Benchmark")
     print(f"  mode={mode}  warmup={WARMUP}  iterations={ITERATIONS}")
-    print(
-        f"  {INLINE_COROUTINE_ENV}={os.environ.get(INLINE_COROUTINE_ENV, '1')}  "
-        f"{DIRECT_FUTURE_ENV}={os.environ.get(DIRECT_FUTURE_ENV, '1')}"
-    )
+    print(f"  {DISABLE_FAST_PATH_ENV}={os.environ.get(DISABLE_FAST_PATH_ENV, '0')}  ")
     print("=" * 80)
 
     async with BenchmarkContext() as client:

@@ -7,6 +7,7 @@ import os
 import sys
 
 # Import and re-export device module
+from .future import AxonFuture
 from .device import (
     Device,
     DeviceType,
@@ -27,8 +28,8 @@ try:
     # (rcache) holds stale references to freed memory, causing shared memory leaks.
     old_flags = sys.getdlopenflags()
     sys.setdlopenflags(old_flags | os.RTLD_GLOBAL)
-    from ._axon import *  # noqa: F403
-    from ._axon import UcxMemoryResourceManager, DefaultUcxMemoryResourceManager
+    from ._axon import *  # type: ignore # noqa: F403
+    from ._axon import UcxMemoryResourceManager, DefaultUcxMemoryResourceManager  # type: ignore
 
     sys.setdlopenflags(old_flags)
 
@@ -78,6 +79,14 @@ if _CppAxonRuntime is not None:
             ):
                 kwargs["resource_manager"] = _default_resource_manager
             super().__init__(*args, **kwargs)
+
+        def invoke(self, *args, **kwargs):
+            asyncio_future = super().invoke(*args, **kwargs)
+            return AxonFuture(asyncio_future)
+
+        def invoke_raw(self, *args, **kwargs):
+            asyncio_future = super().invoke_raw(*args, **kwargs)
+            return AxonFuture(asyncio_future)
 
     setattr(sys.modules[__name__], "AxonRuntime", AxonRuntime)
 

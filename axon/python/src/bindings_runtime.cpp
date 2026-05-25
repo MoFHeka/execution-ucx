@@ -86,6 +86,11 @@ inline uint32_t ComputeFunctionId(
 }
 
 void RegisterRuntime(nb::module_& m) {
+  m.def("_process_wake_queue", []() {
+    auto& manager = python::GetPythonWakeManager();
+    return manager.ProcessQueue();
+  });
+
   m.def(
     "get_device_context_handle", &GetDeviceContextHandle,
     nb::arg("device_type") = "cuda",
