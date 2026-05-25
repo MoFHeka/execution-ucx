@@ -57,11 +57,23 @@ void PythonWakeManager::NotifyPython() {
 }
 
 void PythonWakeManager::Enqueue(Task&& task) {
+  if (PyGILState_Check() == 1) {
+    try {
+      (*task)();
+    } catch (const std::exception& e) {
+      std::cerr << "PythonWakeManager inline task threw exception: " << e.what()
+                << std::endl;
+    } catch (...) {
+      std::cerr << "PythonWakeManager inline task threw unknown exception"
+                << std::endl;
+    }
+    return;
+  }
+
   auto* node = new TaskNode{.task = std::move(task)};
   bool need_wakeup = queue_.enqueue(node);
   if (need_wakeup) {
     NotifyPython();
-  } else {
   }
 }
 
