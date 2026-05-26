@@ -622,6 +622,7 @@ py_library(
     srcs = [
         "axon/__init__.py",
         "axon/device.py",
+        "axon/future.py",
     ],
     data = [
         ":axon/_axon.so",
@@ -830,6 +831,7 @@ axon_python_wheel(
     data_files = {
         "axon/__init__.py": "platlib/axon/__init__.py",
         "axon/device.py": "platlib/axon/device.py",
+        "axon/future.py": "platlib/axon/future.py",
         ":axon/_axon.so": "platlib/axon/_axon.so",
         ":copy_ucx_core_libs": "platlib/axon/libs",
         ":copy_ucx_transport_libs": "platlib/axon/libs/ucx",

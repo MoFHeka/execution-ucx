@@ -71,3 +71,6 @@ class AxonFuture(Generic[T]):
 
     def result(self) -> Any:
         return self._future.result()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._future, name)

@@ -79,7 +79,11 @@ void PythonWakeManager::Enqueue(Task&& task) {
 
 std::size_t PythonWakeManager::ProcessQueue() {
   uint64_t val = 0;
-  ssize_t read_bytes = ::read(event_fd_, &val, sizeof(val));
+  ssize_t read_bytes;
+  do {
+    read_bytes = ::read(event_fd_, &val, sizeof(val));
+  } while (read_bytes < 0 && errno == EINTR);
+
   if (read_bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
     throw std::runtime_error("Failed to read from eventfd");
   }
