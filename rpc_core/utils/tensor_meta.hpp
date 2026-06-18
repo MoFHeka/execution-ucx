@@ -89,9 +89,8 @@ using TensorMetaSpan = std::span<const TensorMeta>;
 
 // Helper function to calculate tensor size in bytes
 inline size_t CalculateTensorSize(const TensorMeta& meta) {
-  if (meta.ndim == 0) {
-    return 0;
-  }
+  // An empty shape denotes a scalar (one element). A zero extent in a
+  // non-scalar shape still produces an empty tensor.
   // Calculate total number of elements
   int64_t total_elements = 1;
   for (int32_t i = 0; i < meta.ndim; ++i) {

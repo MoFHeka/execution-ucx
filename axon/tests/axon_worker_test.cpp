@@ -25,6 +25,7 @@ limitations under the License.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <string>
 #include <thread>
@@ -62,6 +63,25 @@ namespace eux::axon {
 using rpc::ParamMeta;
 using rpc::ParamType;
 using rpc::utils::TensorMeta;
+
+namespace {
+std::error_code RpcErrorCode(std::exception_ptr error) {
+  if (error) {
+    try {
+      std::rethrow_exception(error);
+    } catch (const rpc::RpcException& exception) {
+      return exception.code();
+    } catch (const errors::AxonErrorException& exception) {
+      return std::error_code(exception.context().status);
+    } catch (...) {
+      ADD_FAILURE() << "Expected an AXON or RPC exception from InvokeRpc";
+    }
+  } else {
+    ADD_FAILURE() << "Expected a non-null RPC exception";
+  }
+  return {};
+}
+}  // namespace
 
 class AxonWorkerIntegrationTest : public ::testing::Test {
  protected:
@@ -224,7 +244,9 @@ TEST_F(AxonWorkerIntegrationTest, ClientServerInteraction) {
   int status;
   // Wait for client to finish
   waitpid(client_pid, &status, 0);
-  EXPECT_TRUE(WIFEXITED(status));
+  EXPECT_TRUE(WIFEXITED(status))
+    << "child status=" << status
+    << " signal=" << (WIFSIGNALED(status) ? WTERMSIG(status) : 0);
   EXPECT_EQ(WEXITSTATUS(status), 0);
 
   // Cleanup server
@@ -427,6 +449,8 @@ TEST_F(AxonWorkerIntegrationTest, DynamicApiAndErrorHandling) {
 
         ASSERT_TRUE(dyn_result.has_value()) << "Dynamic RPC failed";
         auto& [resp_header, resp_payload_variant] = dyn_result.value();
+        ASSERT_NE(resp_header.get(), nullptr)
+          << "Ordinary RPC must return a header";
         ASSERT_EQ(resp_header->status, std::make_error_code(rpc::RpcErrc::OK))
           << "Dynamic RPC returned error status";
 
@@ -447,16 +471,10 @@ TEST_F(AxonWorkerIntegrationTest, DynamicApiAndErrorHandling) {
             "server_worker_dyn", rpc::session_id_t{1}, rpc::function_id_t{2002},
             rpc::utils::workflow_id_t{0}, std::move(payload))
           | unifex::then([](auto&&...) { return false; })
-          | unifex::let_error([](auto&& e) {
-              if constexpr (std::is_same_v<
-                              std::decay_t<decltype(e)>,
-                              errors::AxonErrorContext>) {
-                return unifex::just(
-                  std::error_code(e.status)
-                  == std::make_error_code(rpc::RpcErrc::INTERNAL));
-              } else {
-                return unifex::just(false);
-              }
+          | unifex::let_error([](std::exception_ptr error) {
+              return unifex::just(
+                RpcErrorCode(error)
+                == std::make_error_code(rpc::RpcErrc::INTERNAL));
             });
 
         auto result = unifex::sync_wait(std::move(sender));
@@ -482,27 +500,10 @@ TEST_F(AxonWorkerIntegrationTest, DynamicApiAndErrorHandling) {
             "nonexistent_worker", std::move(header),
             std::optional<ucxx::UcxBuffer>(std::move(payload)))
           | unifex::then([](auto&&...) { return false; })
-          | unifex::let_error([](auto&& e) {
-              if constexpr (std::is_same_v<
-                              std::decay_t<decltype(e)>,
-                              errors::AxonErrorContext>) {
-                bool match =
-                  std::error_code(e.status)
-                  == std::make_error_code(errors::AxonErrc::WorkerNotFound);
-                if (!match) {
-                  LOGX(
-                    "Error status mismatch: expected WorkerNotFound (%d), got "
-                    "%d (category: %s, message: %s)\n",
-                    static_cast<int>(errors::AxonErrc::WorkerNotFound),
-                    std::error_code(e.status).value(),
-                    std::error_code(e.status).category().name(),
-                    std::error_code(e.status).message().c_str());
-                }
-                return unifex::just(match);
-              } else {
-                LOGX("Error type mismatch: expected AxonErrorContext\n");
-                return unifex::just(false);
-              }
+          | unifex::let_error([](std::exception_ptr error) {
+              return unifex::just(
+                RpcErrorCode(error)
+                == std::make_error_code(errors::AxonErrc::WorkerNotFound));
             });
 
         auto result = unifex::sync_wait(std::move(sender));
@@ -528,7 +529,9 @@ TEST_F(AxonWorkerIntegrationTest, DynamicApiAndErrorHandling) {
   int status;
   // Wait for client to finish
   waitpid(client_pid, &status, 0);
-  EXPECT_TRUE(WIFEXITED(status));
+  EXPECT_TRUE(WIFEXITED(status))
+    << "child status=" << status
+    << " signal=" << (WIFSIGNALED(status) ? WTERMSIG(status) : 0);
   EXPECT_EQ(WEXITSTATUS(status), 0);
 
   // Cleanup server
@@ -735,19 +738,11 @@ TEST_F(AxonWorkerIntegrationTest, RobustnessAndConcurrency) {
               "server_worker_rob", rpc::session_id_t{1},
               rpc::function_id_t{3001}, rpc::utils::workflow_id_t{0},
               std::move(payload)));
-        } catch (const errors::AxonErrorContext& ctx) {
-          // If everything is correct, all error type will be transformed to
-          // AxonErrorContext
-          LOGX(
-            "[Client-Rob] Server Timeout Test: AxonErrorContext: status=%d, "
-            "msg=%s\n",
-            std::error_code(ctx.status).value(), ctx.what.c_str());
-          ASSERT_EQ(
-            std::error_code(ctx.status),
-            std::make_error_code(rpc::RpcErrc::DEADLINE_EXCEEDED));
+          FAIL() << "RPC should have failed with DEADLINE_EXCEEDED";
         } catch (...) {
-          LOGX("[Client-Rob] Server Timeout Test: unknown error\n");
-          ASSERT_TRUE(false);
+          ASSERT_EQ(
+            RpcErrorCode(std::current_exception()),
+            std::make_error_code(rpc::RpcErrc::DEADLINE_EXCEEDED));
         }
 
         LOGX("[Client-Rob] Server Timeout Test Passed\n");
@@ -776,16 +771,11 @@ TEST_F(AxonWorkerIntegrationTest, RobustnessAndConcurrency) {
                           rpc::function_id_t{3003},
                           rpc::utils::workflow_id_t{0}, std::move(payload))
                         | unifex::then([](auto&&...) { return false; })
-                        | unifex::let_error([](auto&& e) {
-                            if constexpr (std::is_same_v<
-                                            std::decay_t<decltype(e)>,
-                                            errors::AxonErrorContext>) {
-                              return unifex::just(
-                                std::error_code(e.status)
-                                == std::make_error_code(
-                                  errors::AxonErrc::StorageBackpressure));
-                            }
-                            return unifex::just(false);
+                        | unifex::let_error([](std::exception_ptr error) {
+                            return unifex::just(
+                              RpcErrorCode(error)
+                              == std::make_error_code(
+                                errors::AxonErrc::StorageBackpressure));
                           });
 
           auto res = unifex::sync_wait(std::move(sender));
@@ -813,7 +803,9 @@ TEST_F(AxonWorkerIntegrationTest, RobustnessAndConcurrency) {
   int status;
   // Wait for client to finish
   waitpid(client_pid, &status, 0);
-  EXPECT_TRUE(WIFEXITED(status));
+  EXPECT_TRUE(WIFEXITED(status))
+    << "child status=" << status
+    << " signal=" << (WIFSIGNALED(status) ? WTERMSIG(status) : 0);
   EXPECT_EQ(WEXITSTATUS(status), 0);
 
   // Cleanup server
@@ -963,16 +955,11 @@ TEST_F(AxonWorkerIntegrationTest, BackpressureLargeMessage) {
                           rpc::function_id_t{4002},
                           rpc::utils::workflow_id_t{0}, std::move(payload))
                         | unifex::then([](auto&&...) { return false; })
-                        | unifex::let_error([](auto&& e) {
-                            if constexpr (std::is_same_v<
-                                            std::decay_t<decltype(e)>,
-                                            errors::AxonErrorContext>) {
-                              return unifex::just(
-                                std::error_code(e.status)
-                                == std::make_error_code(
-                                  errors::AxonErrc::StorageBackpressure));
-                            }
-                            return unifex::just(false);
+                        | unifex::let_error([](std::exception_ptr error) {
+                            return unifex::just(
+                              RpcErrorCode(error)
+                              == std::make_error_code(
+                                errors::AxonErrc::StorageBackpressure));
                           });
 
           auto res = unifex::sync_wait(std::move(sender));
@@ -1035,7 +1022,9 @@ TEST_F(AxonWorkerIntegrationTest, BackpressureLargeMessage) {
   int status;
   // Wait for client to finish
   waitpid(client_pid, &status, 0);
-  EXPECT_TRUE(WIFEXITED(status));
+  EXPECT_TRUE(WIFEXITED(status))
+    << "child status=" << status
+    << " signal=" << (WIFSIGNALED(status) ? WTERMSIG(status) : 0);
   EXPECT_EQ(WEXITSTATUS(status), 0);
 
   // Cleanup server
@@ -1800,7 +1789,9 @@ TEST_F(AxonWorkerIntegrationTest, TensorMetaBufferTransfer) {
   int status;
   // Wait for client to finish
   waitpid(client_pid, &status, 0);
-  EXPECT_TRUE(WIFEXITED(status));
+  EXPECT_TRUE(WIFEXITED(status))
+    << "child status=" << status
+    << " signal=" << (WIFSIGNALED(status) ? WTERMSIG(status) : 0);
   EXPECT_EQ(WEXITSTATUS(status), 0);
 
   // Cleanup server

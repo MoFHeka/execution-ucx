@@ -34,7 +34,6 @@ build:release_gcc --copt=-flto
 build:release_gcc --linkopt=-flto
 
 # Clang release
-build:release_clang --config=clang
 build:release_clang --config=release_native
 build:release_clang --features=thin_lto
 

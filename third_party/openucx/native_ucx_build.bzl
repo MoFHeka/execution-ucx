@@ -48,8 +48,9 @@ def _native_ucx_build_impl(ctx):
 
     # Extract headers and include paths from CcInfo in srcs
     transitive_inputs = [cc_toolchain.all_files]
-    cflags = env.get("CFLAGS", "")
-    cxxflags = env.get("CXXFLAGS", "")
+    common_copts = ctx.fragments.cpp.copts
+    cflags = _join_flags([env.get("CFLAGS", "")] + common_copts + ctx.fragments.cpp.conlyopts)
+    cxxflags = _join_flags([env.get("CXXFLAGS", "")] + common_copts + ctx.fragments.cpp.cxxopts)
     cppflags = env.get("CPPFLAGS", "")
     for src in ctx.attr.srcs:
         if CcInfo in src:
@@ -102,6 +103,9 @@ def _native_ucx_build_impl(ctx):
     )
 
     return DefaultInfo(files = depset(outs))
+
+def _join_flags(flags):
+    return " ".join([flag for flag in flags if flag])
 
 _native_ucx_build_rule = rule(
     implementation = _native_ucx_build_impl,

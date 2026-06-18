@@ -146,6 +146,7 @@ class RpcRequestBuilder {
     header.session_id = options.session_id;
     header.request_id = options.request_id;
     header.function_id = options.function_id;
+    header.request_flags = request_flag_t{};
     header.hlc = options.hlc;
     header.workflow_id = options.workflow_id;
 
