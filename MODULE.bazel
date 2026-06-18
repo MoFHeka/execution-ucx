@@ -109,35 +109,33 @@ bzip2_deps = use_extension("//third_party/bzip2:extensions.bzl", "bzip2_dep")
 use_repo(bzip2_deps, "bzip2")
 
 # setting rules_python for Python test dependencies
-# Note: python_version is not specified to allow users to use their preferred Python version
-# The package supports Python 3.8+ (compatible with nanobind 2.9.2)
+# The package supports Python 3.12 and 3.14 (compatible with nanobind 2.9.2).
 #
 # To build wheels for multiple Python versions:
 #   1. Use different Python toolchain configurations via --config flags
-#   2. Build with: bazel build //axon/python:wheel --config=python38
+#   2. Build with: bazel build //axon/python:wheel --config=python312
 #   3. Or set HERMETIC_PYTHON_VERSION environment variable:
-#      HERMETIC_PYTHON_VERSION=3.10 bazel build //axon/python:wheel
+#      HERMETIC_PYTHON_VERSION=3.14 bazel build //axon/python:wheel
 #
 # For C++ extension modules, each Python version requires a separate build
 # because the extension is compiled against a specific Python ABI.
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
-
-# Set default Python version to 3.10
-# Users can override this by:
-#   - Setting HERMETIC_PYTHON_VERSION environment variable
-#   - Using --config=python38, --config=python39, etc. in .bazelrc
-#   - Overriding in their own MODULE.bazel
-python.toolchain(
+python.defaults(
     python_version = "3.12",
+    python_version_env = "HERMETIC_PYTHON_VERSION",
 )
+python.toolchain(python_version = "3.12")
+python.toolchain(python_version = "3.14")
 
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
-
-# Use the same Python version as the toolchain
-# This ensures pip dependencies are resolved for the correct Python version
 pip.parse(
     hub_name = "pypi_mods",
-    python_version = "3.12",  # Must match python.toolchain python_version
+    python_version = "3.12",
+    requirements_lock = "//axon/python:requirements_lock.txt",
+)
+pip.parse(
+    hub_name = "pypi_mods",
+    python_version = "3.14",
     requirements_lock = "//axon/python:requirements_lock.txt",
 )
 use_repo(pip, "pypi_mods")
@@ -161,3 +159,4 @@ git_override(
 bazel_dep(name = "platforms", version = "0.0.11")
 bazel_dep(name = "bazel_skylib", version = "1.7.1")
 bazel_dep(name = "googletest", version = "1.16.0.bcr.1")
+bazel_dep(name = "google_benchmark", version = "1.8.2")

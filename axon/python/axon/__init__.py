@@ -5,6 +5,8 @@ This module dynamically loads the C++ extension library built by Bazel.
 
 import os
 import sys
+import ctypes
+from pathlib import Path
 
 # Import and re-export device module
 from .future import AxonFuture
@@ -21,6 +23,51 @@ from .device import (
     sycl,
     auto_detect,
 )
+
+
+def _preload_ucx_runtime() -> None:
+    """Make Bazel-copied UCX shared libraries visible for source-tree imports."""
+    package_dir = Path(__file__).resolve().parent
+    workspace_root = package_dir.parents[2]
+    runtime_dirs = [
+        package_dir / "libs",
+        workspace_root / "bazel-bin" / "axon" / "python" / "axon" / "libs",
+    ]
+    module_dirs = [
+        package_dir / "libs" / "ucx",
+        package_dir / "ucx_modules",
+        workspace_root / "bazel-bin" / "axon" / "python" / "axon" / "ucx_modules",
+    ]
+
+    for module_dir in module_dirs:
+        if module_dir.is_dir() and "UCX_MODULE_DIR" not in os.environ:
+            os.environ["UCX_MODULE_DIR"] = str(module_dir)
+            break
+
+    for runtime_dir in runtime_dirs:
+        if not runtime_dir.is_dir():
+            continue
+
+        os.environ["LD_LIBRARY_PATH"] = (
+            f"{runtime_dir}:{os.environ['LD_LIBRARY_PATH']}"
+            if os.environ.get("LD_LIBRARY_PATH")
+            else str(runtime_dir)
+        )
+
+        for library in (
+            "libucs.so.0",
+            "libuct.so.0",
+            "libucm.so.0",
+            "libucp.so.0",
+            "libucs_signal.so.0",
+        ):
+            path = runtime_dir / library
+            if path.exists():
+                ctypes.CDLL(str(path), mode=os.RTLD_GLOBAL)
+        return
+
+
+_preload_ucx_runtime()
 
 try:
     # UCX memory hooks (ucm) require RTLD_GLOBAL to intercept munmap/madvise

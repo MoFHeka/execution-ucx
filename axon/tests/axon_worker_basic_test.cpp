@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cstring>
 #include <memory>
+#include <new>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -37,6 +38,30 @@ class AxonWorkerBasicTest : public ::testing::Test {
 
   std::unique_ptr<ucxx::DefaultUcxMemoryResourceManager> mr_;
 };
+
+TEST_F(AxonWorkerBasicTest, DefaultRequestHeaderExpectsAResponse) {
+  // Default initialization must overwrite old storage, not inherit ONEWAY.
+  alignas(rpc::RpcRequestHeader)
+    std::byte storage[sizeof(rpc::RpcRequestHeader)];
+  std::memset(storage, 0xff, sizeof(storage));
+  auto* header = ::new (storage) rpc::RpcRequestHeader;
+  EXPECT_EQ(cista::to_idx(header->request_flags), rpc::RequestFlagType::NONE);
+  header->request_flags =
+    rpc::SetRequestFlag(header->request_flags, rpc::RequestFlagType::ONEWAY);
+  EXPECT_TRUE(
+    rpc::HasRequestFlag(header->request_flags, rpc::RequestFlagType::ONEWAY));
+  header->~RpcRequestHeader();
+}
+
+TEST_F(AxonWorkerBasicTest, ScalarTensorHasOneElement) {
+  rpc::utils::TensorMeta meta{};
+  meta.ndim = 0;
+  meta.dtype = DLDataType{kDLInt, 32, 1};
+  EXPECT_EQ(rpc::utils::CalculateTensorSize(meta), sizeof(int32_t));
+  meta.ndim = 2;
+  meta.shape = {0, 4};
+  EXPECT_EQ(rpc::utils::CalculateTensorSize(meta), 0);
+}
 
 TEST_F(AxonWorkerBasicTest, StartStop) {
   // Basic start/stop lifecycle.

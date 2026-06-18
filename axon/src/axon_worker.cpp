@@ -136,7 +136,11 @@ void AxonWorker::StopServer() {
     return;
   }
 
-  server_stop_source_.request_stop();
+  // Serialize cancellation with receive setup. A stop callback arriving
+  // before the receive enters the pending queue can otherwise be lost.
+  unifex::sync_wait(unifex::on(
+    server_ctx_->get_scheduler(),
+    unifex::just_from([this]() { server_stop_source_.request_stop(); })));
 
   if (server_future_.has_value()) {
     unifex::sync_wait(std::move(server_future_.value()));
@@ -162,7 +166,11 @@ void AxonWorker::StopClient() {
     return;
   }
 
-  client_stop_source_.request_stop();
+  // Serialize cancellation with receive setup. A stop callback arriving
+  // before the receive enters the pending queue can otherwise be lost.
+  unifex::sync_wait(unifex::on(
+    client_ctx_->get_scheduler(),
+    unifex::just_from([this]() { client_stop_source_.request_stop(); })));
 
   if (client_future_.has_value()) {
     unifex::sync_wait(std::move(client_future_.value()));
@@ -350,10 +358,12 @@ AXON_KEY_INVOKE_RPC(
 
 #undef AXON_KEY_INVOKE_RPC_EXTERN
 
-#define AXON_INVOKE_RPC_IMPL(PayloadT, RespBufferT, MemPolicyT)               \
-  template auto AxonWorker::InvokeRpcImpl<PayloadT, RespBufferT, MemPolicyT>( \
-    std::expected<uint64_t, std::error_code> conn_id,                         \
-    rpc::RpcRequestHeader && request_header, PayloadT && payload,             \
+#define AXON_INVOKE_RPC_IMPL(PayloadT, RespBufferT, MemPolicyT)   \
+  template unifex::any_sender_of<                                 \
+    std::pair<rpc::ResponseHeaderUniquePtr, RespBufferT>>         \
+  AxonWorker::InvokeRpcImpl<PayloadT, RespBufferT, MemPolicyT>(   \
+    std::expected<uint64_t, std::error_code> conn_id,             \
+    rpc::RpcRequestHeader && request_header, PayloadT && payload, \
     MemPolicyT mem_policy);
 
 AXON_INVOKE_RPC_IMPL(ucxx::UcxBuffer, ucxx::UcxBuffer, AlwaysOnHostPolicy)
@@ -671,8 +681,8 @@ AxonWorker::AnySender AxonWorker::ServerDispatchAndManageLifecycle_(
   }
 
   auto handle_result_sender = unifex::let_value(
-    [this, conn_id, req_header_ptr,
-     func_name_ptr](const rpc::RpcInvokeResult<rpc::ReturnedPayload>& result) {
+    [this, conn_id, req_header_ptr, func_name_ptr](
+      const rpc::RpcInvokeResult<rpc::ReturnedPayload>& result) -> AnySender {
       if (server_metrics_observer_) {
         server_metrics_observer_->OnDispatchComplete(
           metrics::RpcMetricsContext{
@@ -686,7 +696,14 @@ AxonWorker::AnySender AxonWorker::ServerDispatchAndManageLifecycle_(
           },
           std::chrono::steady_clock::now());
       }
-      return ServerHandleSendResponse_(conn_id, result.header, result.payload);
+      if (rpc::HasRequestFlag(
+            req_header_ptr->request_flags, rpc::RequestFlagType::ONEWAY)) {
+        return AnySender{unifex::just()};
+      } else {
+        return AnySender{
+          ServerHandleSendResponse_(conn_id, result.header, result.payload)
+          | unifex::let_error(TransformErrorToRpcException_{})};
+      }
     });
 
   auto server_metrics_fn = [this, conn_id, req_header_ptr, func_name_ptr]() {

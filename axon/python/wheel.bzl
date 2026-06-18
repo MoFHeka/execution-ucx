@@ -134,6 +134,7 @@ def axon_python_wheel(name, version, description = "", **kwargs):
             "Programming Language :: Python :: 3.10",
             "Programming Language :: Python :: 3.11",
             "Programming Language :: Python :: 3.12",
+            "Programming Language :: Python :: 3.14",
             "Topic :: Software Development :: Libraries :: Python Modules",
         ],
         **kwargs

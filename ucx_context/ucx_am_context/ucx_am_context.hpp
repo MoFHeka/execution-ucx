@@ -1992,23 +1992,16 @@ class ucx_am_context::recv_header_sender {
                 .size = amDesc.data_length,
               };
               if (amDesc.recv_attr & UCP_AM_RECV_ATTR_FLAG_DATA) {
-                ucp_worker_h ucp_worker = this->ucpWorker_;
+                // Returned tensors may outlive this UCX worker. Copy eager
+                // data into the memory resource and release the UCX descriptor
+                // here, on its progress thread, while the worker is alive.
                 buffer_own_.emplace(UcxBuffer(
-                  context_.mr_.get(), ucx_memory_type::HOST, std::move(buffer),
-                  nullptr,
-                  /*own_buffer=*/true, [ucp_worker](void* data) {
-                    if (data == nullptr) {
-                      UCX_CTX_ERROR << "data is nullptr when release"
-                                    << std::endl;
-                      return;
-                    }
-                    try {
-                      ucp_am_data_release(ucp_worker, data);
-                    } catch (const std::exception& e) {
-                      UCX_CTX_ERROR << "Failed to release data " << data << ": "
-                                    << e.what() << std::endl;
-                    }
-                  }));
+                  context_.mr_.get(), ucx_memory_type::HOST,
+                  amDesc.data_length));
+                context_.mr_.get().memcpy(
+                  ucx_memory_type::HOST, buffer_own_->data(),
+                  ucx_memory_type::HOST, amDesc.desc, amDesc.data_length);
+                ucp_am_data_release(this->ucpWorker_, amDesc.desc);
               } else {
                 // Has been handled in the message callback
                 // Eager message is always in host memory
