@@ -34,6 +34,14 @@ namespace python {
 namespace nb = nanobind;
 namespace rpc = eux::rpc;
 
+#if PY_VERSION_HEX >= 0x030D0000
+#define AXON_PY_OBJECT_HAS_ATTR_STRING(obj, attr) \
+  PyObject_HasAttrStringWithError((obj), (attr))
+#else
+#define AXON_PY_OBJECT_HAS_ATTR_STRING(obj, attr) \
+  PyObject_HasAttrString((obj), (attr))
+#endif
+
 bool IsAsyncFunction(nb::object py_obj) {
   if (py_obj.is_none()) {
     throw nb::type_error("Expected a callable, got None");
@@ -88,7 +96,14 @@ bool IsAsyncFunction(nb::object py_obj) {
     }
   }
 
-  if (!PyObject_HasAttrString(code_attr, "co_flags")) {
+  int has_co_flags = AXON_PY_OBJECT_HAS_ATTR_STRING(code_attr, "co_flags");
+  if (has_co_flags < 0) {
+    PyErr_Clear();
+    Py_DECREF(code_attr);
+    throw nb::type_error(
+      "IsAsyncFunction: failed to check co_flags on code object");
+  }
+  if (!has_co_flags) {
     Py_DECREF(code_attr);
     throw nb::type_error(
       "IsAsyncFunction: code object has no co_flags attribute");

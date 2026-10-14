@@ -691,6 +691,17 @@ axon_pytest_test(
 )
 
 axon_pytest_test(
+    name = "test_notify",
+    srcs = ["tests/test_notify.py"],
+    # Keep pytest from importing conftest as axon.python.tests.conftest.
+    legacy_create_init = False,
+    deps = [
+        requirement("pytest-asyncio"),
+        requirement("numpy"),
+    ],
+)
+
+axon_pytest_test(
     name = "test_connection",
     srcs = ["tests/test_connection.py"],
     deps = [
@@ -785,6 +796,7 @@ test_suite(
         ":test_invoke_by_name",
         ":test_invoke_memory_policy",
         ":test_invoke_rpc",
+        ":test_notify",
         ":test_numpy_rpc.py",
         ":test_register_function",
         ":test_server_memory_policy",

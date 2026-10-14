@@ -15,7 +15,12 @@ limitations under the License.
 
 #include "ucx_context/ucx_memory_resource.hpp"
 
+#include <cstdint>
 #include <cstring>
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -95,7 +100,30 @@ UcxMemoryResourceManager::get_memcpy_fn(
 
 void* DefaultUcxMemoryResourceManager::allocate(
   ucx_memory_type_t type, size_t bytes, size_t alignment) {
-  return get_memory_resource(type)->allocate(bytes, alignment);
+  auto* resource = get_memory_resource(type);
+  void* buffer = resource->allocate(bytes, alignment);
+#if defined(__linux__)
+  // Large RPC receive buffers are touched once per page by the transport.
+  // Ask for transparent huge pages to reduce first-touch faults. Advise only
+  // whole pages inside default host allocations; custom/device resources keep
+  // their own allocation policy. This is an optional performance hint.
+  if (
+    type == ucx_memory_type::HOST && bytes >= 4 * 1024 * 1024
+    && resource == std::pmr::new_delete_resource()) {
+    static const long page_size = ::sysconf(_SC_PAGESIZE);
+    if (page_size > 0) {
+      const auto page = static_cast<std::uintptr_t>(page_size);
+      const auto address = reinterpret_cast<std::uintptr_t>(buffer);
+      const auto first = (address + page - 1) & ~(page - 1);
+      const auto last = (address + bytes) & ~(page - 1);
+      if (last > first) {
+        (void)::madvise(
+          reinterpret_cast<void*>(first), last - first, MADV_HUGEPAGE);
+      }
+    }
+  }
+#endif
+  return buffer;
 }
 
 void DefaultUcxMemoryResourceManager::deallocate(

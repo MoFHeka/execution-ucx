@@ -243,6 +243,22 @@ struct __attribute__((visibility("hidden"))) CreateRpcResultHandler {
   }
 };
 
+struct __attribute__((visibility("hidden"))) CreateOnewayRpcResultHandler {
+  PythonWakeManager& manager_;
+  SharedPyObject from_dlpack_;  // GIL-safe wrapper for from_dlpack_fn callable
+  std::reference_wrapper<ucxx::UcxMemoryResourceManager> mr_;
+
+  CreateOnewayRpcResultHandler(
+    ucxx::UcxMemoryResourceManager& mr, PythonWakeManager& manager,
+    nb::object from_dlpack_fn = nb::none())
+    : manager_(manager), from_dlpack_(std::move(from_dlpack_fn)), mr_(mr) {}
+
+  template <typename Sender>
+  auto operator()(Sender&& sender) {
+    return std::move(sender) | unifex::then([](auto&&...) {});
+  }
+};
+
 // Payload type detection result
 struct PayloadTypeInfo {
   enum Type { NONE, UCX_BUFFER, UCX_BUFFER_VEC };

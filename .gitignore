@@ -43,6 +43,8 @@ bazel-out
 bazel-testlogs
 bazel-workspace
 bazel-execution-ucx
+/axon/python/axon/libs
+/axon/python/axon/ucx_modules
 
 # VSCode
 .vscode
