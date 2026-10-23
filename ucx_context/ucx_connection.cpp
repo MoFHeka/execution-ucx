@@ -371,6 +371,16 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_data(
   param.op_attr_mask |= UCP_OP_ATTR_FIELD_DATATYPE;
   param.datatype = ucp_dt_make_contig(1);  // Base on 1 byte contig data
 
+  // Header-only RPCs have no payload for the receiver to fetch. Forcing
+  // rendezvous for them leaves the send waiting for a data acknowledgement.
+  // CUDA replies must use rendezvous even when smaller than the eager limit,
+  // so the receiver can provide device memory instead of a host eager buffer.
+  if (length == 0) {
+    param.flags |= UCP_AM_SEND_FLAG_EAGER;
+  } else if (memory_type == UCS_MEMORY_TYPE_CUDA) {
+    param.flags |= UCP_AM_SEND_FLAG_RNDV;
+  }
+
   ucs_status_ptr_t sptr = ucp_am_send_nbx(
     ep_, DEFAULT_AM_MSG_ID, header, header_length, buffer, length, &param);
   return process_request(

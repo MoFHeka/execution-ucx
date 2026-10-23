@@ -17,20 +17,6 @@ NANOBIND_COPTS = [
 # Define config settings for C++ standards
 axon_utils_config_settings()
 
-cc_library(
-    name = "async_bridge",
-    srcs = [
-        "src/async_bridge.hpp",
-    ],
-    target_compatible_with = select(
-        {":is_cpp" + v: [] for v in SUPPORTED_CPP_STANDARDS} |
-        {"//conditions:default": ["@platforms//:incompatible"]},
-    ),
-    deps = [
-        ":python_module",
-    ],
-)
-
 # Header-only version for axon_python_runtime (which compiles .cpp directly)
 cc_library(
     name = "dlpack_helpers_headers",
@@ -591,7 +577,6 @@ cc_binary(
         {"//conditions:default": ["@platforms//:incompatible"]},
     ),
     deps = [
-        ":async_bridge",
         ":axon_python_entry",
         ":bindings_enums",
         ":bindings_memory_resource",
@@ -662,6 +647,16 @@ axon_pytest_test(
 axon_pytest_test(
     name = "test_basic",
     srcs = ["tests/test_basic.py"],
+)
+
+axon_pytest_test(
+    name = "test_rdt_fetch",
+    srcs = ["tests/test_rdt_fetch.py"],
+    legacy_create_init = False,
+    deps = [
+        requirement("numpy"),
+        requirement("pytest-asyncio"),
+    ],
 )
 
 axon_pytest_test(
@@ -798,6 +793,7 @@ test_suite(
         ":test_invoke_rpc",
         ":test_notify",
         ":test_numpy_rpc.py",
+        ":test_rdt_fetch",
         ":test_register_function",
         ":test_server_memory_policy",
         ":test_signature_based_rpc",

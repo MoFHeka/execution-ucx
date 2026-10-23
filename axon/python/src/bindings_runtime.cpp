@@ -23,7 +23,6 @@ limitations under the License.
 #include <nanobind/stl/vector.h>
 
 #include <expected>
-#include <future>
 
 #include <string>
 #include <thread>
@@ -87,62 +86,137 @@ inline uint32_t ComputeFunctionId(
   return static_cast<uint32_t>(h.low());
 }
 
-// Private CPU adapter bridge: transfer the owned response to the waiting Python
-// thread before conversion, avoiding request and response asyncio handoffs.
-static nb::object SyncFetch(
-  axon::AxonRuntime& runtime, const std::string& object_id,
-  const std::string& transfer_id, const std::string& worker_name,
-  uint32_t function_id, uint32_t workflow_id, nb::object from_dlpack) {
-  rpc::RpcRequestHeader header;
-  header.session_id = rpc::session_id_t{0};
-  header.function_id = rpc::function_id_t{function_id};
-  header.workflow_id = rpc::utils::workflow_id_t{workflow_id};
-  python::InvokeContext ctx(header);
-  ctx.add_non_tensor(nb::str(object_id.c_str()));
-  ctx.add_non_tensor(nb::str(transfer_id.c_str()));
-  ctx.finalize_header();
-  using Response = std::pair<
-    std::unique_ptr<
-      const rpc::RpcResponseHeader, rpc::UcxDataDeleter<ucxx::UcxHeader>>,
-    rpc::PayloadVariant>;
-  auto completion = std::make_shared<std::promise<Response>>();
-  auto completed = completion->get_future();
-  auto handler = [completion](auto&& sender) {
-    return std::move(sender) | unifex::then([completion](auto&& result) {
-             completion->set_value(std::move(result));
-           })
-           | unifex::upon_error([completion](std::exception_ptr error) {
-               completion->set_exception(std::move(error));
-             })
-           | unifex::upon_done([completion]() {
-               completion->set_exception(std::make_exception_ptr(
-                 std::runtime_error("RDT fetch cancelled")));
-             });
-  };
-  auto response = [&]() {
-    nb::gil_scoped_release release;
-    runtime.SpawnClientTask(python::InvokeRpcWithHostPolicy(
-      runtime, worker_name, std::move(header), std::monostate{}, handler));
-    return completed.get();
-  }();
-  auto& [response_header, payload] = response;
-  if (!response_header) {
-    throw std::runtime_error("RDT fetch completed without a response");
+// Keep Python state and the runtime alive until native IO has actually
+// finished. Callers must retain the completion future without cancelling it.
+struct AsyncFetchState {
+  python::SharedPyObject runtime;
+  python::SharedPyObject future;
+  python::SharedPyObject from_dlpack;
+  std::shared_ptr<ucxx::UcxMemoryResourceManager> memory_resource;
+
+  // Called on the shared Axon event loop, with the GIL held.
+  void CompleteError(const std::string& message) {
+    nb::object result = future.get();
+    if (!nb::cast<bool>(result.attr("done")())) {
+      python::SetFutureException(result, message);
+    }
   }
-  if (std::error_code(response_header->status)) {
-    throw std::runtime_error(
-      python::ExtractErrorMessageFromResponseHeader(response_header.get()));
+
+  template <typename Response>
+  void Complete(Response&& response) {
+    nb::object result = future.get();
+    try {
+      if (!nb::cast<bool>(result.attr("done")())) {
+        auto& [header, payload] = response;
+        if (!header) {
+          throw std::runtime_error("RDT fetch completed without a response");
+        }
+        if (std::error_code(header->status)) {
+          throw std::runtime_error(
+            python::ExtractErrorMessageFromResponseHeader(header.get()));
+        }
+        result.attr("set_result")(python::ResultsToPython<rpc::PayloadVariant>(
+          *memory_resource, header->results, std::move(payload),
+          from_dlpack.get()));
+      }
+    } catch (const std::exception& error) {
+      CompleteError(error.what());
+      return;
+    } catch (...) {
+      CompleteError("Unknown error completing RDT fetch");
+      return;
+    }
   }
-  return python::ResultsToPython<rpc::PayloadVariant>(
-    *runtime.GetMemoryResourceManagerShared(), response_header->results,
-    std::move(payload), std::move(from_dlpack));
-}
+};
 
 void RegisterRuntime(nb::module_& m) {
-  m.def(
-    "_sync_fetch", &SyncFetch, nb::arg("runtime"), nb::arg("object_id"),
-    nb::arg("transfer_id"), nb::arg("worker_name"), nb::arg("function_id"),
-    nb::arg("workflow_id"), nb::arg("from_dlpack"));
+  nb::class_<axon::AxonRuntime> cls(m, "AxonRuntime");
+
+  // Private RDT bridge. Call from the shared Axon event loop.
+  // Initiate one tensor request without blocking so callers can launch all
+  // requests before waiting. The returned future belongs to this loop and
+  // carries completion together with the tensor or exception.
+  cls.def(
+    "_async_fetch",
+    [](
+      nb::object self, const std::string& object_id, int64_t tensor_index,
+      const std::string& worker_name, uint32_t function_id,
+      uint32_t workflow_id, nb::object memory_policy, nb::object from_dlpack) {
+      nb::module_ asyncio = python::GetAsyncioModule();
+      nb::object loop = asyncio.attr("get_running_loop")();
+      auto& manager = python::GetPythonWakeManager();
+      auto& runtime = nb::cast<axon::AxonRuntime&>(self);
+      nb::object future = loop.attr("create_future")();
+
+      // Build the state that will be retained until native completion.
+      auto state = std::shared_ptr<AsyncFetchState>(
+        new AsyncFetchState{
+          self, future, from_dlpack, runtime.GetMemoryResourceManagerShared()},
+        [&manager](AsyncFetchState* state) {
+          // A native sender can release its last capture after the loop handles
+          // completion. Never destroy the retained runtime on its own worker.
+          manager.Enqueue(pro::make_proxy<python::TaskFacade>(
+            [state = std::unique_ptr<AsyncFetchState>(state)]() mutable {
+              state.reset();
+            }));
+        });
+
+      // Build header (no need to call `finalize_header` since no tensor is
+      // added)
+      rpc::RpcRequestHeader request_header;
+      request_header.session_id = rpc::session_id_t{0};
+      request_header.function_id = rpc::function_id_t{function_id};
+      request_header.workflow_id = rpc::utils::workflow_id_t{workflow_id};
+      python::InvokeContext ctx(request_header);
+      ctx.add_non_tensor(nb::str(object_id.c_str()));
+      ctx.add_non_tensor(nb::int_(tensor_index));
+
+      auto handler = [state, &manager](auto&& sender) {
+        return std::move(sender)
+               | unifex::then([state, &manager](auto&& response) {
+                   manager.Enqueue(pro::make_proxy<python::TaskFacade>(
+                     [state, response = std::move(response)]() mutable {
+                       state->Complete(std::move(response));
+                     }));
+                 })
+               | unifex::upon_error(
+                 [state, &manager](std::exception_ptr error) {
+                   manager.Enqueue(
+                     pro::make_proxy<python::TaskFacade>([state, error]() {
+                       state->CompleteError(
+                         python::ExtractErrorMessageFromExceptionPtr(error));
+                     }));
+                 })
+               | unifex::upon_done([state, &manager]() {
+                   manager.Enqueue(
+                     pro::make_proxy<python::TaskFacade>([state]() {
+                       state->CompleteError("RDT fetch cancelled");
+                     }));
+                 });
+      };
+
+      if (memory_policy.is_none()) {
+        runtime.SpawnClientTask(python::InvokeRpcWithHostPolicy(
+          runtime, worker_name, std::move(request_header), std::monostate{},
+          std::move(handler)));
+      } else {
+        runtime.SpawnClientTask(python::InvokeRpcWithCustomMemory(
+          runtime, worker_name, std::move(request_header), std::monostate{},
+          std::move(memory_policy), std::move(handler)));
+      }
+
+      return future;
+    },
+    nb::arg("object_id"), nb::arg("tensor_index"), nb::arg("worker_name"),
+    nb::arg("function_id"), nb::arg("workflow_id"),
+    nb::arg("memory_policy") = nb::none(), nb::arg("from_dlpack") = nb::none(),
+    "Start a tensor fetch on the shared Axon event loop. The returned Future "
+    "resolves with the result/error after native completion. Do not cancel it: "
+    "cancellation does not stop native IO and loses its completion signal. "
+    "Shield cancellable waits and retain the Future until completion before "
+    "reusing destination storage. Eager CPU results can borrow runtime "
+    "storage; "
+    "copy them in from_dlpack if they must outlive runtime shutdown.");
 
   m.def("_process_wake_queue", []() {
     auto& manager = python::GetPythonWakeManager();
@@ -154,8 +228,6 @@ void RegisterRuntime(nb::module_& m) {
     nb::arg("device_type") = "cuda",
     "Get the current device context handle as an integer.",
     nb::call_guard<nb::gil_scoped_release>());
-
-  nb::class_<axon::AxonRuntime> cls(m, "AxonRuntime");
 
   // Custom constructor that accepts Device object
   // Supports: CpuDevice, CudaDevice, RocmDevice, SyclDevice
@@ -263,7 +335,9 @@ void RegisterRuntime(nb::module_& m) {
   cls.def("start", [](axon::AxonRuntime& self) {
     // Auto-register wake manager before starting
     auto& wake_manager = python::GetPythonWakeManager();
-    wake_manager.RegisterAsyncioReader();
+    if (!wake_manager.RegisterAsyncioReader()) {
+      throw std::runtime_error("Failed to register the Axon event-loop reader");
+    }
     auto result = self.Start();
     if (!result) {
       std::string error_msg =
@@ -274,7 +348,9 @@ void RegisterRuntime(nb::module_& m) {
 
   cls.def("start_server", [](axon::AxonRuntime& self) {
     auto& wake_manager = python::GetPythonWakeManager();
-    wake_manager.RegisterAsyncioReader();
+    if (!wake_manager.RegisterAsyncioReader()) {
+      throw std::runtime_error("Failed to register the Axon event-loop reader");
+    }
     auto result = self.StartServer();
     if (!result) {
       std::string error_msg = python::BuildErrorMessageFromContext(
@@ -285,7 +361,9 @@ void RegisterRuntime(nb::module_& m) {
 
   cls.def("start_client", [](axon::AxonRuntime& self) {
     auto& wake_manager = python::GetPythonWakeManager();
-    wake_manager.RegisterAsyncioReader();
+    if (!wake_manager.RegisterAsyncioReader()) {
+      throw std::runtime_error("Failed to register the Axon event-loop reader");
+    }
     auto result = self.StartClient();
     if (!result) {
       std::string error_msg = python::BuildErrorMessageFromContext(

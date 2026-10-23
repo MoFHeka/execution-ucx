@@ -915,8 +915,14 @@ ucs_status_t ucx_am_context::am_recv_callback(
   UCX does not provide a way to reject messages.
   */
 
-  if (!(param->recv_attr
-        & (UCP_AM_RECV_ATTR_FLAG_RNDV | UCP_AM_RECV_ATTR_FLAG_DATA))) {
+  if (data_length == 0 && !(param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV)) {
+    // The header was copied above and no eager payload needs to be retained.
+    // Return ownership now, including when UCX supplies a persistent DATA
+    // descriptor: the header-only receive path will not release that buffer.
+    data = nullptr;
+    status = UCS_OK;
+  } else if (!(param->recv_attr
+               & (UCP_AM_RECV_ATTR_FLAG_RNDV | UCP_AM_RECV_ATTR_FLAG_DATA))) {
     // Allocate data buffer if not president data and data_length > 0
     if (data_length > 0) {
       auto new_data =
