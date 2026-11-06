@@ -387,7 +387,8 @@ class UcxBufferVec {
       buffers_(std::move(other.buffers_)),
       mem_h_(other.mem_h_),
       own_buffer_(own_buffer),
-      ucp_release_fn_(std::move(other.ucp_release_fn_)) {
+      ucp_release_fn_(std::move(other.ucp_release_fn_)),
+      backing_buffer_(std::move(other.backing_buffer_)) {
     other.buffers_ = {};
     other.own_buffer_ = false;
     other.ucp_release_fn_ = nullptr;
@@ -419,7 +420,8 @@ class UcxBufferVec {
       buffers_(std::move(other.buffers_)),
       mem_h_(other.mem_h_),
       own_buffer_(other.own_buffer_),
-      ucp_release_fn_(std::move(other.ucp_release_fn_)) {
+      ucp_release_fn_(std::move(other.ucp_release_fn_)),
+      backing_buffer_(std::move(other.backing_buffer_)) {
     other.buffers_ = {};
     other.own_buffer_ = false;
     other.ucp_release_fn_ = nullptr;

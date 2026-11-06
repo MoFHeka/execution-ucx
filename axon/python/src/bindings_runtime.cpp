@@ -115,7 +115,7 @@ struct AsyncFetchState {
           throw std::runtime_error(
             python::ExtractErrorMessageFromResponseHeader(header.get()));
         }
-        result.attr("set_result")(python::ResultsToPython<rpc::PayloadVariant>(
+        result.attr("set_result")(python::ResultsToPython(
           *memory_resource, header->results, std::move(payload),
           from_dlpack.get()));
       }
@@ -133,13 +133,12 @@ void RegisterRuntime(nb::module_& m) {
   nb::class_<axon::AxonRuntime> cls(m, "AxonRuntime");
 
   // Private RDT bridge. Call from the shared Axon event loop.
-  // Initiate one tensor request without blocking so callers can launch all
-  // requests before waiting. The returned future belongs to this loop and
-  // carries completion together with the tensor or exception.
+  // Fetch all tensors for an object in one RPC without blocking. The returned
+  // future belongs to this loop and carries the tensor list or exception.
   cls.def(
     "_async_fetch",
     [](
-      nb::object self, const std::string& object_id, int64_t tensor_index,
+      nb::object self, const std::string& object_id,
       const std::string& worker_name, uint32_t function_id,
       uint32_t workflow_id, nb::object memory_policy, nb::object from_dlpack) {
       nb::module_ asyncio = python::GetAsyncioModule();
@@ -169,7 +168,6 @@ void RegisterRuntime(nb::module_& m) {
       request_header.workflow_id = rpc::utils::workflow_id_t{workflow_id};
       python::InvokeContext ctx(request_header);
       ctx.add_non_tensor(nb::str(object_id.c_str()));
-      ctx.add_non_tensor(nb::int_(tensor_index));
 
       auto handler = [state, &manager](auto&& sender) {
         return std::move(sender)
@@ -195,22 +193,30 @@ void RegisterRuntime(nb::module_& m) {
                  });
       };
 
+      // Always receive a tensor list, including single-tensor objects.
       if (memory_policy.is_none()) {
-        runtime.SpawnClientTask(python::InvokeRpcWithHostPolicy(
-          runtime, worker_name, std::move(request_header), std::monostate{},
-          std::move(handler)));
+        runtime.SpawnClientTask(
+          handler(python::InvokeRpcWithMonostateSender<
+                  axon::AlwaysOnHostPolicy, ucxx::UcxBufferVec>(
+            runtime, worker_name, std::move(request_header),
+            axon::AlwaysOnHostPolicy{})));
       } else {
-        runtime.SpawnClientTask(python::InvokeRpcWithCustomMemory(
-          runtime, worker_name, std::move(request_header), std::monostate{},
-          std::move(memory_policy), std::move(handler)));
+        auto policy = python::create_custom_memory_policy<ucxx::UcxBufferVec>(
+          std::move(memory_policy), runtime);
+        runtime.SpawnClientTask(handler(python::InvokeRpcWithMonostateSender<
+                                        decltype(policy), ucxx::UcxBufferVec>(
+          runtime, worker_name, std::move(request_header), std::move(policy))));
       }
 
       return future;
     },
-    nb::arg("object_id"), nb::arg("tensor_index"), nb::arg("worker_name"),
-    nb::arg("function_id"), nb::arg("workflow_id"),
-    nb::arg("memory_policy") = nb::none(), nb::arg("from_dlpack") = nb::none(),
-    "Start a tensor fetch on the shared Axon event loop. The returned Future "
+    nb::arg("object_id"), nb::arg("worker_name"), nb::arg("function_id"),
+    nb::arg("workflow_id"), nb::arg("memory_policy") = nb::none(),
+    nb::arg("from_dlpack") = nb::none(),
+    "Fetch all tensors for an object in one RPC on the shared Axon event loop. "
+    "The registered function takes object_id and returns a tensor list; "
+    "memory_policy must return a matching list of destination tensors. "
+    "The returned Future "
     "resolves with the result/error after native completion. Do not cancel it: "
     "cancellation does not stop native IO and loses its completion signal. "
     "Shield cancellable waits and retain the Future until completion before "

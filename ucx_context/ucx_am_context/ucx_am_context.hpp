@@ -369,6 +369,27 @@ class ucx_am_context {
   using ucx_memory_resource = UcxMemoryResourceManager;
   using ucx_request = UcxRequest;
 
+  // Keep empty tensors in the logical payload, but omit them from UCX memory
+  // type detection. Reuse the original descriptors when all entries have data.
+  static std::optional<std::vector<ucp_dt_iov_t>> filter_empty_iov(
+    const ucx_buffer_t* buffers, size_t count) {
+    size_t nonempty = 0;
+    for (size_t i = 0; i < count; ++i) {
+      nonempty += buffers[i].size != 0;
+    }
+    if (nonempty == count) {
+      return std::nullopt;
+    }
+    std::vector<ucp_dt_iov_t> filtered;
+    filtered.reserve(nonempty);
+    for (size_t i = 0; i < count; ++i) {
+      if (buffers[i].size != 0) {
+        filtered.push_back({buffers[i].data, buffers[i].size});
+      }
+    }
+    return filtered;
+  }
+
  public:
   class scheduler;
   class schedule_sender;
@@ -1526,7 +1547,12 @@ class ucx_am_context::recv_buffer_sender_t {
         buffer_own_(
           std::move(const_cast<recv_buffer_sender_t&>(sender).buffer_own_)),
         mr_(sender.mr_),
-        receiver_(static_cast<Receiver2&&>(r)) {}
+        receiver_(static_cast<Receiver2&&>(r)) {
+      if constexpr (std::is_same_v<BufferType, UcxBufferVec>) {
+        filtered_iov_ =
+          filter_empty_iov(buffer_own_.buffers().data(), buffer_own_.size());
+      }
+    }
 
     ~operation() {}
 
@@ -1643,8 +1669,9 @@ class ucx_am_context::recv_buffer_sender_t {
               auto buffer_vec_data =
                 reinterpret_cast<ucp_dt_iov_t*>(buffer_vec.data());
               std::tie(this->result_, request_) = conn.get().recv_am_iov_data(
-                buffer_vec_data, buffer_vec.size(), impl_memh_,
-                std::move(amDesc), mem_type_map(buffer_vec.type()),
+                filtered_iov_ ? filtered_iov_->data() : buffer_vec_data,
+                filtered_iov_ ? filtered_iov_->size() : buffer_vec.size(),
+                impl_memh_, std::move(amDesc), mem_type_map(buffer_vec.type()),
                 &cqe_cb_.value());
             } else {
               UNIFEX_ASSERT(false && "recv_buffer_sender not implemented");
@@ -1797,6 +1824,7 @@ class ucx_am_context::recv_buffer_sender_t {
     conn_opt_t conn_;
     size_t am_desc_key_;
     BufferType buffer_own_;
+    std::optional<std::vector<ucp_dt_iov_t>> filtered_iov_;
     ucx_request* request_ = nullptr;
     std::reference_wrapper<ucx_memory_resource> mr_;
     std::atomic_bool cancel_flag_{false};
@@ -1833,11 +1861,10 @@ class ucx_am_context::recv_buffer_sender_t {
     if constexpr (std::is_same_v<std::decay_t<BufferType>, UcxBufferVec>) {
       UNIFEX_ASSERT(
         buffer_own_.size() > 0 && "At least one buffer is required");
-      // It's a span of buffers, so we need to check each buffer
+      // Empty tensors retain their position as zero-length IO vector entries.
       for (size_t i = 0; i < buffer_own_.size(); ++i) {
-        UNIFEX_ASSERT(buffer_own_[i].data != nullptr &&
-                      buffer_own_[i].size != 0 &&
-                      "The passed-in buffer must be allocated "
+        UNIFEX_ASSERT((buffer_own_[i].size == 0 || buffer_own_[i].data != nullptr) &&
+                      "Nonempty buffers must be allocated "
                       "when receiving IO vector data");
       }
     }
@@ -2290,9 +2317,12 @@ class ucx_am_context::send_sender_t {
     class DeferredReleaseCallback final : public UcxCallback {
      public:
       std::optional<Payload> data_;
+      std::optional<std::vector<ucp_dt_iov_t>> filtered_iov_;
 
-      explicit DeferredReleaseCallback(std::optional<Payload>&& data) noexcept
-        : data_(std::move(data)) {}
+      explicit DeferredReleaseCallback(
+        std::optional<Payload>&& data,
+        std::optional<std::vector<ucp_dt_iov_t>>&& filtered_iov) noexcept
+        : data_(std::move(data)), filtered_iov_(std::move(filtered_iov)) {}
 
       ~DeferredReleaseCallback() override = default;
 
@@ -2345,6 +2375,7 @@ class ucx_am_context::send_sender_t {
             data_.buffer_count > 0 : data_.buffer_count == 0) &&
           "The buffer vector must not be nullptr initialized when "
           "passed to send_sender constructor with buffer_count > 0");
+        filtered_iov_ = filter_empty_iov(data_.buffer_vec, data_.buffer_count);
       } else {
         static_assert(
           payload_always_false::value,
@@ -2427,9 +2458,10 @@ class ucx_am_context::send_sender_t {
           static_assert(sizeof(ucp_dt_iov_t) == sizeof(data_.buffer_vec[0]));
           std::tie(this->result_, this->request_) = conn_ref.send_am_iov_data(
             data_.header.data, data_.header.size,
-            reinterpret_cast<ucp_dt_iov_t*>(data_.buffer_vec),
-            data_.buffer_count, impl_memh_, mem_type_map(data_.buffer_type),
-            am_send_cb);
+            filtered_iov_ ? filtered_iov_->data()
+                          : reinterpret_cast<ucp_dt_iov_t*>(data_.buffer_vec),
+            filtered_iov_ ? filtered_iov_->size() : data_.buffer_count,
+            impl_memh_, mem_type_map(data_.buffer_type), am_send_cb);
         } else {
           static_assert(
             payload_always_false::value,
@@ -2474,8 +2506,8 @@ class ucx_am_context::send_sender_t {
         const auto conn_id = conn_ref.id();
         if (context_.conn_manager_.is_connection_valid(conn_id)) {
           if (this->request_ != nullptr) {
-            auto* deferred_cb =
-              new DeferredReleaseCallback(std::move(data_owned_));
+            auto* deferred_cb = new DeferredReleaseCallback(
+              std::move(data_owned_), std::move(filtered_iov_));
             this->request_->callback = deferred_cb;
             conn_ref.cancel_request(this->request_);
           }
@@ -2559,6 +2591,7 @@ class ucx_am_context::send_sender_t {
     conn_opt_t conn_;
     std::optional<Payload> data_owned_;
     payload_view_t& data_;
+    std::optional<std::vector<ucp_dt_iov_t>> filtered_iov_;
     ucx_request* request_ = nullptr;
     std::reference_wrapper<ucx_memory_resource> mr_;
     std::atomic_bool cancel_flag_{false};

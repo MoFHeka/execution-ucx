@@ -629,41 +629,29 @@ nb::object ConvertTensorResult(
       "converting tensor result");
   }
 
-  // Check custom buffer on first element
-  // Assuming all-or-nothing for custom memory policy
-  bool is_custom = false;
-  if (buffer_vec.size() > 0) {
-    if (!TryGetCustomBuffer(buffer_vec.buffers()[0].data).is_none()) {
-      is_custom = true;
-    }
+  // Empty tensors may have null pointers and cannot be registered as custom
+  // buffers. Preserve the registered tensors regardless of their position.
+  nb::list result;
+  bool all_custom = true;
+  const auto& buffers = buffer_vec.buffers();
+  for (size_t i = 0; i < num_tensors; ++i) {
+    nb::object obj = TryGetCustomBuffer(buffers[i].data);
+    all_custom = all_custom && !obj.is_none();
+    result.append(std::move(obj));
   }
-
-  if (is_custom) {
-    nb::list result;
-    const auto& buffers = buffer_vec.buffers();
-    // Iterate up to num_tensors
-    for (size_t i = 0; i < num_tensors; ++i) {
-      nb::object obj = TryGetCustomBuffer(buffers[i].data);
-      if (obj.is_none()) {
-        throw std::runtime_error(
-          "Mixed custom/non-custom buffers in UcxBufferVec result not "
-          "supported");
-      }
-      result.append(obj);
-    }
+  if (all_custom) {
     return result;
   }
 
   auto tensors =
     TensorMetaVecToDlpack(mr, std::move(meta_vec), std::move(buffer_vec));
-  if (!from_dlpack_fn.is_none()) {
-    nb::list result;
-    for (const auto& tensor : tensors) {
-      result.append(from_dlpack_fn(tensor));
+  for (size_t i = 0; i < num_tensors; ++i) {
+    if (result[i].is_none()) {
+      result[i] = from_dlpack_fn.is_none() ? nb::borrow<nb::object>(tensors[i])
+                                           : from_dlpack_fn(tensors[i]);
     }
-    return result;
   }
-  return tensors;
+  return result;
 }
 
 }  // namespace python

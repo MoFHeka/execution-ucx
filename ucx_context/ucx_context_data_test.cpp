@@ -82,6 +82,36 @@ TEST_F(UcxBufferTest, ThrowsOnSizeMismatch) {
   EXPECT_THROW(std::move(buffer).to_buffer_vec(sizes), std::length_error);
 }
 
+TEST_F(UcxBufferTest, BufferVecMovePreservesBackingBuffer) {
+  for (bool explicit_ownership : {false, true}) {
+    SCOPED_TRACE(explicit_ownership);
+    int release_count = 0;
+    auto* external = new uint8_t[16];
+    std::unique_ptr<UcxBufferVec> moved;
+
+    {
+      UcxBuffer buffer(
+        *mr_, ucx_memory_type::HOST, external, 16, nullptr, true,
+        [&release_count](void* ptr) {
+          ++release_count;
+          delete[] static_cast<uint8_t*>(ptr);
+        });
+      auto buffer_vec = std::move(buffer).to_buffer_vec({4, 12});
+      moved = explicit_ownership
+                ? std::make_unique<UcxBufferVec>(std::move(buffer_vec), false)
+                : std::make_unique<UcxBufferVec>(std::move(buffer_vec));
+      EXPECT_TRUE(moved->has_backing_buffer());
+      EXPECT_FALSE(buffer_vec.has_backing_buffer());
+      EXPECT_EQ((*moved)[0].data, external);
+      EXPECT_EQ((*moved)[1].data, external + 4);
+    }
+
+    EXPECT_EQ(release_count, 0);
+    moved.reset();
+    EXPECT_EQ(release_count, 1);
+  }
+}
+
 TEST_F(UcxBufferTest, MoveWithOwnBufferTruePreservesReleaseCallback) {
   int release_count = 0;
   auto* external = new uint8_t[16];

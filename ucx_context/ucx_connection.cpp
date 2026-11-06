@@ -415,6 +415,10 @@ std::tuple<ucs_status_t, UcxRequest*> UcxConnection::send_am_iov_data(
   const void* header, size_t header_length, const ucp_dt_iov_t* iov_base,
   size_t iov_count, ucp_mem_h memh, ucs_memory_type_t memory_type,
   UcxCallback* callback) {
+  if (iov_count == 0) {
+    return send_am_data(
+      header, header_length, nullptr, 0, memh, memory_type, callback);
+  }
   if (ep_ == nullptr) {
     (*callback)(UCS_ERR_CANCELED);
     return std::make_tuple(UCS_ERR_CANCELED, nullptr);
